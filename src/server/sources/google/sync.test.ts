@@ -308,10 +308,14 @@ describe("google sync", () => {
     it("a deleted workout and a deleted night leave the tables and the scores; older rows stay", async () => {
       const { source, advance } = setup();
       await source.pull(USER);
-      // A night outside the 3-day re-fetch window that Google no longer returns either: never re-checked, so kept.
+      // A night inside the 30-day session re-fetch that Google no longer returns: deleted days later, so pruned too.
       await db
         .insert(sleepSessions)
-        .values({ userId: USER, id: "old-night", day: "2026-09-20", startTs: s("2026-09-19T17:00:00Z"), endTs: s("2026-09-20T01:00:00Z"), isMain: true, processed: true, source: "FITBIT" });
+        .values({ userId: USER, id: "week-old", day: "2026-09-24", startTs: s("2026-09-23T17:00:00Z"), endTs: s("2026-09-24T01:00:00Z"), isMain: true, processed: true, source: "FITBIT" });
+      // One outside it, gone from Google too: never re-checked, so kept.
+      await db
+        .insert(sleepSessions)
+        .values({ userId: USER, id: "old-night", day: "2026-08-20", startTs: s("2026-08-19T17:00:00Z"), endTs: s("2026-08-20T01:00:00Z"), isMain: true, processed: true, source: "FITBIT" });
       await recompute(db, OPTS);
       expect((await scores("2026-10-01")).activities).toHaveLength(1);
       expect((await scores("2026-10-01")).sleep.reason).toBeNull();
@@ -324,7 +328,7 @@ describe("google sync", () => {
       expect(await ids(exercises)).toEqual([]);
       expect(await ids(sleepSessions)).toEqual(["old-night", "sleep-b", "sleep-c", "sleep-d"]);
       expect((await db.select().from(sleepSegments)).filter((g) => g.sessionId.endsWith("/sleep-a"))).toEqual([]); // deleted with it
-      expect(await dirtyDays()).toEqual(["2026-10-01"]);
+      expect(await dirtyDays()).toEqual(["2026-09-24", "2026-10-01"]);
 
       await recompute(db, OPTS);
       expect((await scores("2026-10-01")).activities).toEqual([]);

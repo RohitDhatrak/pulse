@@ -5,7 +5,7 @@ import { DATA_COLORS } from "@/lib/bands"
 import { formatValue, type FormatKey } from "@/lib/format"
 import { ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AXIS, BAR_CURSOR, ChartFigure, GRID, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation } from "./ChartFrame"
+import { AXIS, BAR_CURSOR, ChartFigure, GRID, gutterLabel, labelGutter, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation } from "./ChartFrame"
 
 export type Column = {
   /** Axis label ("06:00", "Mon", "Sep 21"). */
@@ -45,7 +45,7 @@ export function ColumnChart({ summary, data, format, unit, tickEvery = 1, refere
   const unitText = unit ? (unit === "%" ? "%" : ` ${unit}`) : ""
   return (
     <ChartFigure summary={summary} config={{ value: { label: summary, color: ON } }} className="h-44">
-      <ComposedChart data={rows} accessibilityLayer margin={{ top: 8, right: 12, bottom: 0, left: 12 }}>
+      <ComposedChart data={rows} accessibilityLayer margin={{ top: 8, right: labelGutter([reference?.label], 12), bottom: 0, left: 12 }}>
         <CartesianGrid {...GRID} />
         <XAxis dataKey="key" {...AXIS} ticks={ticks} interval={0} tickFormatter={(k: string) => byKey.get(k)?.label ?? ""} />
         <YAxis hide domain={[0, (max: number) => Math.max(max, reference?.y ?? 0)]} />
@@ -54,7 +54,7 @@ export function ColumnChart({ summary, data, format, unit, tickEvery = 1, refere
             y={reference.y}
             stroke="var(--chart-cursor)"
             strokeDasharray="3 3"
-            label={{ value: reference.label, position: "insideTopLeft", fill: "var(--foreground-secondary)", fontSize: 11, fontWeight: 600 }}
+            label={gutterLabel(reference.label)}
           />
         )}
         <ChartTooltip
@@ -79,7 +79,8 @@ export function ColumnChart({ summary, data, format, unit, tickEvery = 1, refere
             />
           }
         />
-        <Bar dataKey="value" radius={[3, 3, 0, 0]} maxBarSize={28} {...anim}>
+        {/* A dim full-height track behind each column, so the scale reads without a y-axis. */}
+        <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={28} background={{ fill: "color-mix(in srgb, var(--foreground) 4%, transparent)", radius: 4 }} {...anim}>
           {rows.map((r) => (
             <Cell key={r.key} fill={r.fill} />
           ))}

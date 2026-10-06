@@ -33,7 +33,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   requestSync({ userId: user.userId })
   const [status, avatar, coach] = await Promise.all([getShellStatus(ctx), avatarSrc(db, user.userId), coachAccess(db, user.userId)])
   return (
-    <AppShell live status={{ ...status, avatar, coach }}>
+    <AppShell live status={{ ...status, avatar, coach, userId: user.userId }}>
       {children}
       {/* One check-in sheet for every screen, opened over it by `?checkin=1` (spec §11 UX2). */}
       <Suspense>

@@ -74,7 +74,7 @@ export function Behaviours({ vm }: { vm: BehavioursVM }) {
     setAdding(true)
     const r = await addCustomTag({ label: name }).catch(() => ({ ok: false as const, error: "network" }))
     setAdding(false)
-    if (!r.ok) return invalid(r.error.startsWith("Tag already exists") ? "That behaviour already exists." : "Couldn’t add it. Try again.")
+    if (!r.ok) return invalid(r.error.startsWith("Tag already exists") ? "That behaviour already exists." : r.error.startsWith("Too many") ? "You’ve reached the behaviour limit." : "Couldn’t add it. Try again.")
     setAddError(null)
     setLabel("")
     toast.success(`${name} added`)

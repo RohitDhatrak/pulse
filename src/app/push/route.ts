@@ -5,7 +5,11 @@ import { getDb } from "@/server/db";
 import { removeSubscription, saveSubscription } from "@/server/push";
 
 const NO_STORE = { "cache-control": "no-store" };
-const Subscription = z.object({ endpoint: z.url().max(2048), keys: z.object({ p256dh: z.string().min(1).max(256), auth: z.string().min(1).max(256) }) });
+// The server POSTs to the endpoint later, so only https on a browser push service: anything else would let a user aim
+// the server at an internal host (Chrome/Edge/Opera/Samsung use FCM, Firefox Mozilla, Safari Apple, legacy Edge WNS).
+const PUSH_HOST = /(^|\.)(fcm\.googleapis\.com|push\.services\.mozilla\.com|push\.apple\.com|notify\.windows\.com)$/;
+const Endpoint = z.url({ protocol: /^https$/ }).max(2048).refine((u) => PUSH_HOST.test(new URL(u).hostname), "Unsupported push service");
+const Subscription = z.object({ endpoint: Endpoint, keys: z.object({ p256dh: z.string().min(1).max(256), auth: z.string().min(1).max(256) }) });
 
 /** Turn notifications on: stores the browser's PushSubscription for the signed-in user. Like /sync, no Origin check: a cross-site POST carries no session cookie. */
 export async function POST(req: NextRequest) {

@@ -31,14 +31,20 @@ function isDay(raw: string) {
   return isValid(date) && iso(date) === raw; // rejects 2026-02-31
 }
 
+/** How far back `?d=` may go. Pages build a day strip from `d` to today, so this bounds it (~3,650 tiles). */
+export const MAX_PAST_DAYS = 3650;
+
+/** A real day no later than today and no more than MAX_PAST_DAYS before it. */
+export const inDayRange = (v: string, today: string) => isDay(v) && v <= today && v >= addDays(today, -MAX_PAST_DAYS);
+
 /**
- * Reads `?d=`. Missing → today. Unparsable or future → today with `rejected: true`, so the page can
- * replace the URL without `d`.
+ * Reads `?d=`. Missing → today. Unparsable, future or older than MAX_PAST_DAYS → today with `rejected: true`, so
+ * the page can replace the URL without `d`.
  */
 export function parseDay(raw: string | string[] | undefined, today: string) {
   const v = Array.isArray(raw) ? raw[0] : raw;
   if (v === undefined || v === "") return { d: today, isToday: true, rejected: false };
-  if (!isDay(v) || v > today) return { d: today, isToday: true, rejected: true };
+  if (!inDayRange(v, today)) return { d: today, isToday: true, rejected: true };
   return { d: v, isToday: v === today, rejected: false };
 }
 

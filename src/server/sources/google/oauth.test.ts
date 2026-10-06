@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { Db } from "../../db";
 import { oauthTokens } from "../../db/schema";
 import { addUser, freshDb, USER } from "../../testing";
@@ -254,6 +254,15 @@ describe("getAccessToken", () => {
 
   it("without a grant throws not_connected", async () => {
     await expectGoogleError(get(tokenStub()), "not_connected");
+  });
+
+  it("a failed token write surfaces as a code, never the query params holding the tokens", async () => {
+    await seed({ refreshToken: "rt-secret", expiresAt: T - 1 });
+    // The update is the only write, so a trigger that refuses it stands in for a database failure.
+    await db.execute(sql`create function refuse() returns trigger language plpgsql as $$ begin raise exception 'db down'; end $$`);
+    await db.execute(sql`create trigger refuse before update on oauth_tokens for each row execute function refuse()`);
+    const err = await expectGoogleError(get(tokenStub(json(200, { access_token: "at-secret", expires_in: 3600 }))), "token_store_failed");
+    expect(`${err.message} ${err.stack}`).not.toMatch(/at-secret|rt-secret/);
   });
 });
 

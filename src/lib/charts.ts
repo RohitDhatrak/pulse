@@ -1,29 +1,25 @@
 // Plain data helpers for the Recharts components. No SVG maths: these only shape series and slices
 // that Recharts primitives draw (spec §5.0, §5.1, §5.6).
 
-export type XY = { x: number; y: number | null };
-export type BandRow = { x: number } & Record<string, number | null>;
+/** A colour band: values at or above `from` take `color` (bands ascending). */
+export type Band = { from: number; color: string };
+
+/** The band colour of a value. */
+export const bandColor = (v: number, bands: Band[]) => [...bands].reverse().find((b) => v >= b.from)?.color ?? bands[0].color;
 
 /**
- * One series per band, keyed `b0`, `b1`… A value is in band i when it is ≥ thresholds[i-1] and
- * < thresholds[i] (so Energy uses [34, 67] for red ≤ 33, yellow 34-66, green ≥ 67; Stress uses [1, 2]).
- * Each point is also copied into the next point's band so the coloured segments join. Nulls stay gaps.
+ * Gradient stops, top (offset 0) to bottom (offset 1), for a shape spanning values `top` to `bottom`: the top's colour,
+ * a hard switch at every threshold strictly inside the span, and the bottom's colour.
  */
-export function splitByBand(points: XY[], thresholds: number[]) {
-  const keys = Array.from({ length: thresholds.length + 1 }, (_, i) => `b${i}`);
-  const band = (y: number) => thresholds.filter((t) => y >= t).length;
-  const rows: BandRow[] = points.map((p) => {
-    const row: BandRow = { x: p.x };
-    for (const k of keys) row[k] = null;
-    if (p.y !== null) row[`b${band(p.y)}`] = p.y;
-    return row;
-  });
-  for (let i = 0; i < points.length - 1; i++) {
-    const a = points[i].y;
-    const b = points[i + 1].y;
-    if (a !== null && b !== null && band(a) !== band(b)) rows[i][`b${band(b)}`] = a;
+export function bandStops(top: number, bottom: number, bands: Band[]): { offset: number; color: string }[] {
+  const at = (v: number) => (top - v) / (top - bottom);
+  const stops = [{ offset: 0, color: bandColor(top, bands) }];
+  for (const b of [...bands].reverse()) {
+    if (b.from >= top || b.from <= bottom) continue;
+    stops.push({ offset: at(b.from), color: bandColor(b.from, bands) }, { offset: at(b.from), color: bandColor(b.from - 1e-9, bands) });
   }
-  return { rows, keys };
+  stops.push({ offset: 1, color: bandColor(bottom, bands) });
+  return stops;
 }
 
 // --- Hypnogram ---

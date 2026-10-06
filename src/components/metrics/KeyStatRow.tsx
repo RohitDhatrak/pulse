@@ -8,6 +8,7 @@ import { CARD_MATERIAL } from "@/components/ui/card"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { MetricState, type MetricMeta } from "@/components/shells/MetricState"
 import { CAPTION, DeltaMark, LABEL, MetricTags, StatusChip, ValueUnit } from "./primitives"
+import { Sparkline } from "./Sparkline"
 
 export type SleepStatus = "poor" | "sufficient" | "optimal"
 
@@ -36,6 +37,14 @@ export type KeyStatRowProps = {
   href?: string
   /** Client parents only: the tile or row becomes a button (opens a sheet). */
   onSelect?: () => void
+  /**
+   * Tile spanning a full grid row (an odd count): a short strip with the comparison spelled out on the right
+   * ("30-day avg", the average and the difference), so the extra width carries information instead of empty space.
+   * `md` / `xl`: only below that breakpoint, where the grid has two columns.
+   */
+  wide?: boolean | "md" | "xl"
+  /** A wide tile's recent values (oldest first) drawn on its right as a sparkline, with `band` shaded as the normal range. */
+  spark?: { values: (number | null)[]; band?: { low: number; high: number } | null; caption?: string }
   className?: string
 }
 
@@ -47,14 +56,16 @@ const STATUS_ACTIVE: Record<SleepStatus, string> = {
   optimal: "bg-optimal",
 }
 
-type Computed = { valueText: string; avgText?: string; dir?: DeltaDir; tone?: Tone; reason?: string; meta?: MetricMeta; loading?: boolean }
+type Computed = { valueText: string; avgText?: string; diffText?: string; dir?: DeltaDir; tone?: Tone; reason?: string; meta?: MetricMeta; loading?: boolean }
 const LOADING: Computed = { valueText: "", loading: true }
 
 function compute(p: KeyStatRowProps, value: number | null, meta?: MetricMeta, reason?: ReasonCode): Computed {
   if (value === null) return { valueText: MISSING, reason: reasonCopy(reason, meta?.nightsLeft).short }
   const avg = p.average ?? null
   const t = avg !== null && p.direction !== "none" ? deltaTone(p.direction, value, avg, p.sd) : undefined
-  return { valueText: formatValue(p.format, value), avgText: avg !== null ? formatValue(p.format, avg) : undefined, dir: t?.dir, tone: t?.tone, meta }
+  const diff = avg !== null ? value - avg : null
+  const diffText = diff === null || formatValue(p.format, Math.abs(diff)) === formatValue(p.format, 0) ? undefined : `${diff > 0 ? "+" : "\u2212"}${formatValue(p.format, Math.abs(diff))}`
+  return { valueText: formatValue(p.format, value), avgText: avg !== null ? formatValue(p.format, avg) : undefined, diffText, dir: t?.dir, tone: t?.tone, meta }
 }
 
 /** Interactive wrapper: a link, a button, or a plain element. */
@@ -151,6 +162,9 @@ function Tile({ p, c }: { p: KeyStatRowProps; c: Computed }) {
       className={cn(
         CARD_MATERIAL,
         "flex min-h-31 min-w-0 flex-col gap-3 p-3",
+        p.wide === true && "min-h-0 flex-row items-center",
+        p.wide === "md" && "max-md:min-h-0 max-md:flex-row max-md:items-center",
+        p.wide === "xl" && "max-xl:min-h-0 max-xl:flex-row max-xl:items-center",
         flagged && "ring-1 ring-warning/50",
         (p.href || p.onSelect) && "hover:from-card-hover active:scale-[0.96]",
         p.className
@@ -159,44 +173,87 @@ function Tile({ p, c }: { p: KeyStatRowProps; c: Computed }) {
       <span aria-hidden className="contents">
         {/* the reference app's v2 tile [latest-health-monitor-1]: icon and a 10 px caps label on one line, then a 30 px value and a
             compact chip (spec §11 F16). */}
-        <span className="flex items-center gap-2.5">
-          {p.icon && <span className="grid size-5 shrink-0 place-items-center text-muted-foreground [&_svg]:size-5 [&_svg]:stroke-[1.5]">{p.icon}</span>}
-          {p.label ? <span className={cn(TILE_LABEL, "line-clamp-3 min-w-0 text-foreground-secondary")}>{p.label}</span> : <SkeletonText className={cn(TILE_LABEL, "w-24")} />}
+        <span
+          className={cn(
+            "contents",
+            p.wide === true && "flex min-w-0 flex-1 flex-col gap-2",
+            p.wide === "md" && "max-md:flex max-md:min-w-0 max-md:flex-1 max-md:flex-col max-md:gap-2",
+            p.wide === "xl" && "max-xl:flex max-xl:min-w-0 max-xl:flex-1 max-xl:flex-col max-xl:gap-2",
+            // With a sparkline the numbers keep their natural width and the line takes the rest.
+            p.spark && "flex-none! basis-auto"
+          )}
+        >
+          <span className="flex items-center gap-2.5">
+            {p.icon && <span className="grid size-5 shrink-0 place-items-center text-muted-foreground [&_svg]:size-5 [&_svg]:stroke-[1.5]">{p.icon}</span>}
+            {p.label ? <span className={cn(TILE_LABEL, "line-clamp-3 min-w-0 text-foreground-secondary")}>{p.label}</span> : <SkeletonText className={cn(TILE_LABEL, "w-24")} />}
+          </span>
+          <span className="mt-auto flex flex-col items-start gap-2">
+            {c.loading ? (
+              <>
+                <SkeletonText className="w-[3ch] font-numeric text-[30px] leading-9 font-bold" />
+                <SkeletonText className="w-28 text-[11px] leading-5" />
+              </>
+            ) : (
+            <ValueUnit
+              value={c.valueText}
+              unit={p.unit}
+              className={cn("font-numeric text-[30px] leading-9 font-bold tracking-[-0.01em]", c.reason && "text-muted-foreground")}
+              unitClassName="text-sm leading-5 font-medium text-foreground"
+            />
+            )}
+            {c.loading ? null : c.reason ? (
+              <span className={CAPTION}>{c.reason}</span>
+            ) : (
+              <>
+                {c.meta && <MetricTags provisional={c.meta.provisional} tags={c.meta.tags} className="justify-start" />}
+                {/* A wide tile states the comparison on its right instead (below). */}
+                <span className={cn("contents", !p.spark && p.wide === true && "hidden", !p.spark && p.wide === "md" && "max-md:hidden", !p.spark && p.wide === "xl" && "max-xl:hidden")}>
+                  {p.chip ? (
+                    <StatusChip tone={p.chip.tone} className={TILE_CHIP}>
+                      {p.chip.text}
+                    </StatusChip>
+                  ) : (
+                    c.avgText && (
+                      <StatusChip tone="neutral" delta={c.dir} className={TILE_CHIP}>
+                        {c.avgText}
+                        {p.unit && <span className="font-semibold">{p.unit === "%" ? "%" : `\u00a0${p.unit}`}</span>}
+                      </StatusChip>
+                    )
+                  )}
+                </span>
+              </>
+            )}
+          </span>
         </span>
-        <span className="mt-auto flex flex-col items-start gap-2">
-          {c.loading ? (
-            <>
-              <SkeletonText className="w-[3ch] font-numeric text-[30px] leading-9 font-bold" />
-              <SkeletonText className="w-28 text-[11px] leading-5" />
-            </>
-          ) : (
-          <ValueUnit
-            value={c.valueText}
-            unit={p.unit}
-            className={cn("font-numeric text-[30px] leading-9 font-bold tracking-[-0.01em]", c.reason && "text-muted-foreground")}
-            unitClassName="text-sm leading-5 font-medium text-foreground"
+        {p.wide && p.spark && !c.loading && (
+          <Sparkline
+            values={p.spark.values}
+            band={p.spark.band}
+            color={p.chip?.tone === "warning" || p.chip?.tone === "alert" ? "var(--warning)" : "var(--foreground-secondary)"}
+            caption={p.spark.caption}
+            className={cn("h-16 min-w-0 flex-1 self-center", p.wide === "md" && "md:hidden", p.wide === "xl" && "xl:hidden")}
           />
-          )}
-          {c.loading ? null : c.reason ? (
-            <span className={CAPTION}>{c.reason}</span>
-          ) : (
-            <>
-              {c.meta && <MetricTags provisional={c.meta.provisional} tags={c.meta.tags} className="justify-start" />}
-              {p.chip ? (
-                <StatusChip tone={p.chip.tone} className={TILE_CHIP}>
-                  {p.chip.text}
-                </StatusChip>
-              ) : (
-                c.avgText && (
-                  <StatusChip tone="neutral" delta={c.dir} className={TILE_CHIP}>
-                    {c.avgText}
-                    {p.unit && <span className="font-semibold">{p.unit === "%" ? "%" : `\u00a0${p.unit}`}</span>}
-                  </StatusChip>
-                )
-              )}
-            </>
-          )}
-        </span>
+        )}
+        {p.wide && !p.spark && !c.loading && !c.reason && (p.chip || c.avgText) && (
+          <span className={cn("flex shrink-0 flex-col items-end gap-1 text-right", p.wide === "md" && "md:hidden", p.wide === "xl" && "xl:hidden")}>
+            <span className={CAPTION}>{p.chip ? "Your range" : (p.averageLabel ?? "30-day avg")}</span>
+            {p.chip ? (
+              <StatusChip tone={p.chip.tone} className={TILE_CHIP}>
+                {p.chip.text}
+              </StatusChip>
+            ) : (
+              <>
+                <ValueUnit value={c.avgText!} unit={p.unit} className="font-numeric text-lg leading-6 font-bold" unitClassName="text-xs leading-4 font-medium text-muted-foreground" />
+                {c.diffText && (
+                  <span className={cn("font-numeric text-xs leading-4 font-bold tabular-nums", c.tone === "good" ? "text-optimal" : c.tone === "bad" ? "text-warning" : "text-foreground-secondary")}>
+                    {c.diffText}
+                    {p.unit && (p.unit === "%" ? "%" : `\u00a0${p.unit}`)} vs avg
+                  </span>
+                )}
+              </>
+            )}
+          </span>
+        )}
       </span>
     </Frame>
   )

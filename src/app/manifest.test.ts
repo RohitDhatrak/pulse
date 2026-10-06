@@ -9,7 +9,7 @@ describe("web app manifest", () => {
   const m = manifest();
 
   it("is installable and keeps one identity", () => {
-    expect(m).toMatchObject({ id: "/", scope: "/", start_url: "/", display: "standalone", orientation: "portrait" });
+    expect(m).toMatchObject({ id: "/", scope: "/", start_url: "/", display: "standalone", display_override: ["standalone"], orientation: "portrait", dir: "ltr" });
   });
 
   it("splits the launch-screen icon (any) from the maskable one, and every file exists", () => {

@@ -261,14 +261,13 @@ describe("recovery gating on the seed", () => {
 describe("Google's inputs first (docs/research/google-vs-pulse-metrics.md)", () => {
   const metric = (day: string, col: string) => metrics.get(day)![col] as number | null;
 
-  it("a day with Google's zones uses its bounds; a day without falls back to % of max HR", () => {
-    const s1 = js<Stage1Day>("strain", dayAt(120));
-    expect(s1.zoneSource).toBe("google");
-    expect(s1.zoneLower).toEqual((metrics.get(dayAt(120))!.hr_zones as number[]).slice(0, 4));
-    expect(s1.zoneSeconds).toHaveLength(4);
-    const off = js<Stage1Day>("strain", dayAt(157)); // band-off night: no zones record
-    expect(metric(dayAt(157), "hr_zones")).toBeNull();
-    expect(off).toMatchObject({ zoneSource: "max_hr", zoneLower: [0.5, 0.7, 0.8, 0.9].map((e) => Math.round(e * PROFILE.maxHr * 10) / 10) });
+  it("zones are five on heart-rate reserve from the day's resting HR, with or without Google's zones", () => {
+    for (const d of [dayAt(120), dayAt(157)]) {
+      const s1 = js<Stage1Day>("strain", d);
+      const reserve = s1.maxHr - s1.restingHr;
+      expect(s1.zoneLower).toEqual([0.5, 0.6, 0.7, 0.8, 0.9].map((e) => Math.round((s1.restingHr + e * reserve) * 10) / 10));
+      expect(s1.zoneSeconds).toHaveLength(5);
+    }
   });
 
   it("Recovery and Strain read Google's daily resting HR, not the sleep-session estimate", () => {

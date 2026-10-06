@@ -1,27 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { clockTicks, hourTicks, hypnogramSeries, markerSlices, ringRadii, splitByBand, targetSlices } from "./charts";
+import { clockTicks, hourTicks, hypnogramSeries, markerSlices, ringRadii, bandStops, targetSlices } from "./charts";
 
-describe("splitByBand", () => {
-  it("puts each value in its band and joins segments across a crossing", () => {
-    const { rows, keys } = splitByBand(
-      [
-        { x: 0, y: 0.5 },
-        { x: 1, y: 1.5 },
-        { x: 2, y: null },
-        { x: 3, y: 2.5 },
-      ],
-      [1, 2],
-    );
-    expect(keys).toEqual(["b0", "b1", "b2"]);
-    expect(rows[0]).toEqual({ x: 0, b0: 0.5, b1: 0.5, b2: null }); // copied into the next point's band
-    expect(rows[1]).toEqual({ x: 1, b0: null, b1: 1.5, b2: null }); // next is a gap: no join
-    expect(rows[2]).toEqual({ x: 2, b0: null, b1: null, b2: null });
-    expect(rows[3]).toEqual({ x: 3, b0: null, b1: null, b2: 2.5 });
+describe("bandStops", () => {
+  const bands = [
+    { from: 0, color: "red" },
+    { from: 34, color: "yellow" },
+    { from: 67, color: "green" },
+  ];
+  it("switches colour hard at each threshold inside the span", () => {
+    expect(bandStops(100, 0, bands)).toEqual([
+      { offset: 0, color: "green" },
+      { offset: 0.33, color: "green" },
+      { offset: 0.33, color: "yellow" },
+      { offset: 0.66, color: "yellow" },
+      { offset: 0.66, color: "red" },
+      { offset: 1, color: "red" },
+    ]);
   });
-  it("bands Energy like Recovery with [34, 67]", () => {
-    const { rows } = splitByBand([{ x: 0, y: 33.9 }, { x: 1, y: 67 }], [34, 67]);
-    expect(rows[0].b0).toBe(33.9);
-    expect(rows[1].b2).toBe(67);
+  it("skips thresholds outside the span", () => {
+    expect(bandStops(60, 40, bands)).toEqual([
+      { offset: 0, color: "yellow" },
+      { offset: 1, color: "yellow" },
+    ]);
   });
 });
 

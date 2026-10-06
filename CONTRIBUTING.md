@@ -68,8 +68,11 @@ that passes CI and gets a review, and it lands as one squashed commit.
   made-up number.
 - **Causality.** A day's scores depend only on that day and earlier days.
 - **UI from the kit.** Screens are built from the shells and kit components with the design tokens in
-  `src/app/globals.css`; no new CSS files. Check every UI change at 361 px (a phone) and 1440 px (a laptop).
-  The UI contract is [docs/design/spec.md](docs/design/spec.md).
+  `src/app/globals.css`; no new CSS files. Check every UI change at 361 px (a phone) and 1440 px (a laptop),
+  in a browser, before you open the pull request: a layout read from the code is a guess. Check touch too (tap,
+  drag, scroll) where the change has it. The UI contract is [docs/design/spec.md](docs/design/spec.md).
+- **App icons and launch screens are generated.** Edit their sources and run `pnpm pwa:assets`; never edit the
+  PNGs in `public/icons` or `public/splash` by hand ([docs/pwa.md](docs/pwa.md#rebrand-it-for-your-fork)).
 - **Tests beside the code.** Algorithms get golden-value or property tests; queries get tests on an in-process
   Postgres (`src/server/testing.ts`). Every query is scoped to a user; extend `queries/isolation.test.ts` for new screens.
 - **Database changes** go through `pnpm db:generate`; migrations run at boot.

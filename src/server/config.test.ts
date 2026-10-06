@@ -55,6 +55,18 @@ describe("parseConfig", () => {
     expect(parseConfig({}).coachMock).toBe(false);
   });
 
+  it("android: package name and fingerprints together, fingerprints uppercased and split; off by default", () => {
+    const fp = Array.from({ length: 32 }, () => "ab").join(":");
+    expect(parseConfig({}).android).toBeNull();
+    expect(parseConfig({ ANDROID_PACKAGE_NAME: "in.portlabs.pulse", ANDROID_CERT_SHA256: `${fp}, ${fp.toUpperCase()}` }).android).toEqual({
+      packageName: "in.portlabs.pulse",
+      fingerprints: [fp.toUpperCase(), fp.toUpperCase()],
+    });
+    expect(() => parseConfig({ ANDROID_PACKAGE_NAME: "in.portlabs.pulse" })).toThrow(/ANDROID_CERT_SHA256: required together/);
+    expect(() => parseConfig({ ANDROID_PACKAGE_NAME: "pulse", ANDROID_CERT_SHA256: fp })).toThrow(/ANDROID_PACKAGE_NAME/);
+    expect(() => parseConfig({ ANDROID_PACKAGE_NAME: "in.portlabs.pulse", ANDROID_CERT_SHA256: "AB:CD" })).toThrow(/ANDROID_CERT_SHA256/);
+  });
+
   it("Google mode without a client ID fails with a named error", () => {
     const env = { ...google, DATA_SOURCE: "google", GOOGLE_CLIENT_ID: undefined };
     expect(() => parseConfig(env)).toThrow(ConfigError);

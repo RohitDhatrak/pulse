@@ -2,9 +2,9 @@
 
 import * as React from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { Bar, CartesianGrid, Cell, ComposedChart, LabelList, Line, ReferenceArea, ReferenceLine, XAxis, YAxis } from "recharts"
+import { Area, Bar, CartesianGrid, Cell, ComposedChart, LabelList, Line, Rectangle, ReferenceArea, ReferenceLine, XAxis, YAxis } from "recharts"
 import { cn } from "@/lib/utils"
-import { DATA_COLORS, deltaTone, recoveryColor, STRESS_COLOR, stressLevel, type GoodDirection } from "@/lib/bands"
+import { DATA_COLORS, deltaTone, recoveryBand, recoveryColor, STRESS_COLOR, stressLevel, type GoodDirection } from "@/lib/bands"
 import { DAY, dayLabel, formatDay, formatValue, spoken, type FormatKey } from "@/lib/format"
 import type { Metric } from "@/lib/reasons"
 import { parseRange, RANGE_DAYS, withParam, type TrendRange } from "@/lib/url"
@@ -15,7 +15,7 @@ import { EmptyState } from "@/components/shells/EmptyState"
 import { MetricState } from "@/components/shells/MetricState"
 import { useOptionalShellCalendar } from "@/components/shells/ShellStatus"
 import { StatusChip, ValueUnit } from "@/components/metrics/primitives"
-import { AXIS, BAR_CURSOR, ChartFigure, GRID, LINE_CURSOR, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation } from "./ChartFrame"
+import { AXIS, BAR_CURSOR, BandGradient, bandPaint, ChartFigure, FadeGradient, GlowDot, GRID, gutterLabel, labelGutter, LINE_CURSOR, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation, wholeTick, type Band } from "./ChartFrame"
 
 export type TrendPoint = {
   date: string
@@ -92,12 +92,36 @@ function colorFor(colorBy: TrendChartProps["colorBy"], v: number) {
   return DATA_COLORS["chart-5"].css
 }
 
+/** The bands a line is coloured by, ascending; null for one-hue metrics. */
+function bandsFor(colorBy: TrendChartProps["colorBy"]): Band[] | null {
+  if (colorBy === "band") return [0, 34, 67].map((from) => ({ from, color: DATA_COLORS[recoveryColor(from)].css }))
+  if (colorBy === "stress") return [0, 1, 2].map((from) => ({ from, color: DATA_COLORS[STRESS_COLOR[stressLevel(from)]].css }))
+  return null
+}
+
+// Text colours for band ticks on the dark card: red uses the lifted red (spec §2.3).
+const BAND_TICK = { green: "var(--recovery-green)", yellow: "var(--recovery-yellow)", red: "var(--recovery-red-text)" } as const
+
+/** A bar that fades from its colour at the top to half at the floor, under a 2 px cap in full colour (WHOOP's Recovery bars). */
+function CapBar(props: { x?: number; y?: number; width?: number; height?: number; payload?: { fill?: string; fillOpacity?: number }; gradientOf: (c: string) => string }) {
+  const { x = 0, y = 0, width = 0, height = 0, payload, gradientOf } = props
+  const c = payload?.fill
+  if (!c || height <= 0) return null
+  return (
+    <g opacity={payload?.fillOpacity ?? 1}>
+      <Rectangle x={x} y={y} width={width} height={height} radius={[4, 4, 0, 0]} fill={`url(#${gradientOf(c)})`} />
+      <Rectangle x={x} y={y} width={width} height={Math.min(2, height)} radius={[2, 2, 0, 0]} fill={c} />
+    </g>
+  )
+}
+
 function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
   const router = useRouter()
   const pathname = usePathname()
   const params = useSearchParams()
   const today = useOptionalShellCalendar()?.today ?? points.at(-1)?.date ?? ""
   const anim = useSeriesAnimation()
+  const uid = React.useId().replace(/:/g, "")
   const fallback = p.defaultRange ?? "m"
   const ranges = p.ranges ?? DEFAULT_RANGES
   const parsed = params.get("r") ? parseRange(params.get("r") ?? undefined) : fallback
@@ -141,6 +165,18 @@ function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
   // character for a rounded-up top tick. Three characters fit the original 32 px.
   const widest = formatValue(p.format, Math.max(0, ...rows.map((r) => r.value ?? 0))).length
   const axisWidth = widest <= 3 ? 32 : 15 + 7 * widest
+
+  const bands = bandsFor(p.colorBy)
+  const lo = values.length ? Math.min(...values) : 0
+  const hi = values.length ? Math.max(...values) : 0
+  // One gradient per bar colour (gradients can't take the referencing bar's colour).
+  const barColors: string[] = [...new Set(rows.flatMap((r) => (r.fill ? [r.fill] : [])))]
+  const gradientOf = (c: string) => `bar-${uid}-${barColors.indexOf(c)}`
+  // Band metrics label their thresholds in band colours; the rest show two ticks above zero, so no bar chart is left without a scale.
+  const bandTicks = p.colorBy === "band" ? [33, 67, 100] : p.colorBy === "stress" ? [1, 2, 3] : undefined
+  const fmtTick = wholeTick((v) => formatValue(p.format, v))
+  const showAvg = !line && range !== "w" && avg !== null
+  const gutter = labelGutter([p.reference?.label, showAvg && "Avg"])
 
   const ticks =
     range === "w"
@@ -223,13 +259,52 @@ function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
           <ComposedChart
             data={rows}
             accessibilityLayer
-            margin={{ top: range === "w" ? 18 : 8, right: 4, bottom: 0, left: 4 }}
+            margin={{ top: range === "w" ? 18 : 8, right: gutter, bottom: 0, left: 4 }}
             onMouseMove={(s) => setActive(s?.activeTooltipIndex == null ? null : Number(s.activeTooltipIndex))}
             onMouseLeave={() => setActive(null)}
           >
             <CartesianGrid {...GRID} />
-            <XAxis dataKey="date" {...AXIS} ticks={ticks} tickFormatter={tickFormat} interval={range === "w" ? 0 : "preserveStartEnd"} minTickGap={8} />
-            <YAxis hide={!line} {...AXIS} width={axisWidth} tickCount={3} domain={domain} tickFormatter={(v: number) => formatValue(p.format, v)} />
+            <defs>
+              {barColors.map((c) => (
+                <FadeGradient key={c} id={gradientOf(c)} color={c} from={1} to={0.5} />
+              ))}
+              {bands && line && <BandGradient id={`line-${uid}`} top={hi} bottom={lo} bands={bands} />}
+              <FadeGradient id={`area-${uid}`} color={line && bands ? "var(--foreground)" : colorFor(p.colorBy, avg ?? 0)} from={0.18} />
+            </defs>
+            <XAxis
+              dataKey="date"
+              {...AXIS}
+              ticks={ticks}
+              interval={range === "w" ? 0 : "preserveStartEnd"}
+              minTickGap={8}
+              // The day the header describes reads bold in the foreground colour (WHOOP's "Wed 17").
+              tick={({ x, y, payload }: { x?: number | string; y?: number | string; payload?: { value: string } }) => {
+                const on = range === "w" && payload?.value === shown?.date
+                return (
+                  <text x={x} y={y} dy="0.71em" textAnchor="middle" fontSize={12} fontWeight={on ? 700 : 500} fill={on ? "var(--foreground)" : "var(--muted-foreground)"}>
+                    {tickFormat(payload?.value ?? "")}
+                  </text>
+                )
+              }}
+            />
+            <YAxis
+              {...AXIS}
+              width={axisWidth}
+              tickCount={3}
+              ticks={line ? undefined : bandTicks}
+              domain={domain}
+              tick={({ x, y, payload }: { x?: number | string; y?: number | string; payload?: { value: number } }) => {
+                const v = Number(payload?.value)
+                // Zero is the floor every bar stands on; a label there only crowds the first day's tick.
+                if (!line && v === 0) return <g />
+                const fill = p.colorBy === "band" && !line ? BAND_TICK[recoveryBand(v)] : "var(--muted-foreground)"
+                return (
+                  <text x={x} y={y} dy="0.32em" textAnchor="end" fontSize={12} fontWeight={p.colorBy === "band" && !line ? 600 : 500} fill={fill}>
+                    {fmtTick(v)}
+                  </text>
+                )
+              }}
+            />
             {p.baseline && (
               <ReferenceArea y1={p.baseline.mean - p.baseline.sd} y2={p.baseline.mean + p.baseline.sd} fill="var(--chart-band)" fillOpacity={1} ifOverflow="extendDomain" />
             )}
@@ -239,17 +314,12 @@ function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
                 stroke="var(--chart-cursor)"
                 strokeDasharray="4 4"
                 ifOverflow="extendDomain"
-                label={{ value: p.reference.label, position: "insideTopRight", fill: "var(--muted-foreground)", fontSize: 11 }}
+                label={gutterLabel(p.reference.label, "var(--muted-foreground)")}
               />
             )}
             {/* the reference app's month bars carry a dashed average line [latest-trends-1] (spec §11 F21). */}
-            {!line && range !== "w" && avg !== null && (
-              <ReferenceLine
-                y={avg}
-                stroke="var(--chart-cursor)"
-                strokeDasharray="3 3"
-                label={{ value: "Avg", position: "insideBottomLeft", fill: "var(--foreground-secondary)", fontSize: 11, fontWeight: 600 }}
-              />
+            {showAvg && (
+              <ReferenceLine y={avg} stroke="var(--chart-cursor)" strokeDasharray="3 3" label={gutterLabel("Avg")} />
             )}
             {p.target && <ReferenceArea y1={p.target[0]} y2={p.target[1]} fill="var(--dial-target)" fillOpacity={0.3} ifOverflow="extendDomain" />}
             <ChartTooltip
@@ -288,21 +358,25 @@ function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
                 />
               }
             />
+            {line && (
+              <Area dataKey="value" type="monotone" stroke="none" fill={`url(#area-${uid})`} connectNulls={false} activeDot={false} tooltipType="none" {...anim} />
+            )}
             {line ? (
               <Line
                 dataKey="value"
                 type="monotone"
-                stroke="var(--foreground-secondary)"
-                strokeWidth={1.5}
+                // Band metrics colour the line by the band it passes through (Bevel's Strain trend); one-hue metrics keep it quiet.
+                stroke={bands ? bandPaint(`line-${uid}`, hi, lo, bands) : "var(--foreground-secondary)"}
+                strokeWidth={bands ? 2 : 1.5}
                 connectNulls={false}
                 dot={(d: { cx?: number; cy?: number; index?: number; payload?: (typeof rows)[number] }) =>
                   d.payload?.value == null || d.cx == null || d.cy == null ? (
                     <g key={d.index} />
                   ) : (
-                    <circle key={d.index} cx={d.cx} cy={d.cy} r={3} fill={d.payload.fill} fillOpacity={d.payload.fillOpacity} />
+                    <circle key={d.index} cx={d.cx} cy={d.cy} r={d.index === rows.length - 1 ? 4 : 2.5} fill={d.payload.fill} fillOpacity={d.payload.fillOpacity} stroke={d.index === rows.length - 1 ? "var(--card)" : "none"} strokeWidth={2} />
                   )
                 }
-                activeDot={{ r: 5, strokeWidth: 0 }}
+                activeDot={(d: { cx?: number; cy?: number; payload?: (typeof rows)[number] }) => <GlowDot cx={d.cx} cy={d.cy} fill={d.payload?.fill} />}
                 {...anim}
               />
             ) : p.stack ? (
@@ -323,7 +397,7 @@ function Trend({ points, p }: { points: TrendPoint[]; p: TrendChartProps }) {
                 </Bar>
               ))
             ) : (
-              <Bar dataKey="value" radius={[3, 3, 0, 0]} maxBarSize={28} {...anim}>
+              <Bar dataKey="value" maxBarSize={28} shape={(b: object) => <CapBar {...b} gradientOf={gradientOf} />} {...anim}>
                 {range === "w" && <LabelList dataKey="text" position="top" fill="var(--foreground)" fontSize={11} />}
               </Bar>
             )}

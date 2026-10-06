@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { cn } from "@/lib/utils"
-import { deltaTone, GOOD_DIRECTION } from "@/lib/bands"
+import { DATA_COLORS, deltaTone, GOOD_DIRECTION } from "@/lib/bands"
 import { durationWords, hmm, statSentence } from "@/lib/format"
 import type { Metric } from "@/lib/reasons"
 import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
@@ -120,10 +120,11 @@ function Rows({ night, selected, onSelect }: { night: SleepStagesNight; selected
                   <span
                     key={g.start}
                     className={cn(
-                      "absolute inset-y-0 min-w-0.5 rounded-[2px] bg-foreground/80 transition-opacity duration-150 ease-standard",
+                      "absolute inset-y-0 min-w-0.5 rounded-[2px] transition-opacity duration-150 ease-standard",
                       !on && "opacity-35"
                     )}
-                    style={{ left: `${((g.start - night.bed) / span) * 100}%`, width: `${((g.end - g.start) / span) * 100}%` }}
+                    // In the stage's own colour, as on the hypnogram above, so a row reads as that lane.
+                    style={{ background: DATA_COLORS[`stage-${r.stage}`].css, left: `${((g.start - night.bed) / span) * 100}%`, width: `${((g.end - g.start) / span) * 100}%` }}
                   />
                 ))}
               </span>
@@ -148,7 +149,7 @@ export function SleepStages({ hours, hr, data }: SleepStagesProps) {
       metric={hours}
       skeleton={<SleepStagesSkeleton />}
       renderReason={(r, meta) => (
-        <div className="grid min-h-40 place-items-center">
+        <div className="grid place-items-center">
           <ReasonPlaceholder reason={r} nightsLeft={meta.nightsLeft} size="md" />
         </div>
       )}

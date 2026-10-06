@@ -7,6 +7,7 @@ import { and, asc, count, desc, eq, gt, isNotNull, isNull, max, sql } from "driz
 import { getConfig } from "./config";
 import type { Db } from "./db";
 import { account, coachSettings, invites, oauthTokens, serverSettings, session, user } from "./db/schema";
+import { revokeGrant } from "./sources/google/oauth";
 
 export const INVITE_DAYS = 7;
 const now = () => Math.floor(Date.now() / 1000);
@@ -179,6 +180,7 @@ export async function resetPassword(db: Db, userId: number): Promise<string> {
 /** Deletes an account and, through the cascades, all its data and sessions. Refuses admins: demote first. */
 export async function deleteAccount(db: Db, userId: number): Promise<"ok" | "admin"> {
   if (await isAdmin(db, userId)) return "admin";
+  await revokeGrant(db, userId); // the cascade only forgets the Google token; revoke it there first
   await db.delete(user).where(eq(user.id, userId));
   return "ok";
 }

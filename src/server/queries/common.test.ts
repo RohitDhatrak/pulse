@@ -37,4 +37,13 @@ describe("daySpans", () => {
     expect(stress?.spans.length).toBeGreaterThan(0);
     expect(stress?.spans).toEqual(hr?.spans);
   });
+
+  it("an activity window marks workouts only, never the sleep or naps it overlaps", async () => {
+    const ctx = ctxFor(db);
+    const rows = await loadDays(ctx, days[0], days[days.length - 1]);
+    const day = days.find((d) => (rows.get(d)?.sleep?.naps.length ?? 0) > 0)!;
+    const start = dayStartOf(ctx, day);
+    const hr = (await hrChart(ctx, rows.get(day), day, false, start, start + 86_400)).value;
+    expect(hr?.spans.every((s) => s.kind === "workout")).toBe(true);
+  });
 });

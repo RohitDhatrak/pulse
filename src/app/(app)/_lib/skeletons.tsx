@@ -26,7 +26,7 @@ import { CAPTION, LABEL, LEGEND, STAT_ICON } from "./view"
 const rows = (n: number, Row: (i: number) => React.ReactNode) => Array.from({ length: n }, (_, i) => <Fragment key={i}>{Row(i)}</Fragment>)
 
 const SUMMARY: Record<string, string[]> = {
-  Strain: ["Strain Target", "Light and moderate zones", "Vigorous and peak zones", "Strength activity time", "Steps"],
+  Strain: ["Strain Target", "Heart rate zones 1-3", "Heart rate zones 4-5", "Strength activity time", "Steps"],
   Sleep: ["Hours vs. needed", "Sleep consistency", "Sleep efficiency", "Restorative sleep"],
 }
 

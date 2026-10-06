@@ -3,7 +3,7 @@
 // Pages, Server Actions and route handlers each look the session up themselves: the proxy only checks that a session
 // cookie exists.
 import { betterAuth } from "better-auth";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { nextCookies } from "better-auth/next-js";
 import { username } from "better-auth/plugins";
@@ -13,14 +13,17 @@ import { claimInvite, inviteUsedBy, isOwnerEmail, signupMode, userCount } from "
 import { getConfig } from "./config";
 import { type Db, getDb } from "./db";
 import * as schema from "./db/schema";
-import { DEMO_SECRET } from "./demo";
+import { DEMO_EMAIL, DEMO_SECRET } from "./demo";
 import { ensureDefaultTags } from "./journalTags";
+import { revokeGrant } from "./sources/google/oauth";
 
 export const MIN_PASSWORD = 10;
 export const MAX_PASSWORD = 128;
 export const USERNAME_RE = /^[a-z0-9_.]{3,30}$/;
 /** The sign-up form sends the invite token in this header (the sign-up body has a fixed shape). */
 export const INVITE_HEADER = "x-pulse-invite";
+
+const DEMO_LOCKED = new Set(["/change-password", "/change-email", "/update-user", "/delete-user", "/revoke-session", "/revoke-sessions", "/revoke-other-sessions"]);
 
 function createAuth(db: Db) {
   const cfg = getConfig();
@@ -39,7 +42,24 @@ function createAuth(db: Db) {
       autoSignIn: true,
       revokeSessionsOnPasswordReset: true,
     },
-    user: { deleteUser: { enabled: true } },
+    user: {
+      deleteUser: {
+        enabled: true,
+        // Revoke at Google first (as Disconnect does): the cascade only forgets the token, it stays valid there.
+        // A network failure throws, so the account stays and the person can retry.
+        beforeDelete: async (u) => {
+          await revokeGrant(db, Number(u.id));
+        },
+      },
+    },
+    // The shared demo account's password is public: visitors must not change it, delete it or end each other's sessions.
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (!DEMO_LOCKED.has(ctx.path)) return;
+        if ((await getSessionFromCtx(ctx))?.user.email === DEMO_EMAIL)
+          throw new APIError("FORBIDDEN", { message: "The demo account can't be changed.", code: "DEMO_LOCKED" });
+      }),
+    },
     databaseHooks: {
       user: {
         create: {

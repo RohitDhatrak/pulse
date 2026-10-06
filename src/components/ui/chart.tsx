@@ -10,6 +10,8 @@ import { LOCALE } from "@/lib/format"
 const THEMES = { light: "", dark: ".dark" } as const
 
 const INITIAL_DIMENSION = { width: 320, height: 200 } as const
+/** How long a touched chart's tooltip stays after the finger lifts. */
+const TOOLTIP_LINGER_MS = 1500
 type TooltipNameType = number | string
 
 export type ChartConfig = Record<
@@ -58,10 +60,42 @@ function ChartContainer({
 }) {
   const uniqueId = React.useId()
   const chartId = `chart-${id ?? uniqueId.replace(/:/g, "")}`
+  // On a phone the tooltip stuck: a tap focuses the chart's keyboard layer (the <svg> is a tab stop) and a focused
+  // chart keeps its tooltip up, and Recharts keeps the last touched point active after the finger lifts. So once the
+  // finger lifts, the tooltip stays a moment for reading (a tap shows it through the mouse events that follow the
+  // touch) and then goes, or at once when the page scrolls. Going means dropping that focus (a keyboard never lifts a
+  // finger, so tabbing still works) and telling the chart the pointer left (React reads mouseleave from mouseout).
+  // The lift is heard on the touched node as well as the window: a chart that redraws under the finger (Trends)
+  // detaches that node, and a detached node's touchend reaches no ancestor. Touch events, not pointer events: the
+  // browser cancels the pointer once a drag could pan the page, while Recharts goes on scrubbing with touchmove.
+  const ref = React.useRef<HTMLDivElement>(null)
+  const pending = React.useRef<AbortController | null>(null)
+  React.useEffect(() => () => pending.current?.abort(), [])
+  const touchStart = (e: React.TouchEvent) => {
+    pending.current?.abort()
+    const done = (pending.current = new AbortController())
+    const hide = () => {
+      done.abort()
+      const el = ref.current
+      if (!el) return
+      if (document.activeElement instanceof SVGElement && el.contains(document.activeElement)) document.activeElement.blur()
+      el.querySelector(".recharts-wrapper")?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }))
+    }
+    const lift = (ev: Event) => {
+      if ((ev as TouchEvent).touches?.length) return
+      const timer = setTimeout(hide, TOOLTIP_LINGER_MS)
+      done.signal.addEventListener("abort", () => clearTimeout(timer))
+      addEventListener("scroll", hide, { signal: done.signal, passive: true })
+    }
+    for (const target of [e.target, window])
+      for (const type of ["touchend", "touchcancel"]) target.addEventListener(type, lift, { signal: done.signal, once: true })
+  }
 
   return (
     <ChartContext.Provider value={{ config }}>
       <div
+        ref={ref}
+        onTouchStart={touchStart}
         data-slot="chart"
         data-chart={chartId}
         className={cn(

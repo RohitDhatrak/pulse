@@ -38,6 +38,7 @@ export async function sendPush(db: Db, userId: number, payload: PushPayload, sub
           await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, body, {
             vapidDetails: { subject: vapid.subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey },
             TTL: 6 * 3600,
+            timeout: 10_000, // a push service that never answers must not hold the worker cycle for every user
           });
         } catch (err) {
           const status = (err as { statusCode?: number }).statusCode;

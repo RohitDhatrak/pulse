@@ -77,7 +77,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
         rows: [
           { term: "Heart rate", detail: "Every reading from local midnight to midnight, sleep included. Each reading covers the gap to the next one, up to 2\u00a0minutes." },
           { term: "Resting heart rate", detail: "Fitbit’s daily value from Google, else last night’s sleeping resting heart rate, else 60\u00a0bpm." },
-          { term: "Max heart rate", detail: "The value in Settings; else the top of your Peak zone from Google; else 208 − 0.7 × your age." },
+          { term: "Max heart rate", detail: "The value in Settings; else 208 − 0.7 × your age." },
         ],
       },
       {
@@ -110,7 +110,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
         title: "Limits",
         paragraphs: [
           "Strain needs at least 600 heart-rate readings, or 20 spread over at least 10\u00a0minutes; otherwise the day shows Not enough data. Today’s Strain is a running total until midnight. Each activity also gets its own Strain from the heart rate during it.",
-          "Heart rate misses effort that barely raises it, such as heavy lifting with long rests. The zone chart uses Google’s heart-rate zones for the day (Light, Moderate, Vigorous, Peak), or % of max heart rate on a day Google has none, while Strain uses its own steps of heart-rate reserve, so the two do not line up exactly.",
+          "Heart rate misses effort that barely raises it, such as heavy lifting with long rests. The zone chart and Strain use the same five zones on your heart-rate reserve (max minus resting heart rate): Zone 1 starts at resting + 50% of the reserve, then 60, 70, 80 and 90%. Below Zone 1 is not counted as a zone.",
         ],
       },
     ],
@@ -257,8 +257,8 @@ export const SCORE_DOCS: ScoreDoc[] = [
           { term: "Steps", detail: "Reference and cap: 10,000 a day under 60, 8,000 from 60." },
           { term: "Sleep hours", detail: "Reference 7.5\u00a0hours; 7 to 8\u00a0scores the same." },
           { term: "Sleep consistency", detail: "Reference 86.3." },
-          { term: "Light and moderate zones", detail: "Google’s daily time in its Light and Moderate zones. Reference 150\u00a0minutes a week." },
-          { term: "Vigorous and peak zones", detail: "Google’s daily time in its Vigorous and Peak zones. Reference 75\u00a0minutes a week." },
+          { term: "Heart rate zones 1-3", detail: "Daily time at 50-80% of your heart-rate reserve. Reference 150\u00a0minutes a week." },
+          { term: "Heart rate zones 4-5", detail: "Daily time at 80% of your heart-rate reserve and above. Reference 75\u00a0minutes a week." },
           { term: "Strength activity", detail: "Reference 40\u00a0minutes a week." },
           { term: "Lean body mass", detail: "Fat-free mass for your height. Needs weight, body fat and height." },
         ],
@@ -282,7 +282,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "On a day Google has no time in zones, Pulse counts them from your heart rate instead. Pulse Age needs 5 of the 9 inputs, is Provisional until 20\u00a0days have data, stays within 15\u00a0years of your age and updates weekly. Pace of Aging is provisional until your data spans 6\u00a0months. Both rest on population studies, not a clinical test of your body.",
+          "Time in zones is counted by Pulse from your heart rate, on the same five zones as Strain. Pulse Age needs 5 of the 9 inputs, is Provisional until 20\u00a0days have data, stays within 15\u00a0years of your age and updates weekly. Pace of Aging is provisional until your data spans 6\u00a0months. Both rest on population studies, not a clinical test of your body.",
         ],
       },
     ],

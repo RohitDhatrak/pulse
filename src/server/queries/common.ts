@@ -332,7 +332,7 @@ export function timelineOf(row: DayRow | undefined, day: string, exs: ExerciseRo
   if (s?.main) items.push({ kind: "sleep", id: s.main.id, day, minutes: s.main.asleepMin, start: ms(s.main.start), end: ms(s.main.end) });
   for (const n of s?.naps ?? []) items.push({ kind: "nap", id: n.id, day, minutes: n.asleepMin, start: ms(n.start), end: ms(n.end) });
   for (const e of exs) items.push(activityItem(e, row));
-  return items.sort((a, b) => a.start - b.start);
+  return items.sort((a, b) => b.start - a.start); // newest first, like the Activities page
 }
 
 const SPAN_LABEL: Record<ActivityKind, string> = { run: "Run", ride: "Ride", walk: "Walk", strength: "Strength", workout: "Workout" };

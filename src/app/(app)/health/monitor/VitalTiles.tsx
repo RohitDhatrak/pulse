@@ -18,6 +18,11 @@ const ICON: Record<VitalKey, React.ReactNode> = {
   skinTempDev: <Thermometer />,
 }
 const FORMAT: Record<VitalKey, FormatKey> = { resp: "decimal1", spo2: "int", restingHr: "int", hrv: "int", skinTempDev: "signed1" }
+/**
+ * Five tiles: two a row below laptop, the fifth a full-width strip with its 30-night sparkline; five a row on laptop.
+ * Tablet once ran a 3 + 2 six-column grid whose two stretched tiles were half empty.
+ */
+const GRID = "grid grid-cols-2 gap-3 *:last:col-span-2 xl:grid-cols-5 xl:gap-4 xl:*:last:col-span-1"
 const NOTE = "Resting heart rate, HRV and skin temperature use Google’s personal ranges when it has them; otherwise your range is your baseline ± 2 SD over 60 nights."
 
 /** The five vital tiles, each opening its vital sheet (journey 6), plus the ranges note cell. */
@@ -34,11 +39,15 @@ export function VitalTiles({ vitals }: { vitals: Vital[] }) {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5 xl:gap-4">
-        {vitals.map((x) => (
+      <div className={GRID}>
+        {vitals.map((x, i) => (
           <KeyStatRow
             key={x.key}
             variant="tile"
+            // The fifth tile spans the row below laptop (GRID): a wide strip with its range on the right.
+            wide={i === vitals.length - 1 && "xl"}
+            // Its last 30 nights with the normal range shaded fill the strip's spare width.
+            spark={{ values: x.trend.points.slice(-30).map((p) => p.value), band: x.range, caption: "Last 30 nights" }}
             icon={ICON[x.key]}
             // the reference app's tiles abbreviate the two heart metrics ("RHR", "HRV") [latest-health-monitor-1]; the sheet keeps the full name.
             label={x.key === "restingHr" || x.key === "hrv" ? x.short : x.label}
@@ -53,9 +62,8 @@ export function VitalTiles({ vitals }: { vitals: Vital[] }) {
             }}
           />
         ))}
-        <p className="p-4 text-xs leading-4 font-medium text-pretty text-muted-foreground xl:hidden">{NOTE}</p>
       </div>
-      <p className="mt-3 hidden text-xs leading-4 font-medium text-muted-foreground xl:block">{NOTE}</p>
+      <p className="mt-3 text-xs leading-4 font-medium text-pretty text-muted-foreground">{NOTE}</p>
 
       <ResponsiveSheet open={!!current} onOpenChange={(o) => !o && setOpen(null)} title={v?.label ?? "Vital"}>
         {v && (
@@ -98,13 +106,12 @@ const SKELETON_LABEL: [VitalKey, string][] = [
 export function VitalTilesSkeleton() {
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5 xl:gap-4">
+      <div className={GRID}>
         {SKELETON_LABEL.map(([k, l]) => (
           <KeyStatRowSkeleton key={k} variant="tile" label={l} icon={ICON[k]} />
         ))}
-        <p className="p-4 text-xs leading-4 font-medium text-pretty text-muted-foreground xl:hidden">{NOTE}</p>
       </div>
-      <p className="mt-3 hidden text-xs leading-4 font-medium text-muted-foreground xl:block">{NOTE}</p>
+      <p className="mt-3 text-xs leading-4 font-medium text-pretty text-muted-foreground">{NOTE}</p>
     </>
   )
 }

@@ -7,8 +7,16 @@ import { EmptyState } from "@/components/shells/EmptyState"
 import { MetricState } from "@/components/shells/MetricState"
 import { LABEL } from "@/components/metrics/primitives"
 
-/** `zone` 1-4 orders the rows; `label` names it (Light, Moderate, Vigorous, Peak). */
-export type ZoneRow = { zone: number; label: string; min: number; max: number | null; seconds: number }
+/** `zone` 1-5 orders the rows; `label` names it ("Zone 1"). */
+export type ZoneRow = {
+  zone: number
+  label: string
+  min: number
+  max: number | null
+  seconds: number
+  /** Activity only: the mean seconds and share (0-1) in this zone over the last 30 days of the same kind. */
+  typical?: { seconds: number; share: number }
+}
 export type StackedSegment = { key: string; label: string; count: number; color: DataColor }
 
 export type ZoneBarsProps =
@@ -28,6 +36,9 @@ export type ZoneBarsProps =
       emptyCopy?: string
     }
 
+/** Each zone's fill, cool to hot as WHOOP colours them: grey-blue, blue, green, orange, red. */
+export const ZONE_COLOR: Record<number, DataColor> = { 1: "sleep", 2: "strain", 3: "optimal", 4: "warning", 5: "recovery-red" }
+
 function share(part: number, total: number) {
   if (!total || !part) return "0%"
   const p = (part / total) * 100
@@ -37,6 +48,17 @@ function share(part: number, total: number) {
 function Rows({ zones, note }: { zones: ZoneRow[]; note?: string }) {
   const total = zones.reduce((a, z) => a + z.seconds, 0)
   const sorted = [...zones].sort((a, b) => b.zone - a.zone)
+  // No time in any zone (an easy walk): one line that says so, not four greyed rows of 0:00:00.
+  const lowest = sorted.at(-1)
+  if (!total && lowest)
+    return (
+      <div className="flex flex-1 flex-col justify-center">
+        <p className="rounded-lg bg-secondary px-3 py-3 text-[15px] leading-[22px] text-pretty text-foreground-secondary">
+          Heart rate stayed under the {lowest.label} zone ({lowest.min}{"\u00a0"}bpm) the whole time.
+        </p>
+        {note && <p className="mt-3 text-xs leading-4 font-medium text-muted-foreground">{note}</p>}
+      </div>
+    )
   return (
     // In a stretched card (Strain's Time in zones beside two stacked cards) the rows share the spare height
     // evenly instead of leaving it under the last row (SYM5). In a natural-height parent nothing grows.
@@ -57,19 +79,33 @@ function Rows({ zones, note }: { zones: ZoneRow[]; note?: string }) {
                 <span className={LABEL}>{z.label}</span>
                 <span className={cn(LABEL, "font-numeric text-muted-foreground")}>{range}</span>
                 <span className={cn(LABEL, "font-numeric text-foreground-secondary")}>{sh}</span>
+                {z.typical && Math.round((z.seconds - z.typical.seconds) / 60) !== 0 && (
+                  <span className={cn(LABEL, "font-numeric", z.seconds > z.typical.seconds ? "text-foreground" : "text-muted-foreground")}>
+                    {z.seconds > z.typical.seconds ? "+" : "\u2212"}
+                    {Math.abs(Math.round((z.seconds - z.typical.seconds) / 60))}
+                    {"\u00a0"}min
+                  </span>
+                )}
                 <span className="ml-auto font-numeric text-lg leading-6 font-bold tabular-nums">
                   {hmm(minutes)}
                   <span className="text-xs text-muted-foreground">:{String(t % 60).padStart(2, "0")}</span>
                 </span>
               </div>
               <div aria-hidden className="relative h-2 rounded-sm bg-(image:--pattern-hatch)">
-                <div className="absolute inset-y-0 left-0 rounded-sm bg-foreground" style={{ width: total ? `${(z.seconds / total) * 100}%` : 0 }} />
+                <div className={cn("absolute inset-y-0 left-0 rounded-sm", ZONE_COLOR[z.zone] ? DATA_COLORS[ZONE_COLOR[z.zone]].bg : "bg-foreground")} style={{ width: total ? `${(z.seconds / total) * 100}%` : 0 }} />
+                {/* Your typical share for this kind of activity: a tick through the track (WHOOP's typical-range marker). */}
+                {z.typical && <div className="absolute -inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground" style={{ left: `${Math.min(100, z.typical.share * 100)}%` }} />}
               </div>
             </li>
           )
         })}
       </ul>
-      {note && <p className="mt-3 text-xs leading-4 font-medium text-muted-foreground">{note}</p>}
+      {(note || sorted.some((z) => z.typical)) && (
+        <p className="mt-3 text-xs leading-4 font-medium text-muted-foreground">
+          {sorted.some((z) => z.typical) && "Tick: your typical share for this kind of activity. "}
+          {note}
+        </p>
+      )}
     </div>
   )
 }
@@ -126,7 +162,7 @@ export function ZoneBarsSkeleton({ variant }: { variant: "rows" | "stacked" }) {
     return (
       // Each zone row's own box: the real zone name, bars for range and time, the hatched track.
       <div aria-hidden className="space-y-2">
-        {["Peak", "Vigorous", "Moderate", "Light"].map((k) => (
+        {["Zone 5", "Zone 4", "Zone 3", "Zone 2", "Zone 1"].map((k) => (
           <div key={k} className="space-y-2 rounded-lg bg-secondary px-3 py-2.5">
             <div className="flex items-center gap-3">
               <span className={LABEL}>{k}</span>

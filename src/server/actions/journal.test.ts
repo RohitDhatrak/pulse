@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db";
 import { intradayDirty, journalEntries, journalTags } from "../db/schema";
-import { DEFAULT_JOURNAL_TAGS, ensureDefaultTags } from "../journalTags";
+import { DEFAULT_JOURNAL_TAGS, ensureDefaultTags, MAX_TAGS } from "../journalTags";
 import { needsRecompute } from "../pipeline";
 import { saveProfile } from "../profile";
 import { addUser, freshDb, USER } from "../testing";
@@ -125,12 +125,22 @@ describe("loadCheckIn", () => {
     expect(r.ok && r.data.tags.some((t) => t.tag === "alcohol")).toBe(true);
     expect(await loadCheckIn("2026-10-04")).toMatchObject({ ok: false });
     expect(await loadCheckIn("nope")).toMatchObject({ ok: false });
+    // Too far back: the sheet's day strip would run from that day to today.
+    expect(await loadCheckIn("2010-01-01")).toMatchObject({ ok: false });
     h.user = null;
     expect(await loadCheckIn("2026-10-01")).toMatchObject({ ok: false });
   });
 });
 
 describe("addCustomTag", () => {
+  it("stops at MAX_TAGS, so insights work per recompute stays bounded", async () => {
+    h.user = { ...ME, userId: other };
+    const have = (await db.select().from(journalTags).where(eq(journalTags.userId, other))).length;
+    for (let i = have; i < MAX_TAGS; i++) expect((await addCustomTag({ label: `Cap ${i}` })).ok).toBe(true);
+    expect(await addCustomTag({ label: "One more" })).toEqual({ ok: false, error: `Too many behaviours: the limit is ${MAX_TAGS}` });
+    h.user = ME;
+  });
+
   it("validates the label and rejects duplicates", async () => {
     expect(await addCustomTag({ label: "  Late  Workout! " })).toEqual({ ok: true, data: { tag: "late_workout" } });
     expect(await addCustomTag({ label: "late workout" })).toEqual({ ok: false, error: "Tag already exists: late_workout" });

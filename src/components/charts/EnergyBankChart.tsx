@@ -1,8 +1,9 @@
 "use client"
 
-import { Area, CartesianGrid, ComposedChart, Line, ReferenceArea, ReferenceDot, XAxis, YAxis } from "recharts"
+import * as React from "react"
+import { Area, CartesianGrid, ComposedChart, Line, ReferenceDot, XAxis, YAxis } from "recharts"
 import { DATA_COLORS, recoveryColor } from "@/lib/bands"
-import { hourTicks, splitByBand } from "@/lib/charts"
+import { bandColor, hourTicks } from "@/lib/charts"
 import { clock, formatValue } from "@/lib/format"
 import type { Metric } from "@/lib/reasons"
 import { ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
@@ -11,7 +12,8 @@ import { EmptyState } from "@/components/shells/EmptyState"
 import { MetricState } from "@/components/shells/MetricState"
 import { useOptionalShellCalendar } from "@/components/shells/ShellStatus"
 import { ReasonPlaceholder } from "@/components/metrics/ReasonPlaceholder"
-import { AXIS, ChartFigure, GRID, LINE_CURSOR, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation } from "./ChartFrame"
+import { AXIS, BandGradient, bandPaint, ChartFigure, FadeGradient, GlowDot, GRID, LINE_CURSOR, Pill, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation, type Band } from "./ChartFrame"
+import { spanAreas } from "./IntradayHrChart"
 
 export type EnergySeries = {
   /** Reserve 0-100 from wake to now (today) or to sleep (past days). */
@@ -24,14 +26,16 @@ export type EnergySeries = {
 export type EnergyBankChartProps = { data: Metric<EnergySeries> | null | undefined }
 
 // Energy bands like Recovery: red ≤ 33, yellow 34-66, green ≥ 67.
-const BANDS = [34, 67]
-const BAND_STROKE = [DATA_COLORS["recovery-red"].css, DATA_COLORS["recovery-yellow"].css, DATA_COLORS["recovery-green"].css]
+const BANDS: Band[] = [0, 34, 67].map((from) => ({ from, color: DATA_COLORS[recoveryColor(from)].css }))
 
 function Chart({ e }: { e: EnergySeries }) {
   const tz = useOptionalShellCalendar()?.timeZone
   const anim = useSeriesAnimation()
-  const { rows, keys } = splitByBand(e.points.map((p) => ({ x: p.t, y: p.value })), BANDS)
-  const data = rows.map((r, i) => ({ ...r, all: e.points[i].value }))
+  const id = React.useId().replace(/:/g, "")
+  const data = e.points.map((p) => ({ x: p.t, all: p.value }))
+  const vals = e.points.flatMap((p) => (p.value === null ? [] : [p.value]))
+  const top = Math.max(...vals)
+  const bottom = Math.min(...vals)
   const first = e.points[0]?.t ?? 0
   const last = e.points.at(-1)?.t ?? 0
   const latest = [...e.points].reverse().find((p) => p.value !== null)
@@ -44,17 +48,11 @@ function Chart({ e }: { e: EnergySeries }) {
     <ChartFigure summary={summary} config={{ all: { label: "Energy", color: "var(--recovery-green)" } }} className="h-[140px]">
       <ComposedChart data={data} accessibilityLayer margin={{ top: 18, right: 8, bottom: 0, left: 0 }}>
         <CartesianGrid {...GRID} />
-        {e.naps?.map((n) => (
-          <ReferenceArea
-            key={n.start}
-            x1={n.start}
-            x2={n.end}
-            fill="var(--sleep)"
-            fillOpacity={0.12}
-            ifOverflow="hidden"
-            label={{ value: "Nap", position: "insideTop", fill: "var(--foreground-secondary)", fontSize: 11 }}
-          />
-        ))}
+        <defs>
+          <BandGradient id={`energy-${id}`} top={top} bottom={bottom} bands={BANDS} />
+          <FadeGradient id={`energy-fill-${id}`} color={bandColor(latest?.value ?? top, BANDS)} from={0.24} />
+        </defs>
+        {spanAreas(e.naps?.map((n) => ({ kind: "sleep" as const, start: n.start, end: n.end, label: "Nap" })))}
         <XAxis dataKey="x" type="number" scale="time" domain={[first, last]} ticks={hourTicks(first, last, 6, tz)} tickFormatter={(v: number) => clock(v, tz)} interval="preserveStartEnd" minTickGap={24} {...AXIS} />
         <YAxis domain={[0, 100]} ticks={[33, 67, 100]} width={28} {...AXIS} tickMargin={4} />
         <ChartTooltip
@@ -71,10 +69,17 @@ function Chart({ e }: { e: EnergySeries }) {
             />
           }
         />
-        <Area dataKey="all" type="monotone" stroke="none" fill="var(--foreground)" fillOpacity={0.06} connectNulls={false} activeDot={false} {...anim} />
-        {keys.map((k, i) => (
-          <Line key={k} dataKey={k} type="monotone" stroke={BAND_STROKE[i]} strokeWidth={2} dot={false} activeDot={false} connectNulls={false} tooltipType="none" {...anim} />
-        ))}
+        <Area dataKey="all" type="monotone" stroke="none" fill={`url(#energy-fill-${id})`} connectNulls={false} activeDot={false} tooltipType="none" {...anim} />
+        <Line
+          dataKey="all"
+          type="monotone"
+          stroke={bandPaint(`energy-${id}`, top, bottom, BANDS)}
+          strokeWidth={2}
+          dot={false}
+          activeDot={(d: { cx?: number; cy?: number; payload?: { all: number | null } }) => <GlowDot cx={d.cx} cy={d.cy} fill={bandPaint("", d.payload?.all ?? 0, d.payload?.all ?? 0, BANDS)} />}
+          connectNulls={false}
+          {...anim}
+        />
         {drains.map((d) => {
           const y = valueAt(d.t)
           return y === null ? null : (
@@ -85,7 +90,17 @@ function Chart({ e }: { e: EnergySeries }) {
               r={3}
               fill="var(--warning)"
               stroke="none"
-              label={{ value: `${formatValue("int", -d.amount)} ${d.label}`, position: "top", fill: "var(--warning)", fontSize: 11 }}
+              // A pill chip above the point, so the drain reads as a marker, not loose text over the line.
+              label={({ viewBox }: { viewBox?: { x?: number; y?: number; width?: number } }) => (
+                <Pill
+                  x={(viewBox?.x ?? 0) + (viewBox?.width ?? 0) / 2}
+                  y={(viewBox?.y ?? 0) - 12}
+                  anchor="middle"
+                  text={`${formatValue("int", -d.amount)} ${d.label}`}
+                  fill="color-mix(in srgb, var(--warning) 16%, var(--card))"
+                  color="var(--warning)"
+                />
+              )}
             />
           )
         })}
@@ -100,7 +115,7 @@ function Chart({ e }: { e: EnergySeries }) {
 /** another app's Energy Bank in the reference app's language (spec §5.9). */
 export function EnergyBankChart({ data }: EnergyBankChartProps) {
   const empty = (
-    <div className="grid h-[140px] place-items-center">
+    <div className="grid place-items-center">
       <EmptyState body="Energy Bank starts once you wake up." />
     </div>
   )
@@ -110,7 +125,7 @@ export function EnergyBankChart({ data }: EnergyBankChartProps) {
       skeleton={<EnergyBankChartSkeleton />}
       empty={empty}
       renderReason={(r, meta) => (
-        <div className="grid h-[140px] place-items-center">
+        <div className="grid place-items-center">
           <ReasonPlaceholder reason={r} nightsLeft={meta.nightsLeft} size="md" />
         </div>
       )}

@@ -15,12 +15,18 @@ type Stop = { at: number; top: Token; bottom: Token };
  */
 export const ORB = {
   stops: [
-    { at: -3, top: "--orb-green", bottom: "--orb-green" }, // green-1/2: 6.6 and 10.5 younger
-    { at: -1, top: "--orb-cyan", bottom: "--orb-cyan" }, // cyan-1: 1.0 younger
-    { at: 0, top: "--orb-cyan", bottom: "--orb-cyan" }, // neutral holds the same teal
+    // Hue families from WHOOP Age screenshots of the 2025-26 app (docs/design/charts.md, "Age orb"), spread so each
+    // step reads as its own colour: green → blue-green → cyan → blue (level) → blue over warm → amber → rust → red.
+    { at: -7, top: "--orb-green", bottom: "--orb-green" }, // 7.0, 8.2 and 8.9 younger
+    { at: -4, top: "--orb-teal", bottom: "--orb-teal" }, // blue-green
+    { at: -1.5, top: "--orb-cyan", bottom: "--orb-cyan" }, // cyan-1: 1.0 younger
+    { at: 0, top: "--orb-blue", bottom: "--orb-blue" }, // level: blue
     { at: 0.8, top: "--orb-blue", bottom: "--orb-olive" }, // mixed-1: 0.8 older, blue over olive
-    { at: 1.8, top: "--orb-blue-2", bottom: "--orb-orange" }, // mixed-2: 1.8 older, blue over orange
-    { at: 3, top: "--orb-amber", bottom: "--orb-amber" }, // amber-1: 5.6 older
+    { at: 2.1, top: "--orb-blue-2", bottom: "--orb-orange" }, // mixed-2: 2.1 older, blue over orange
+    { at: 3, top: "--orb-amber", bottom: "--orb-amber" }, // 2.6 to 5.6 older: amber-brown
+    { at: 7, top: "--orb-rust", bottom: "--orb-rust" }, // brown-red
+    // ponytail: no screenshot past 10 older; red at 12 extends the warm run, retune with a reference.
+    { at: 12, top: "--orb-red", bottom: "--orb-red" },
   ] satisfies Stop[],
   /** No result: a dim grey orb. */
   empty: "--orb-empty" as Token,

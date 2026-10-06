@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { isAdmin, listAccounts, listInvites, signupMode } from "../admin";
 import { parseConfig, type Config } from "../config";
 import type { Db } from "../db";
-import { account, session, user } from "../db/schema";
+import { account, oauthTokens, session, user } from "../db/schema";
 import { addUser, freshDb, USER } from "../testing";
 import { coachAccess, coachMode } from "../coach/store";
 import { coachTexts, textHistory } from "../coach/texts";
@@ -89,6 +89,19 @@ it("deletes a member, but not yourself, an owner or an admin", async () => {
   expect(await deleteAccountAction(other)).toEqual({ ok: false, error: "Remove admin from this account first." });
   expect(await deleteAccountAction(member)).toEqual(DONE);
   expect(await db.select().from(user).where(eq(user.id, member))).toEqual([]);
+});
+
+it("deleting an account revokes its Google grant at Google first, as Disconnect does", async () => {
+  await db.insert(oauthTokens).values({ userId: member, accessToken: "at", refreshToken: "rt-member", expiresAt: 0, scope: "s", updatedAt: 0 });
+  const f = vi.fn<typeof fetch>(async () => new Response("", { status: 200 }));
+  vi.stubGlobal("fetch", f);
+  try {
+    expect(await deleteAccountAction(member)).toEqual(DONE);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  expect(String(f.mock.calls[0]?.[0])).toBe("https://oauth2.googleapis.com/revoke");
+  expect(String((f.mock.calls[0][1] as RequestInit).body)).toBe("token=rt-member");
 });
 
 it("reset password: owners only, never themselves or another owner; the old sessions end", async () => {

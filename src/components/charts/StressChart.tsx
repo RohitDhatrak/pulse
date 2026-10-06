@@ -1,8 +1,9 @@
 "use client"
 
-import { ComposedChart, Line, ReferenceDot, ReferenceLine, XAxis, YAxis } from "recharts"
+import * as React from "react"
+import { Area, CartesianGrid, ComposedChart, Line, ReferenceDot, ReferenceLine, XAxis, YAxis } from "recharts"
 import { DATA_COLORS, STRESS_COLOR, STRESS_WORD, stressLevel } from "@/lib/bands"
-import { hourTicks, splitByBand } from "@/lib/charts"
+import { bandColor, hourTicks } from "@/lib/charts"
 import { clock, formatValue } from "@/lib/format"
 import type { Metric } from "@/lib/reasons"
 import { ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
@@ -11,7 +12,7 @@ import { EmptyState } from "@/components/shells/EmptyState"
 import { MetricState } from "@/components/shells/MetricState"
 import { useOptionalShellCalendar } from "@/components/shells/ShellStatus"
 import { ReasonPlaceholder } from "@/components/metrics/ReasonPlaceholder"
-import { AXIS, ChartFigure, LINE_CURSOR, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation } from "./ChartFrame"
+import { AXIS, BandGradient, bandPaint, ChartFigure, FadeGradient, GlowDot, GRID, LINE_CURSOR, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation, type Band } from "./ChartFrame"
 import { spanAreas, type ChartSpan } from "./IntradayHrChart"
 
 export type StressSeries = {
@@ -28,13 +29,17 @@ export type StressChartProps = {
   variant: "full" | "spark"
 }
 
-const STROKES = (["low", "medium", "high"] as const).map((l) => DATA_COLORS[STRESS_COLOR[l]].css)
+// Low from 0, medium from 1, high from 2: one continuous line whose colour follows the level (Bevel's stress chart).
+const BANDS: Band[] = (["low", "medium", "high"] as const).map((l, i) => ({ from: i, color: DATA_COLORS[STRESS_COLOR[l]].css }))
 
 function Chart({ s, variant }: { s: StressSeries; variant: "full" | "spark" }) {
   const tz = useOptionalShellCalendar()?.timeZone
   const anim = useSeriesAnimation()
-  const { rows, keys } = splitByBand(s.points.map((p) => ({ x: p.t, y: p.value })), [1, 2])
-  const data = rows.map((r, i) => ({ ...r, all: s.points[i].value }))
+  const id = React.useId().replace(/:/g, "")
+  const data = s.points.map((p) => ({ x: p.t, all: p.value }))
+  const vals = s.points.flatMap((p) => (p.value === null ? [] : [p.value]))
+  const top = Math.max(...vals)
+  const bottom = Math.min(...vals)
   const first = s.points[0]?.t ?? 0
   const last = s.now ?? s.points.at(-1)?.t ?? 0
   const latest = [...s.points].reverse().find((p) => p.value !== null)
@@ -47,8 +52,11 @@ function Chart({ s, variant }: { s: StressSeries; variant: "full" | "spark" }) {
   return (
     <ChartFigure summary={summary} config={{ all: { label: "Stress", color: "var(--stress-medium)" } }} className={full ? "h-[200px]" : "h-11"}>
       <ComposedChart data={data} accessibilityLayer={full} margin={full ? { top: 16, right: 8, bottom: 0, left: 0 } : { top: 4, right: 4, bottom: 4, left: 4 }}>
-        {full && <ReferenceLine y={1} stroke="var(--chart-grid)" />}
-        {full && <ReferenceLine y={2} stroke="var(--chart-grid)" />}
+        <defs>
+          <BandGradient id={`stress-${id}`} top={top} bottom={bottom} bands={BANDS} />
+          <FadeGradient id={`stress-fill-${id}`} color={bandColor(top, BANDS)} from={0.22} />
+        </defs>
+        {full && <CartesianGrid {...GRID} horizontalValues={[1, 2, 3]} />}
         {full && spanAreas(s.spans)}
         <XAxis
           dataKey="x"
@@ -62,7 +70,7 @@ function Chart({ s, variant }: { s: StressSeries; variant: "full" | "spark" }) {
           minTickGap={24}
           {...AXIS}
         />
-        <YAxis domain={[0, 3]} ticks={[0, 1, 2, 3]} tickFormatter={(v: number) => formatValue("decimal1", v)} width={28} hide={!full} {...AXIS} tickMargin={4} />
+        <YAxis domain={[0, 3]} ticks={[0, 1, 2, 3]} width={24} hide={!full} {...AXIS} tickMargin={4} />
         {full && (
           <ChartTooltip
             isAnimationActive={false}
@@ -85,10 +93,17 @@ function Chart({ s, variant }: { s: StressSeries; variant: "full" | "spark" }) {
             }
           />
         )}
-        <Line dataKey="all" stroke="none" dot={false} activeDot={false} connectNulls={false} isAnimationActive={false} />
-        {keys.map((k, i) => (
-          <Line key={k} dataKey={k} type="monotone" stroke={STROKES[i]} strokeWidth={full ? 2 : 1.5} dot={false} activeDot={false} connectNulls={false} tooltipType="none" {...anim} />
-        ))}
+        {full && <Area dataKey="all" type="monotone" stroke="none" fill={top > 0 ? `url(#stress-fill-${id})` : "none"} connectNulls={false} activeDot={false} tooltipType="none" {...anim} />}
+        <Line
+          dataKey="all"
+          type="monotone"
+          stroke={bandPaint(`stress-${id}`, top, bottom, BANDS)}
+          strokeWidth={full ? 2 : 1.5}
+          dot={false}
+          activeDot={full ? (d: { cx?: number; cy?: number; payload?: { all: number | null } }) => <GlowDot cx={d.cx} cy={d.cy} fill={bandPaint("", d.payload?.all ?? 0, d.payload?.all ?? 0, BANDS)} /> : false}
+          connectNulls={false}
+          {...anim}
+        />
         {full && s.now && <ReferenceLine x={s.now} stroke="var(--chart-cursor)" strokeDasharray="4 4" ifOverflow="hidden" />}
         {latest?.value != null && <ReferenceDot x={latest.t} y={latest.value} r={full ? 4 : 3} fill={latestColor} stroke="none" />}
       </ComposedChart>
@@ -100,7 +115,7 @@ function Chart({ s, variant }: { s: StressSeries; variant: "full" | "spark" }) {
 export function StressChart({ data, variant }: StressChartProps) {
   const empty =
     variant === "full" ? (
-      <div className="grid h-[200px] place-items-center">
+      <div className="grid place-items-center">
         <EmptyState body="No still minutes to score yet today. Stress is measured only while you are not moving." />
       </div>
     ) : (
@@ -114,7 +129,7 @@ export function StressChart({ data, variant }: StressChartProps) {
       reasonSize={variant === "full" ? "md" : "sm"}
       renderReason={(r) =>
         variant === "full" ? (
-          <div className="grid h-[200px] place-items-center">
+          <div className="grid place-items-center">
             <ReasonPlaceholder reason={r} size="md" />
           </div>
         ) : (

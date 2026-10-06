@@ -160,11 +160,13 @@ export const hrDay: HrSeries = {
     const run = h > 11.25 && h < 12.25 ? 85 : 0
     return { t, bpm: Math.round(base + run + noise(i) * 14) }
   }),
+  // Five zones on heart-rate reserve for resting 56 and max 186 (reserve 130): 56 + 50/60/70/80/90% of 130.
   zones: [
-    { zone: 1, label: "Light", min: 98, max: 117 },
-    { zone: 2, label: "Moderate", min: 118, max: 136 },
-    { zone: 3, label: "Vigorous", min: 137, max: 156 },
-    { zone: 4, label: "Peak", min: 157, max: 186 },
+    { zone: 1, label: "Zone 1", min: 121, max: 133 },
+    { zone: 2, label: "Zone 2", min: 134, max: 146 },
+    { zone: 3, label: "Zone 3", min: 147, max: 159 },
+    { zone: 4, label: "Zone 4", min: 160, max: 172 },
+    { zone: 5, label: "Zone 5", min: 173, max: 186 },
   ],
   spans: [
     { kind: "sleep", start: DAY0 + 51 * MIN, end: DAY0 + 7 * HOUR + 38 * MIN, label: "Sleep" },
@@ -178,10 +180,11 @@ export const hrActivity: HrSeries = {
 }
 
 export const zones: ZoneRow[] = [
-  { zone: 4, label: "Peak", min: 157, max: null, seconds: 61 },
-  { zone: 3, label: "Vigorous", min: 137, max: 156, seconds: 1360 },
-  { zone: 2, label: "Moderate", min: 118, max: 136, seconds: 2108 },
-  { zone: 1, label: "Light", min: 98, max: 117, seconds: 6211 },
+  { zone: 5, label: "Zone 5", min: 173, max: null, seconds: 61, typical: { seconds: 120, share: 0.02 } },
+  { zone: 4, label: "Zone 4", min: 160, max: 172, seconds: 840, typical: { seconds: 600, share: 0.08 } },
+  { zone: 3, label: "Zone 3", min: 147, max: 159, seconds: 1360, typical: { seconds: 1500, share: 0.17 } },
+  { zone: 2, label: "Zone 2", min: 134, max: 146, seconds: 2108, typical: { seconds: 2400, share: 0.25 } },
+  { zone: 1, label: "Zone 1", min: 121, max: 133, seconds: 5371, typical: { seconds: 4800, share: 0.48 } },
 ]
 export const recoveryBreakdown: StackedSegment[] = [
   { key: "green", label: "Green (67-100%)", count: 4, color: "recovery-green" },

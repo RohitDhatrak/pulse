@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Area, AreaChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from "recharts"
+import { Area, AreaChart, CartesianGrid, ReferenceDot, ReferenceLine, XAxis, YAxis } from "recharts"
 import { paddedDomain } from "@/lib/charts"
 import { clock } from "@/lib/format"
 import type { Metric } from "@/lib/reasons"
@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/shells/EmptyState"
 import { MetricState } from "@/components/shells/MetricState"
 import { useOptionalShellCalendar } from "@/components/shells/ShellStatus"
 import { ReasonPlaceholder } from "@/components/metrics/ReasonPlaceholder"
-import { AXIS, ChartFigure, GRID, LINE_CURSOR, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation } from "./ChartFrame"
+import { AXIS, ChartFigure, GlowDot, GRID, LINE_CURSOR, Pill, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation } from "./ChartFrame"
 
 export type SleepHr = {
   /** Epoch ms of the main sleep's start and end. */
@@ -51,6 +51,8 @@ function Chart({ hr, highlight }: { hr: SleepHr; highlight?: { start: number; en
   const yTicks = Array.from({ length: Math.ceil(hi / 20) - Math.floor(lo / 20) + 1 }, (_, i) => (Math.floor(lo / 20) + i) * 20)
   const night = points.filter((p) => p.t >= bed && p.t < wake && p.v !== null).map((p) => p.v!)
   const avg = night.length ? Math.round(night.reduce((a, b) => a + b, 0) / night.length) : null
+  // The night's lowest minute, marked as a point with a pill: the number people look for on this chart.
+  const low = points.reduce<{ t: number; v: number } | null>((m, p) => (p.t >= bed && p.t < wake && p.v !== null && (!m || p.v < m.v) ? { t: p.t, v: p.v } : m), null)
   const summary = `Heart rate during sleep from ${clock(bed, tz)} to ${clock(wake, tz)}: low ${Math.min(...night)}, average ${avg}, high ${Math.max(...night)} beats per minute.`
 
   return (
@@ -74,6 +76,19 @@ function Chart({ hr, highlight }: { hr: SleepHr; highlight?: { start: number; en
           tick={{ fill: "var(--foreground-secondary)" }}
         />
         <YAxis domain={[yTicks[0], yTicks.at(-1)!]} ticks={yTicks} width={32} {...AXIS} />
+        {low && (
+          <ReferenceDot
+            x={low.t}
+            y={low.v}
+            r={3.5}
+            fill="var(--foreground)"
+            stroke="var(--card)"
+            strokeWidth={2}
+            label={({ viewBox }: { viewBox?: { x?: number; y?: number; width?: number; height?: number } }) => (
+              <Pill x={(viewBox?.x ?? 0) + (viewBox?.width ?? 0) / 2} y={(viewBox?.y ?? 0) + (viewBox?.height ?? 0) + 14} anchor="middle" text={`Low ${low.v}`} />
+            )}
+          />
+        )}
         {/* the reference app's dashed bed and wake markers [latest-sleep-stages-1]. */}
         {[bed, wake].map((x) => (
           <ReferenceLine key={x} x={x} stroke="var(--foreground-secondary)" strokeDasharray="2 3" ifOverflow="hidden" />
@@ -102,6 +117,7 @@ function Chart({ hr, highlight }: { hr: SleepHr; highlight?: { start: number; en
           connectNulls={false}
           tooltipType="none"
           isAnimationActive={false}
+          activeDot={(d: { cx?: number; cy?: number }) => <GlowDot cx={d.cx} cy={d.cy} fill="var(--foreground)" />}
         />
       </AreaChart>
     </ChartFigure>
@@ -111,7 +127,7 @@ function Chart({ hr, highlight }: { hr: SleepHr; highlight?: { start: number; en
 /** Heart rate across the main sleep with its bed and wake markers; the chosen stage lit (spec §7.5, §11 R9). */
 export function SleepHrChart({ data, highlight }: SleepHrChartProps) {
   const empty = (
-    <div className={`grid place-items-center ${H}`}>
+    <div className="grid place-items-center">
       <EmptyState body="No heart-rate data for this night." />
     </div>
   )
@@ -121,7 +137,7 @@ export function SleepHrChart({ data, highlight }: SleepHrChartProps) {
       skeleton={<SleepHrChartSkeleton />}
       empty={empty}
       renderReason={(r) => (
-        <div className={`grid place-items-center ${H}`}>
+        <div className="grid place-items-center">
           <ReasonPlaceholder reason={r} size="md" />
         </div>
       )}

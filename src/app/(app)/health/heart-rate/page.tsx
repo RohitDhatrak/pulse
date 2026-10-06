@@ -24,7 +24,8 @@ export default async function HeartRatePage({ searchParams }: PageProps<"/health
   const { d, today, ctx } = await pageDay(searchParams as SearchParams, "/health/heart-rate")
   const vm = await getHeartRate(d, ctx)
   return (
-    <LiveHeartRate vm={vm}>
+    // Keyed by day: the live view seeds its state from vm once, so switching days must remount it, not keep the old day.
+    <LiveHeartRate key={d} vm={vm}>
       <DetailShell
         title="Heart rate"
         dateSwitcher={{ mode: "day" }}

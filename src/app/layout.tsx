@@ -2,9 +2,11 @@ import type { Metadata, Viewport } from "next";
 import { Barlow, Figtree } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { PwaRuntime } from "@/components/pwa/PwaRuntime"
+import { SW_SCRIPT } from "@/lib/sw"
 import { ThemeColor } from "@/components/shells/ThemeColor";
 import { THEME_SCRIPT } from "@/lib/theme";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import launchScreens from "./launch-screens.json"
 import "./globals.css";
 
 // next/font self-hosts at build time (no runtime requests to Google Fonts).
@@ -20,15 +22,10 @@ const barlow = Barlow({
   subsets: ["latin"],
 });
 
-// iOS shows no launch screen unless one matches the device exactly (public/splash, made by scripts/gen-pwa-assets.py).
-// [device width, height, pixel ratio]: a small mark on the page ground, in both colour schemes.
-const LAUNCH_SIZES = [[430, 932, 3], [393, 852, 3], [428, 926, 3], [390, 844, 3], [375, 812, 3], [414, 896, 3], [414, 896, 2], [414, 736, 3], [375, 667, 2], [440, 956, 3], [402, 874, 3], [834, 1194, 2], [1024, 1366, 2], [810, 1080, 2], [768, 1024, 2], [834, 1112, 2]]
-const LAUNCH_SCREENS = LAUNCH_SIZES.flatMap(([w, h, r]) =>
-  (["dark", "light"] as const).map((scheme) => ({
-    url: `/splash/${w}x${h}@${r}-${scheme}.png`,
-    media: `(device-width: ${w}px) and (device-height: ${h}px) and (-webkit-device-pixel-ratio: ${r}) and (orientation: portrait) and (prefers-color-scheme: ${scheme})`,
-  })),
-)
+// iOS shows no launch screen unless one matches the device exactly: every iPhone and iPad, both orientations and both
+// colour schemes, made by scripts/gen-ios-splash.mjs (pwa-asset-generator) into public/splash. The order matters: the
+// light set first, unmarked, then the dark set, or iOS shows the light image in dark mode.
+const LAUNCH_SCREENS: { url: string; media: string }[] = launchScreens
 
 const DESCRIPTION =
   "Recovery, strain and sleep from your Fitbit Air: Healthspan, Energy Bank, stress and a journal, all on your own server.";
@@ -68,8 +65,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         {/* Settings › Appearance (system, light or dark, per device). Inline and first in <head>, so the class is on <html>
             before anything paints: next/script's beforeInteractive is queued and ran after first paint (a dark flash). */}
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        {/* Production only, like PwaRuntime: in dev a worker would cache stale code. */}
+        {process.env.NODE_ENV === "production" && <script dangerouslySetInnerHTML={{ __html: SW_SCRIPT }} />}
         {/* Next's own manifest link omits crossorigin outside Vercel previews; child layouts set manifest: null. */}
         <link rel="manifest" href="/manifest.webmanifest" crossOrigin="use-credentials" />
+        {/* Next's appleWebApp.capable now writes only the standard mobile-web-app-capable; iOS still reads Apple's own
+            name for a Home Screen web app, and without it shows no launch screen. */}
+        <meta name="apple-mobile-web-app-capable" content="yes" />
       </head>
       <body className="flex min-h-full flex-col">
         <TooltipProvider>{children}</TooltipProvider>

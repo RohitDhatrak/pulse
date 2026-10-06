@@ -139,7 +139,7 @@ dailySleepTemperatureDerivations.date.{year,month,day}            number?
 
 The skin temperature needs 3 nights before it appears. The pipeline computes the deviation against Google's baseline (the 30-night median) and falls back to its own causal baseline only on a night without one.
 
-**Heart-rate zones, time in zones and personal ranges** have not been observed. Paths from the v4 reference (`users.dataTypes.dataPoints`, `dailyRollUp`), read 2026-10-03:
+**Heart-rate zones** observed 2026-10-05 on five real accounts: `[light min, moderate min, vigorous min, peak min, peak max]` such as `[30, 119, 145, 177, 220]`. LIGHT always starts at 30 and PEAK always ends at 220, the same for everyone, so neither end is personal; Pulse no longer reads either (zones are its own on heart-rate reserve, max HR is Settings or Tanaka). **Time in zones and personal ranges** have not been observed. Paths from the v4 reference (`users.dataTypes.dataPoints`, `dailyRollUp`), read 2026-10-03:
 
 ```
 dailyHeartRateZones.date.{year,month,day}                           number

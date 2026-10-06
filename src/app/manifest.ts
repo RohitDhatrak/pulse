@@ -23,10 +23,13 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "Pulse",
     description: "Recovery, strain and sleep from your Fitbit Air.",
     lang: "en",
+    dir: "ltr",
     categories: ["health", "fitness", "lifestyle"],
     start_url: "/",
     scope: "/",
     display: "standalone",
+    // Standalone first wherever display_override is read, before falling back to display.
+    display_override: ["standalone"],
     orientation: "portrait",
     // A second launch (a shortcut, a notification) reuses the open window instead of stacking another.
     launch_handler: { client_mode: "navigate-existing" },

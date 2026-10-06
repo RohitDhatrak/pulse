@@ -8,6 +8,7 @@ import { useOnline } from "@/hooks/use-online"
 import { haptic } from "@/lib/haptics"
 import { flushQueue } from "@/lib/offline-queue"
 import { syncNow, useSyncing } from "@/lib/sync-activity"
+import { useShellStatus } from "./ShellStatus"
 
 /** Away this long, coming back refreshes the screen: an installed app stays alive for days. */
 const STALE_MS = 5 * 60_000
@@ -34,11 +35,13 @@ export function AppLifecycle() {
   const router = useRouter()
   const online = useOnline()
   const syncing = useSyncing()
+  const { userId } = useShellStatus()
   const [pull, setPull] = React.useState(0)
 
   React.useEffect(() => {
     const flush = () =>
-      flushQueue().then((n) => {
+      userId !== undefined &&
+      flushQueue(userId).then((n) => {
         if (n > 0) {
           router.refresh()
           toast.success("Check-in sent")
@@ -62,7 +65,7 @@ export function AppLifecycle() {
       document.removeEventListener("visibilitychange", onVisible)
       removeEventListener("online", flush)
     }
-  }, [router])
+  }, [router, userId])
 
   React.useEffect(() => {
     if (!online || !matchMedia("(pointer: coarse)").matches) return

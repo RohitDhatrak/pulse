@@ -32,6 +32,12 @@ Every variable is listed and explained in [`.env.example`](.env.example). It is 
 - `DATA_SOURCE=google` switches to real data from the Google Health API. It needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `BETTER_AUTH_SECRET`. People sign up with a name, username, email and password (better-auth), sign in with the username or the email, and connect their own Google account from inside Pulse. Sign-up is invite-only by default: set `ADMIN_EMAILS` to your email, create your account, then invite people from the admin dashboard at `/admin` ([setup guide](docs/setup.md#accounts-admins-and-invites)).
 - The first sign-in asks for your birth date and sex (onboarding). Settings › Profile edits them.
 
+## Install as an app
+
+Pulse is a PWA: install it from Chrome on Android, Add to Home Screen on iPhone, or wrap it into an Android APK with
+PWABuilder. Notifications, the offline page, launch screens and how to rebrand the icons for a fork are in
+[docs/pwa.md](docs/pwa.md).
+
 ## Deploy
 
 Pulse runs as one Docker container with its database in a volume, behind a tunnel or HTTPS reverse proxy. The [setup guide](docs/setup.md) covers Google Cloud, Docker, HTTPS, backups and troubleshooting.
@@ -47,10 +53,12 @@ Pulse runs as one Docker container with its database in a volume, behind a tunne
 | `pnpm test` / `pnpm test:watch` | Vitest (Node for `*.test.ts`, happy-dom for `*.test.tsx`) |
 | `pnpm e2e` | Playwright |
 | `pnpm db:generate` | Generates a migration in `drizzle/` from `src/server/db/schema.ts` |
+| `pnpm pwa:assets` | Regenerates the app icons, shortcut icons and iOS launch screens ([docs/pwa.md](docs/pwa.md#rebrand-it-for-your-fork)) |
 
 ## Contributing and security
 
 - [Setup guide](docs/setup.md): from the demo to your own data on a server.
+- [Installed app (PWA)](docs/pwa.md): install, notifications, offline, rebranding, Android APK.
 - [Contributing](CONTRIBUTING.md): how changes land (`main` is protected; every change is a pull request).
 - [Security policy](SECURITY.md): report vulnerabilities privately.
 - [Code of Conduct](CODE_OF_CONDUCT.md).

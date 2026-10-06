@@ -222,6 +222,7 @@ list of what's wrong.
 | `COACH_LOCAL_URL`, `COACH_LOCAL_MODEL` | no | A model you run (OpenAI-compatible, e.g. Ollama at `http://localhost:11434/v1`), offered in the coach with no key; set both or neither |
 | `SUPPORT_EMAIL` | no | Shown on the forgot-password page so people can ask you for a reset |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | no | Turns on notifications ("Recovery ready", "Pulse can't sync"). Make the keys with `npx web-push generate-vapid-keys`; the subject is `mailto:you@example.com`. Set all three or none |
+| `ANDROID_PACKAGE_NAME`, `ANDROID_CERT_SHA256` | no | Your Android APK's package and signing key fingerprints, served as `/.well-known/assetlinks.json` so the APK opens without a URL bar ([docs/pwa.md](pwa.md#android-apk-with-pwabuilder)). Set both or neither |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | with Google | The OAuth client from step 2 |
 | `APP_URL` | behind a proxy | The public URL |
 | `AVATAR_URL` | no | A default avatar photo; a user's Google photo or upload wins |

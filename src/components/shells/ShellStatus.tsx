@@ -21,6 +21,8 @@ export type ShellStatus = {
   avatar?: string | null
   /** This user may use the coach: the round P action opens it instead of the check-in. */
   coach?: boolean
+  /** The signed-in account. The offline check-in queue is kept per account, so it never replays into another one. */
+  userId?: number
 }
 
 const Ctx = React.createContext<ShellStatus | null>(null)
@@ -45,8 +47,8 @@ const busy = (s: ShellStatus) => s.sync.state === "syncing" || s.connection === 
 export function ShellStatusProvider({ value, live = false, children }: { value: ShellStatus; live?: boolean; children: React.ReactNode }) {
   const router = useRouter()
   const [polled, setPolled] = React.useState<{ from: ShellStatus; status: ShellStatus } | null>(null)
-  // A new server render (navigation, refresh) supersedes what polling saw. Avatar and coach only come from the layout.
-  const current = polled?.from === value ? { ...polled.status, avatar: value.avatar, coach: value.coach } : value
+  // A new server render (navigation, refresh) supersedes what polling saw. Avatar, coach and userId only come from the layout.
+  const current = polled?.from === value ? { ...polled.status, avatar: value.avatar, coach: value.coach, userId: value.userId } : value
   // Only the real app polls: a fixture that says "syncing" would poll, refresh and say "syncing" again, forever.
   const running = live && busy(current)
   React.useEffect(() => {

@@ -16,7 +16,7 @@ import { StatusChip } from "@/components/metrics/primitives"
 import { ResponsiveSheet, SHEET_SECTION } from "@/components/shells/ResponsiveSheet"
 import { SectionShell } from "@/components/shells/SectionShell"
 import { closeSheet, openSheet } from "@/components/shells/SheetTrigger"
-import { useShellCalendar } from "@/components/shells/ShellStatus"
+import { useShellCalendar, useShellStatus } from "@/components/shells/ShellStatus"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -98,6 +98,7 @@ type Loaded = { day: string } & Pick<JournalVM, "tags" | "checkIn">
  */
 export function CheckInSheet() {
   const { today } = useShellCalendar()
+  const { userId } = useShellStatus()
   const params = useSearchParams()
   const wants = params.get("checkin") === "1"
   const { d: day } = parseDay(params.get("d") ?? undefined, today)
@@ -214,7 +215,7 @@ export function CheckInSheet() {
     } catch {
       // A Server Action throws only when it can't reach the server: keep what wasn't sent on this device and send it
       // when the connection is back (PwaRuntime flushes the queue).
-      enqueue(changes.slice(sent).map(([tag, value]) => ({ day: data.day, tag, value })))
+      if (userId !== undefined) enqueue(userId, changes.slice(sent).map(([tag, value]) => ({ day: data.day, tag, value })))
       finish()
       toast("Saved on this device", { description: "It sends when you’re back online." })
     } finally {
@@ -232,7 +233,7 @@ export function CheckInSheet() {
     setAdding(true)
     const r = await addCustomTag({ label: name }).catch(() => ({ ok: false as const, error: "network" }))
     setAdding(false)
-    if (!r.ok) return invalid(r.error.startsWith("Tag already exists") ? "That behaviour already exists." : "Couldn’t add it. Try again.")
+    if (!r.ok) return invalid(r.error.startsWith("Tag already exists") ? "That behaviour already exists." : r.error.startsWith("Too many") ? "You’ve reached the behaviour limit." : "Couldn’t add it. Try again.")
     setAddError(null)
     setLabel("")
     // A new behaviour starts as "Yes": you add one because you just did it.

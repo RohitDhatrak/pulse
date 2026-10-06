@@ -1,6 +1,6 @@
 // The Journal's default behaviours, shared by both data sources.
 import { and, eq, inArray } from "drizzle-orm";
-import { type Db, sql } from "./db";
+import { type Db, rows, sql } from "./db";
 import { journalTags } from "./db/schema";
 
 export const DEFAULT_JOURNAL_TAGS = [
@@ -32,19 +32,22 @@ export const tagKey = (label: string) =>
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_|_$/g, "");
 
-/** Adds a custom tag at the end of its group. False when the key already exists. */
-export async function addTag(db: Db, userId: number, tag: string, label: string): Promise<boolean> {
-  const added = await db
-    .insert(journalTags)
-    .values({
-      userId,
-      tag,
-      label,
-      position: sql`(select coalesce(max(position), 0) + 1 from journal_tags where user_id = ${userId})`,
-    })
-    .onConflictDoNothing()
-    .returning({ tag: journalTags.tag });
-  return added.length > 0;
+/** Most tags (defaults included) a person can have. Insights bootstrap every tag on every recompute, so this bounds that work. */
+export const MAX_TAGS = 60;
+
+/** Adds a custom tag at the end of its group. "exists" when the key is taken, "full" at MAX_TAGS. */
+export async function addTag(db: Db, userId: number, tag: string, label: string): Promise<"added" | "exists" | "full"> {
+  // The count check lives in the insert itself, so two concurrent adds can't both slip past the cap.
+  const added = await rows<{ tag: string }>(
+    db,
+    sql`insert into journal_tags (user_id, tag, label, position)
+      select ${userId}, ${tag}, ${label}, coalesce(max(position), 0) + 1 from journal_tags where user_id = ${userId}
+      having count(*) < ${MAX_TAGS}
+      on conflict do nothing returning tag`,
+  );
+  if (added.length) return "added";
+  const [{ n }] = await rows<{ n: number }>(db, sql`select count(*)::int as n from journal_tags where user_id = ${userId}`);
+  return n >= MAX_TAGS ? "full" : "exists";
 }
 
 /** Hides a tag from the check-in sheet or shows it again. Its answers are untouched. False for an unknown tag. */

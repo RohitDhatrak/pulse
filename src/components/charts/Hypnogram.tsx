@@ -1,6 +1,6 @@
 "use client"
 
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
+import { CartesianGrid, Line, LineChart, ReferenceLine, XAxis, YAxis } from "recharts"
 import { DATA_COLORS } from "@/lib/bands"
 import { hourTicks, hypnogramSeries, STAGES, type Stage, type StageSegment } from "@/lib/charts"
 import { clock, durationWords } from "@/lib/format"
@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/shells/EmptyState"
 import { MetricState } from "@/components/shells/MetricState"
 import { useOptionalShellCalendar } from "@/components/shells/ShellStatus"
 import { ReasonPlaceholder } from "@/components/metrics/ReasonPlaceholder"
-import { AXIS, ChartFigure, LINE_CURSOR, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation } from "./ChartFrame"
+import { AXIS, ChartFigure, GRID, LINE_CURSOR, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation } from "./ChartFrame"
 
 export type HypnogramNight = { bed: number; wake: number; segments: StageSegment[] }
 export type HypnogramProps = {
@@ -21,6 +21,7 @@ export type HypnogramProps = {
 
 const STAGE_NAME: Record<Stage, string> = { awake: "Awake", rem: "REM", light: "Light", deep: "Deep" }
 const LANE_NAME = ["Deep", "Light", "REM", "Awake"]
+const LANE_STAGE: Stage[] = ["deep", "light", "rem", "awake"]
 
 /**
  * The night as one step line over four lanes, Awake on top to Deep at the bottom, as sleep apps draw it. Hover, tap or
@@ -29,6 +30,10 @@ const LANE_NAME = ["Deep", "Light", "REM", "Awake"]
 export function HypnogramChart({ night }: { night: HypnogramNight }) {
   const tz = useOptionalShellCalendar()?.timeZone
   const anim = useSeriesAnimation()
+  const span = night.wake - night.bed
+  // Hours between the bed and wake times: every other hour past 7 h, none within 24% of either end, so the bold end
+  // times never touch a neighbour even at 320 px.
+  const hours = hourTicks(night.bed, night.wake, span > 7 * 3_600_000 ? 2 : 1, tz).filter((h) => h - night.bed > span * 0.24 && night.wake - h > span * 0.24)
   const { connector, stages } = hypnogramSeries(night.segments)
   const total = night.segments.reduce((a, s) => a + (s.end - s.start), 0)
   const minutes = (st: Stage) => night.segments.filter((s) => s.stage === st).reduce((a, s) => a + s.end - s.start, 0) / 60_000
@@ -39,27 +44,43 @@ export function HypnogramChart({ night }: { night: HypnogramNight }) {
   const segAt = (t: number) => night.segments.find((s) => s.start <= t && t < s.end) ?? night.segments.findLast((s) => s.end === t)
 
   return (
-    <ChartFigure summary={summary} config={{}} className="h-40">
+    <ChartFigure summary={summary} config={{}} className="h-44">
       <LineChart data={connector} accessibilityLayer margin={{ top: 12, right: 8, bottom: 0, left: 0 }}>
-        <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+        <CartesianGrid {...GRID} />
         <XAxis
           dataKey="t"
           type="number"
           scale="time"
           domain={[night.bed, night.wake]}
-          ticks={hourTicks(night.bed, night.wake, night.wake - night.bed > 10 * 3_600_000 ? 2 : 1, tz)}
-          tickFormatter={(v: number) => clock(v, tz)}
-          interval="preserveStartEnd"
+          // Bed and wake times at the ends, bold (WHOOP), and the whole hours between that keep clear of them.
+          ticks={[night.bed, ...hours, night.wake]}
+          interval={0}
+          tick={({ x, y, payload }: { x?: number | string; y?: number | string; payload?: { value: number } }) => {
+            const v = Number(payload?.value)
+            const edge = v === night.bed || v === night.wake
+            return (
+              <text x={x} y={y} dy="0.71em" textAnchor={v === night.bed ? "start" : v === night.wake ? "end" : "middle"} fontSize={12} fontWeight={edge ? 700 : 500} fill={edge ? "var(--foreground)" : "var(--muted-foreground)"}>
+                {clock(v, tz)}
+              </text>
+            )
+          }}
           {...AXIS}
         />
         <YAxis
           type="number"
           domain={[0, 3]}
           ticks={[3, 2, 1, 0]}
-          tickFormatter={(v: number) => LANE_NAME[v] ?? ""}
           width={52}
           {...AXIS}
-          tick={{ fontSize: 11, fontWeight: 700 }}
+          // Each lane named in its stage colour, so the label doubles as the legend.
+          tick={({ x, y, payload }: { x?: number | string; y?: number | string; payload?: { value: number } }) => {
+            const v = Number(payload?.value)
+            return (
+              <text x={x} y={y} dy="0.32em" textAnchor="end" fontSize={11} fontWeight={700} fill={LANE_STAGE[v] ? DATA_COLORS[`stage-${LANE_STAGE[v]}`].css : "var(--muted-foreground)"}>
+                {LANE_NAME[v] ?? ""}
+              </text>
+            )
+          }}
         />
         <ChartTooltip
           isAnimationActive={false}
@@ -84,7 +105,11 @@ export function HypnogramChart({ night }: { night: HypnogramNight }) {
             />
           }
         />
-        <Line dataKey="lane" type="stepAfter" stroke="color-mix(in srgb, var(--foreground) 25%, transparent)" strokeWidth={1.5} dot={false} activeDot={false} {...anim} />
+        {/* A faint track under each lane (Google Health's sleep chart), so a short stretch still reads as its row. */}
+        {LANE_STAGE.map((_, lane) => (
+          <ReferenceLine key={lane} y={lane} stroke="color-mix(in srgb, var(--foreground) 7%, transparent)" strokeWidth={14} />
+        ))}
+        <Line dataKey="lane" type="stepAfter" stroke="color-mix(in srgb, var(--foreground) 22%, transparent)" strokeWidth={1} dot={false} activeDot={false} {...anim} />
         {STAGES.map((st) => (
           <Line
             key={st}
@@ -92,7 +117,7 @@ export function HypnogramChart({ night }: { night: HypnogramNight }) {
             dataKey="lane"
             type="stepAfter"
             stroke={DATA_COLORS[`stage-${st}`].css}
-            strokeWidth={8}
+            strokeWidth={14}
             strokeLinecap="butt"
             dot={false}
             activeDot={false}
@@ -109,7 +134,7 @@ export function HypnogramChart({ night }: { night: HypnogramNight }) {
 /** Last night's stages as a step chart over four lanes (spec §5.6, derived design). */
 export function Hypnogram({ data }: HypnogramProps) {
   const empty = (
-    <div className="grid h-40 place-items-center">
+    <div className="grid place-items-center">
       <EmptyState body="No stage data for this night. Fitbit only stages sleeps longer than about 3 hours." />
     </div>
   )
@@ -119,7 +144,7 @@ export function Hypnogram({ data }: HypnogramProps) {
       skeleton={<HypnogramSkeleton />}
       empty={empty}
       renderReason={(r) => (
-        <div className="grid h-40 place-items-center">
+        <div className="grid place-items-center">
           <ReasonPlaceholder reason={r} size="md" />
         </div>
       )}
@@ -130,6 +155,6 @@ export function Hypnogram({ data }: HypnogramProps) {
 }
 
 export function HypnogramSkeleton() {
-  return <Skeleton aria-hidden className="h-40 rounded-lg bg-muted/60" />
+  return <Skeleton aria-hidden className="h-44 rounded-lg bg-muted/60" />
 }
 Hypnogram.Skeleton = HypnogramSkeleton

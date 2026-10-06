@@ -50,8 +50,8 @@ Both Δage values use the reference at today's age, so flat inputs give exactly 
 |---|---|---|---|---|
 | Sleep duration | `sleepHours` | h | mean | main sleep `asleep_min` / 60 |
 | Sleep regularity | `sri` | SRI, −100..100 | mean | `sleepRegularityIndex` over the 7 days ending that day |
-| Zones 1–3 | `zone13Min` | min/day | mean × 7 = min/week | Google's `time-in-heart-rate-zone` roll-up, LIGHT + MODERATE (`light_moderate_min`); on a day without it, Pulse's `timeInZone` on that day's `hr_samples` (Light + Moderate) |
-| Zones 4–5 | `zone45Min` | min/day | mean × 7 = min/week | same, VIGOROUS + PEAK (`vigorous_peak_min`) |
+| Zones 1–3 | `zone13Min` | min/day | mean × 7 = min/week | Pulse's `timeInZone` on that day's heart rate, zones 1–3: 50–80% of heart-rate reserve (`src/core/scoring/zones.ts`, the same zones as Strain). Google's roll-up is no longer read here (2026-10-05) |
+| Zones 4–5 | `zone45Min` | min/day | mean × 7 = min/week | same, zones 4–5: 80% of heart-rate reserve and above |
 | Strength | `strengthMin` | min/day | mean × 7 = min/week | `exercises` with a strength type; 0 on a worn day without one |
 | Steps | `steps` | steps/day | mean, capped at the plateau | `daily_metrics.steps` |
 | VO2max | `vo2maxRun`, `vo2maxDaily` | mL/kg/min | mean of the chosen kind | `daily_metrics.vo2max_run`, `vo2max_daily` |

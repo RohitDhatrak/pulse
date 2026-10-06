@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { rows, sql } from "./db";
 import { dailyMetrics } from "./db/schema";
 import { getProfile, ProfileInput, saveProfile } from "./profile";
+import { wholeYears } from "./time";
 import { addUser, freshDb, seeded, USER } from "./testing";
 
 const input = { birthDate: "1990-06-15", sex: "female", maxHr: null, heightCm: 165, timeZone: "Asia/Kolkata" } as const;
@@ -22,16 +23,17 @@ describe("profile", () => {
     expect(await getProfile(db, USER)).toMatchObject({ maxHr: 190, maxHrSource: "set" });
   });
 
-  it("without the user's own, max HR is the top of Google's latest peak zone (that user's)", async () => {
+  it("without the user's own, max HR is Tanaka's estimate, never the top of Google's peak zone (a flat 220)", async () => {
     const db = await freshDb();
     const other = await addUser(db);
     await saveProfile(db, USER, input);
     await db.insert(dailyMetrics).values([
       { userId: USER, day: "2026-09-30", hrZones: [98, 118, 137, 157, 186], source: "google" },
-      { userId: USER, day: "2026-10-01", hrZones: [99, 119, 138, 158, 188], source: "google" },
+      { userId: USER, day: "2026-10-01", hrZones: [30, 119, 145, 177, 220], source: "google" },
       { userId: other, day: "2026-10-02", hrZones: [99, 119, 138, 158, 199], source: "google" },
     ]);
-    expect(await getProfile(db, USER, "2026-10-02")).toMatchObject({ maxHr: 188, maxHrSource: "google" });
+    const age = wholeYears(input.birthDate, "2026-10-02");
+    expect(await getProfile(db, USER, "2026-10-02")).toMatchObject({ maxHr: Math.round(208 - 0.7 * age), maxHrSource: "estimated" });
     await saveProfile(db, USER, { ...input, maxHr: 190 });
     expect(await getProfile(db, USER)).toMatchObject({ maxHr: 190, maxHrSource: "set" });
     expect(await getProfile(db, other)).toBeNull();

@@ -47,6 +47,12 @@ export const DEVICES_KEY = "paired-devices";
 export const NO_DEVICE_ERROR = `[google] ${DEVICES_KEY}: NO_PAIRED_DEVICE`;
 /** daily-*, sleep, exercise, sample types and rollups re-fetch this many local days before synced_through. */
 const OVERLAP_DAYS = 3;
+/**
+ * Sleep and exercise re-fetch further back: a session deleted in Google Health is only pruned when its window is
+ * listed again, and people delete a stray workout or nap days later. A few pages of 25 sessions each run.
+ * ponytail: older deletions stay; widen toward BACKFILL_DAYS if that is seen.
+ */
+const SESSION_OVERLAP_DAYS = 30;
 /** heart-rate and steps re-fetch from synced_through minus this. */
 const INTRADAY_OVERLAP_S = 3600;
 /** The live heart-rate pull re-fetches from the newest stored sample minus this. */
@@ -146,7 +152,7 @@ export function createGoogleSource(deps: SyncDeps): Source {
           from = st.syncedThrough!; // the last committed chunk's end
         } else {
           const through = st.syncedThrough!;
-          from = localMidnight(addDays(localDay(through, tz), -OVERLAP_DAYS), tz);
+          from = localMidnight(addDays(localDay(through, tz), -(job.kind === "sleep" || job.kind === "exercise" ? SESSION_OVERLAP_DAYS : OVERLAP_DAYS)), tz);
           if (job.kind === "hr" || job.kind === "steps") {
             // From the last sample too, not just the cursor, so a band that uploads hours late is not
             // lost behind a 1-hour overlap.

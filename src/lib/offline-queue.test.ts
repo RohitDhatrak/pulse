@@ -13,32 +13,47 @@ beforeEach(() => {
 
 describe("offline check-in queue", () => {
   it("keeps the newest answer per (day, tag)", () => {
-    enqueue([{ day: "2026-10-01", tag: "alcohol", value: true }]);
-    enqueue([{ day: "2026-10-01", tag: "alcohol", value: false }, { day: "2026-10-01", tag: "caffeine", value: true }]);
-    expect(queued()).toBe(2);
+    enqueue(1, [{ day: "2026-10-01", tag: "alcohol", value: true }]);
+    enqueue(1, [{ day: "2026-10-01", tag: "alcohol", value: false }, { day: "2026-10-01", tag: "caffeine", value: true }]);
+    expect(queued(1)).toBe(2);
   });
 
   it("sends everything and empties; a server rejection is dropped, not retried", async () => {
-    enqueue([{ day: "2026-10-01", tag: "a", value: true }, { day: "2026-10-01", tag: "b", value: null }]);
+    enqueue(1, [{ day: "2026-10-01", tag: "a", value: true }, { day: "2026-10-01", tag: "b", value: null }]);
     save.mockResolvedValueOnce({ ok: true, data: undefined }).mockResolvedValueOnce({ ok: false, error: "Unknown tag: b" });
-    expect(await flushQueue()).toBe(1);
-    expect(queued()).toBe(0);
+    expect(await flushQueue(1)).toBe(1);
+    expect(queued(1)).toBe(0);
   });
 
   it("a network failure or a signed-out session keeps the rest", async () => {
-    enqueue([{ day: "2026-10-01", tag: "a", value: true }, { day: "2026-10-01", tag: "b", value: true }]);
+    enqueue(1, [{ day: "2026-10-01", tag: "a", value: true }, { day: "2026-10-01", tag: "b", value: true }]);
     save.mockRejectedValueOnce(new Error("network"));
-    expect(await flushQueue()).toBe(0);
-    expect(queued()).toBe(2);
+    expect(await flushQueue(1)).toBe(0);
+    expect(queued(1)).toBe(2);
     save.mockResolvedValueOnce({ ok: false, error: "Signed out. Sign in again." });
-    await flushQueue();
-    expect(queued()).toBe(2);
+    await flushQueue(1);
+    expect(queued(1)).toBe(2);
+  });
+
+  it("only replays the queue of the account that made it", async () => {
+    enqueue(1, [{ day: "2026-10-01", tag: "alcohol", value: true }]);
+    save.mockResolvedValue({ ok: true, data: undefined });
+    expect(await flushQueue(2)).toBe(0);
+    expect(save).not.toHaveBeenCalled();
+    expect(queued(1)).toBe(1);
+  });
+
+  it("drops the old shared queue, whose owner is unknown", async () => {
+    localStorage.setItem("pulse:journal-queue", JSON.stringify([{ day: "2026-10-01", tag: "a", value: true }]));
+    await flushQueue(1);
+    expect(localStorage.getItem("pulse:journal-queue")).toBeNull();
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("does nothing while offline", async () => {
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
-    enqueue([{ day: "2026-10-01", tag: "a", value: true }]);
-    expect(await flushQueue()).toBe(0);
+    enqueue(1, [{ day: "2026-10-01", tag: "a", value: true }]);
+    expect(await flushQueue(1)).toBe(0);
     expect(save).not.toHaveBeenCalled();
   });
 });

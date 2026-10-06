@@ -235,7 +235,7 @@ export function Profile({ profile }: { profile: SettingsVM["profile"] }) {
     ["Age", String(profile.age)],
     ["Sex", profile.sex === "male" ? "Male" : "Female"],
     ["Height", profile.heightCm ? `${profile.heightCm}\u00a0cm` : "Not set"],
-    ["Max heart rate", `${profile.maxHr}\u00a0bpm, ${profile.maxHrSource === "google" ? "from Google" : profile.maxHrSource}`],
+    ["Max heart rate", `${profile.maxHr}\u00a0bpm, ${profile.maxHrSource}`],
     ["Time zone", profile.timeZone],
   ]
   return (

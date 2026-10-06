@@ -44,6 +44,16 @@ const Env = z
     VAPID_PRIVATE_KEY: z.string().optional(),
     /** Who the push service can contact: `mailto:you@example.com` or an https URL. */
     VAPID_SUBJECT: z.string().regex(/^(mailto:|https:\/\/)/, "must be mailto:you@example.com or an https URL").optional(),
+    /**
+     * Android app (a Trusted Web Activity, e.g. from PWABuilder): its package name and signing key's SHA-256
+     * fingerprints (comma-separated), served as /.well-known/assetlinks.json so the app opens without a URL bar.
+     */
+    ANDROID_PACKAGE_NAME: z.string().regex(/^[a-zA-Z][\w]*(\.[a-zA-Z][\w]*)+$/, "must be a package name like com.example.pulse").optional(),
+    ANDROID_CERT_SHA256: z
+      .string()
+      .transform((s) => s.split(",").map((f) => f.trim().toUpperCase()).filter(Boolean))
+      .pipe(z.array(z.string().regex(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/, "must be SHA-256 fingerprints like AB:CD:...(32 pairs), comma-separated")))
+      .optional(),
   })
   .superRefine((e, ctx) => {
     const need = (keys: (keyof typeof e)[], why: string) => {
@@ -54,6 +64,7 @@ const Env = z
     // Refused in production, except the e2e suite's production build (E2E_PROD), which also sets PULSE_E2E=1.
     if (e.COACH_MOCK && process.env.NODE_ENV === "production" && process.env.PULSE_E2E !== "1")
       ctx.addIssue({ code: "custom", path: ["COACH_MOCK"], message: "is for tests only, never in production" });
+    if (e.ANDROID_PACKAGE_NAME || e.ANDROID_CERT_SHA256) need(["ANDROID_PACKAGE_NAME", "ANDROID_CERT_SHA256"], "together for the Android app");
     if (e.VAPID_PUBLIC_KEY || e.VAPID_PRIVATE_KEY) need(["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"], "together for notifications");
     if (e.DATA_SOURCE === "google") {
       need(["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], "when DATA_SOURCE=google");
@@ -86,6 +97,7 @@ export function parseConfig(env: Record<string, string | undefined>) {
     supportEmail: e.SUPPORT_EMAIL ?? null,
     port: e.PORT,
     avatarUrl: e.AVATAR_URL ?? null,
+    android: e.ANDROID_PACKAGE_NAME && e.ANDROID_CERT_SHA256?.length ? { packageName: e.ANDROID_PACKAGE_NAME, fingerprints: e.ANDROID_CERT_SHA256 } : null,
     vapid: e.VAPID_PUBLIC_KEY && e.VAPID_PRIVATE_KEY && e.VAPID_SUBJECT ? { publicKey: e.VAPID_PUBLIC_KEY, privateKey: e.VAPID_PRIVATE_KEY, subject: e.VAPID_SUBJECT } : null,
     google: e.DATA_SOURCE === "google"
       ? {

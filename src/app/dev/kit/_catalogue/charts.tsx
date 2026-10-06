@@ -132,7 +132,7 @@ export const CHARTS: KitEntry[] = [
     use: "Heart-rate zones on Strain and Activity (rows); Recovery and stress breakdowns in Reports and Stress (stacked).",
     props: ["variant: rows | stacked", "data", "rows: maxHr", "stacked: unit days | minutes", "emptyCopy"],
     states: [
-      { name: "rows, an empty top zone", node: <ZoneBars variant="rows" data={fx.ok(fx.zones)} note="Zones from Google for this day, set from your resting and max heart rate." /> },
+      { name: "rows, an empty top zone", node: <ZoneBars variant="rows" data={fx.ok(fx.zones)} note="Zones on your heart-rate reserve: resting 56 to max 186 bpm." /> },
       {
         name: "stacked: days, minutes",
         node: (
@@ -154,7 +154,7 @@ export const CHARTS: KitEntry[] = [
         ),
       },
       everyReason((r) => <ZoneBars variant="rows" data={fx.why(r, 4)} />),
-      { name: "rows at 320 px", narrow: true, node: <ZoneBars variant="rows" data={fx.ok(fx.zones)} note="Zones from Google for this day, set from your resting and max heart rate." /> },
+      { name: "rows at 320 px", narrow: true, node: <ZoneBars variant="rows" data={fx.ok(fx.zones)} note="Zones on your heart-rate reserve: resting 56 to max 186 bpm." /> },
     ],
   },
 ]

@@ -6,13 +6,14 @@ import { z } from "zod";
 import { currentUser, SIGNED_OUT } from "../auth";
 import { getDb } from "../db";
 import { intradayDirty, journalEntries, journalTags } from "../db/schema";
-import { addTag, reorderTags, setTagHidden, tagKey } from "../journalTags";
+import { addTag, MAX_TAGS, reorderTags, setTagHidden, tagKey } from "../journalTags";
 import { userCtx } from "../queries/common";
 import { getJournal } from "../queries/journal";
 import { userTimeZone } from "../profile";
 import { localDay } from "../time";
 import type { JournalVM } from "../queries/types";
 import { requestSync } from "../worker";
+import { inDayRange } from "@/lib/url";
 
 export type ActionResult<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -67,7 +68,7 @@ export async function loadCheckIn(day: string): Promise<ActionResult<Pick<Journa
   const r = z.iso.date().safeParse(day);
   if (!r.success) return { ok: false, error: "Invalid day" };
   const ctx = await userCtx(user.userId);
-  if (r.data > localDay(ctx.now, ctx.timeZone)) return { ok: false, error: "Invalid day" };
+  if (!inDayRange(r.data, localDay(ctx.now, ctx.timeZone))) return { ok: false, error: "Invalid day" };
   // ponytail: getJournal also builds the strip, history and teaser the sheet drops; a lean query if it ever shows.
   const { tags, checkIn } = await getJournal(r.data, ctx);
   return { ok: true, data: { tags, checkIn } };
@@ -84,7 +85,9 @@ export async function addCustomTag(input: z.input<typeof CustomTag>): Promise<Ac
   const { label } = r.data;
   const tag = tagKey(label);
   if (!tag) return { ok: false, error: "Label needs a letter or digit" };
-  if (!(await addTag(getDb(), user.userId, tag, label))) return { ok: false, error: `Tag already exists: ${tag}` };
+  const added = await addTag(getDb(), user.userId, tag, label);
+  if (added === "exists") return { ok: false, error: `Tag already exists: ${tag}` };
+  if (added === "full") return { ok: false, error: `Too many behaviours: the limit is ${MAX_TAGS}` };
   revalidateTags();
   return { ok: true, data: { tag } };
 }

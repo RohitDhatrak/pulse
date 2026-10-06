@@ -1,17 +1,17 @@
 // The person's profile (U19): one row per user, written by onboarding and Settings › Profile.
 import { z } from "zod";
 import { isTimeZone } from "@/lib/timeZone";
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type Db, sql } from "./db";
-import { dailyMetrics, dailyValues, profile } from "./db/schema";
+import { dailyValues, profile } from "./db/schema";
 import { wholeYears } from "./time";
 
 export type Profile = {
   birthDate: string;
   sex: "male" | "female";
   maxHr: number;
-  /** "set": the user's own; "google": the top of Google's latest peak zone; "estimated": 208 − 0.7 × age. */
-  maxHrSource: "set" | "google" | "estimated";
+  /** "set": the user's own; "estimated": 208 − 0.7 × age. */
+  maxHrSource: "set" | "estimated";
   heightCm: number | null;
   /** IANA zone: the person's days start at local midnight there. */
   timeZone: string;
@@ -31,35 +31,24 @@ export const ProfileInput = z.object({
 export type ProfileInput = z.infer<typeof ProfileInput>;
 
 /**
- * The stored profile with max HR resolved, or null before onboarding. Max HR: the user's own wins; else the top
- * of Google's latest PEAK zone (daily-heart-rate-zones); else Tanaka, 208 - 0.7 * age.
+ * The stored profile with max HR resolved, or null before onboarding. Max HR: the user's own wins; else Tanaka,
+ * 208 - 0.7 * age. Not the top of Google's PEAK zone: Google sends a flat 220 there for everyone (seen 2026-10-05),
+ * which put every zone and Strain's heart-rate reserve too high.
  */
 export async function getProfile(db: Db, userId: number, today = new Date().toISOString().slice(0, 10)): Promise<Profile | null> {
   const [row] = await db.select().from(profile).where(eq(profile.userId, userId));
   if (!row) return null;
-  const [google, height] = await Promise.all([row.maxHr === null ? googleMaxHr(db, userId) : null, row.heightCm ?? googleHeight(db, userId)]);
+  const height = row.heightCm ?? (await googleHeight(db, userId));
   return {
     birthDate: row.birthDate,
     sex: row.sex,
-    maxHr: row.maxHr ?? google ?? Math.round(208 - 0.7 * wholeYears(row.birthDate, today)),
-    maxHrSource: row.maxHr !== null ? "set" : google !== null ? "google" : "estimated",
+    maxHr: row.maxHr ?? Math.round(208 - 0.7 * wholeYears(row.birthDate, today)),
+    maxHrSource: row.maxHr !== null ? "set" : "estimated",
     // The user's own height wins; else the latest from Google (sync's `height` job).
     heightCm: height,
     timeZone: row.timeZone,
   };
 }
-
-/** The peak maximum of the newest Google zones (daily_metrics.hr_zones' last number). */
-const googleMaxHr = async (db: Db, userId: number) => {
-  const [r] = await db
-    .select({ z: dailyMetrics.hrZones })
-    .from(dailyMetrics)
-    .where(and(eq(dailyMetrics.userId, userId), isNotNull(dailyMetrics.hrZones)))
-    .orderBy(desc(dailyMetrics.day))
-    .limit(1);
-  const top = r?.z?.[4];
-  return top != null && top >= 100 && top <= 240 ? top : null; // the range Settings accepts
-};
 
 const googleHeight = async (db: Db, userId: number) => {
   const [r] = await db

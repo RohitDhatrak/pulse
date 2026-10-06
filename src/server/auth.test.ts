@@ -7,7 +7,8 @@ import { getAuth, INVITE_HEADER } from "./auth";
 import { parseConfig, type Config } from "./config";
 import { type Db, rows, sql } from "./db";
 import { invites, profile, user } from "./db/schema";
-import { seedPull } from "./sources/seed/generate";
+import { DEMO_EMAIL, DEMO_PASSWORD } from "./demo";
+import { ensureDemoUser, seedPull } from "./sources/seed/generate";
 import { freshDb, NOW, TZ, USER } from "./testing";
 
 // Sign-up is closed on a demo instance, so these run as a Google instance.
@@ -114,6 +115,18 @@ describe("better-auth", () => {
       db = await freshDb(); // a new auth instance reads the config
       expect(await codeOf(getAuth().api.signUpEmail({ body: ADA }))).toBe("EMAIL_PASSWORD_SIGN_UP_DISABLED");
     }
+  });
+
+  it("the shared demo account can't change its password, delete itself or end other visitors' sessions", async () => {
+    h.cfg = parseConfig({});
+    db = await freshDb();
+    await ensureDemoUser(db);
+    const headers = await signedIn(DEMO_EMAIL, DEMO_PASSWORD);
+    const api = getAuth().api;
+    expect(await codeOf(api.changePassword({ headers, body: { currentPassword: DEMO_PASSWORD, newPassword: "attacker-chosen-pw", revokeOtherSessions: true } }))).toBe("DEMO_LOCKED");
+    expect(await codeOf(api.deleteUser({ headers, body: {} }))).toBe("DEMO_LOCKED");
+    expect(await codeOf(api.revokeOtherSessions({ headers }))).toBe("DEMO_LOCKED");
+    await signedIn(DEMO_EMAIL, DEMO_PASSWORD); // the next visitor still gets in
   });
 });
 

@@ -11,8 +11,9 @@ describe("parseDay", () => {
     expect(parseDay(undefined, today)).toEqual({ d: today, isToday: true, rejected: false });
     expect(parseDay("", today).d).toBe(today);
   });
-  it("rejects future, malformed and impossible dates", () => {
-    for (const raw of ["2026-10-03", "2027-01-01", "yesterday", "2026-9-1", "2026-02-31"]) {
+  it("rejects future, malformed, impossible and too-old dates", () => {
+    // 0001-01-01 would make Home and Journal build a ~740k-day strip.
+    for (const raw of ["2026-10-03", "2027-01-01", "yesterday", "2026-9-1", "2026-02-31", "0001-01-01"]) {
       expect(parseDay(raw, today)).toEqual({ d: today, isToday: true, rejected: true });
     }
   });

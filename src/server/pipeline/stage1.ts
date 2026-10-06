@@ -9,7 +9,7 @@ import { hrRecovery } from "@/core/scoring/hrRecovery";
 import { sessionRestingHR } from "@/core/scoring/restingHr";
 import { defaultRestingHR, strain } from "@/core/scoring/strain";
 import type { BaselineState, HrSample } from "@/core/scoring/types";
-import { googleZones, timeInZone, zones as hrZones } from "@/core/scoring/zones";
+import { timeInZone, zones as hrZones } from "@/core/scoring/zones";
 import { minuteLoad } from "@/core/algorithms/energyBank";
 import { minuteMeanHr, stress } from "@/core/algorithms/stress";
 import { BATCH_DAYS, type Data, type Exercise, r1, round, type Session, sha, touching, upsertSeries } from "./data";
@@ -28,7 +28,6 @@ function stage1Key(data: Data, day: string, opts: PipelineOptions) {
       opts.timeZone, // the day's bounds come from it
       opts.profile.maxHr,
       data.metrics.get(day)?.rhrBpm ?? null,
-      data.metrics.get(day)?.hrZones ?? null,
       main ? [main.id, main.startTs, main.endTs] : null,
       touching(data.sessions, lo, hi).map((s) => [s.id, s.startTs, s.endTs, s.isMain]),
       touching(data.exercises, lo, hi + 330).map((e) => [e.id, e.startTs, e.endTs, e.type, e.day]),
@@ -130,8 +129,8 @@ function stage1Day(
   // Google's daily resting HR first; Pulse's sleep-session estimate only on days Google has none.
   const dailyRhr = data.metrics.get(day)?.rhrBpm ?? null;
   const restingHr = dailyRhr ?? sessionRhr ?? defaultRestingHR;
-  // Google's zones for the day, else Pulse's % of max HR.
-  const zoneSet = googleZones(data.metrics.get(day)?.hrZones) ?? hrZones(maxHr);
+  // Five zones on heart-rate reserve from the day's resting HR, the same zones Strain counts.
+  const zoneSet = hrZones(restingHr, maxHr);
   const tiz = (xs: HrSample[]) => timeInZone(xs, zoneSet).seconds;
 
   const means = minuteMeanHr(dayHr, start, end);
@@ -158,7 +157,6 @@ function stage1Day(
     maxHr,
     effort: strain(dayHr, maxHr, restingHr),
     zoneLower: zoneSet.zones.map((z) => round(z.lower, 1)),
-    zoneSource: zoneSet.source,
     zoneSeconds: tiz(dayHr),
     dayAggregate: probe.dayAggregate,
     stillMinutes: still.filter((v) => v != null).length,

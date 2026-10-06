@@ -54,9 +54,9 @@ export async function getStrain(day: string, ctx: QueryCtx): Promise<StrainVM> {
         : ok({ low: t.low, high: t.high, estimate: t.coldStart, acwrRule: t.acwrRule });
 
   const strengthMin = (d: string) => exs.filter((e) => e.day === d && isStrength(e)).reduce((a, e) => a + (e.endTs - e.startTs) / 60, 0);
-  // Google's all-day time in zones, as Pulse Age reads it; Pulse's own time-in-zone only on days without it.
-  const zoneMin = (r: DayRow | undefined, google: number | null | undefined, from: number, to: number) =>
-    google ?? (r?.s1 && r.s1.hrCount > 0 ? r.s1.zoneSeconds.slice(from, to).reduce((a, b) => a + b, 0) / 60 : null);
+  // Time in zones from..to-1 (0-based), the same zones as the zone chart and Pulse Age.
+  const zoneMin = (r: DayRow | undefined, from: number, to: number) =>
+    r?.s1 && r.s1.hrCount > 0 ? r.s1.zoneSeconds.slice(from, to).reduce((a, b) => a + b, 0) / 60 : null;
   const reason = hrReason(row?.s1 ?? null);
   const stat = (key: string, label: string, pick: (d: string) => number | null, unit: string | undefined, why = reason): KeyStat => {
     const prior = meanSd(Array.from({ length: 30 }, (_, k) => pick(addDays(day, -k - 1))));
@@ -70,8 +70,8 @@ export async function getStrain(day: string, ctx: QueryCtx): Promise<StrainVM> {
   };
   const worn = (d: string) => (rows.get(d)?.s1?.hrCount ?? 0) > 0;
   const summary: KeyStat[] = [
-    stat("zones13", "Light and moderate zones", (d) => zoneMin(rows.get(d), rows.get(d)?.metrics?.lightModerateMin, 0, 2), "min"),
-    stat("zones45", "Vigorous and peak zones", (d) => zoneMin(rows.get(d), rows.get(d)?.metrics?.vigorousPeakMin, 2, 4), "min"),
+    stat("zones13", "Heart rate zones 1-3", (d) => zoneMin(rows.get(d), 0, 3), "min"),
+    stat("zones45", "Heart rate zones 4-5", (d) => zoneMin(rows.get(d), 3, 5), "min"),
     stat("strength", "Strength activity time", (d) => (worn(d) ? strengthMin(d) : null), "min"),
     { ...stat("steps", "Steps", (d) => rows.get(d)?.metrics?.steps ?? null, undefined), href: metricHref("steps") },
     ...STRAIN_EXTRAS.map(extra),
@@ -95,7 +95,7 @@ export async function getStrain(day: string, ctx: QueryCtx): Promise<StrainVM> {
     zones: zoneRows(row),
     maxHr: row?.s1?.maxHr ?? ctx.profile.maxHr,
     zoneNote: zoneNote(row, ctx),
-    activities: exs.filter((e) => e.day === day).map((e) => activityItem(e, row)),
+    activities: exs.filter((e) => e.day === day).map((e) => activityItem(e, row)).sort((a, b) => b.start - a.start),
     trend: { points: pts, target: target.value ? [target.value.low, target.value.high] : null },
     calories: calorieSplit(rows, day, soFar),
     workouts: { points: trendPoints(rows, day, (r) => workoutMin.get(r.day) ?? 0, 60, soFar) },
@@ -136,11 +136,9 @@ export function coach(strain: Metric<number>, target: { low: number; high: numbe
 export const zoneBounds = (lower: number[]): ZoneRow[] =>
   lower.map((min, i) => ({ zone: i + 1, label: ZONE_NAMES[i], min: Math.round(min), max: i < lower.length - 1 ? Math.round(lower[i + 1]) - 1 : null, seconds: 0 }));
 
-/** Where the day's zones came from, under the zone rows. */
+/** How the day's zones are set, under the zone rows. */
 export const zoneNote = (row: DayRow | undefined, ctx: QueryCtx) =>
-  row?.s1?.zoneSource === "google"
-    ? "Zones from Google for this day, set from your resting and max heart rate."
-    : `Zones from your max heart rate of ${row?.s1?.maxHr ?? ctx.profile.maxHr} bpm.`;
+  `Zones on your heart-rate reserve: resting ${Math.round(row?.s1?.restingHr ?? 0)} to max ${row?.s1?.maxHr ?? ctx.profile.maxHr} bpm.`;
 
 export function zoneRows(row: DayRow | undefined, seconds = row?.s1?.zoneSeconds): Metric<ZoneRow[]> {
   const s1 = row?.s1;
@@ -177,7 +175,8 @@ export function hrChartOf(
   return ok({
     points,
     zones: zoneBounds(s1.zoneLower),
-    spans: from == null ? spans : spans.filter((x) => x.end > ms(from) && x.start < ms(to!)),
+    // An activity window marks only its workouts, not sleep or a neighbouring session caught in the padding.
+    spans: from == null ? spans : spans.filter((x) => x.kind === "workout" && x.end > ms(from) && x.start < ms(to!)),
     now: isToday && from == null && s1.lastHrTs != null ? ms(s1.lastHrTs) : null,
   });
 }

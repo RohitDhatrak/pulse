@@ -87,7 +87,10 @@ describe("getHome", () => {
       "Skin temperature",
     ]);
     expect(vm.keyStats.every((s) => s.average != null)).toBe(true);
-    expect(vm.activities.items[0]).toMatchObject({ kind: "sleep" });
+    // Newest first: the night's sleep, which started the day, comes last.
+    expect(vm.activities.items.at(-1)).toMatchObject({ kind: "sleep" });
+    const starts = vm.activities.items.map((a) => a.start);
+    expect(starts).toEqual([...starts].sort((a, b) => b - a));
     expect(vm.energyBank.value?.curve.length).toBeGreaterThan(50);
     expect(vm.tonight.value?.plans.map((p) => p.label)).toEqual(["Peak", "Perform", "Get by"]);
     const [peak, perform, getBy] = vm.tonight.value!.plans;

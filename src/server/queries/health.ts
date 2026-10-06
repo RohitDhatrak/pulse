@@ -134,7 +134,7 @@ const HS_META: Record<string, Omit<HealthspanContributor, "metric" | "target" | 
   },
   zone13: {
     group: "strain",
-    label: "Light and moderate zones",
+    label: "Heart rate zones 1-3",
     unit: "min",
     domain: [0, 300],
     higherIsBetter: true,
@@ -143,7 +143,7 @@ const HS_META: Record<string, Omit<HealthspanContributor, "metric" | "target" | 
   },
   zone45: {
     group: "strain",
-    label: "Vigorous and peak zones",
+    label: "Heart rate zones 4-5",
     unit: "min",
     domain: [0, 150],
     higherIsBetter: true,

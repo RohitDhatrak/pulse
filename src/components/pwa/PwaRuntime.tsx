@@ -3,8 +3,8 @@
 import * as React from "react"
 import { toast } from "sonner"
 import "@/lib/install" // registers the install-prompt listener as early as the bundle runs
+import { SW_URL } from "@/lib/sw"
 
-const BUILD = process.env.NEXT_PUBLIC_BUILD_ID
 
 /**
  * Everything PWA that isn't a screen, mounted once in the root layout (signed out too):
@@ -32,7 +32,7 @@ export function PwaRuntime() {
     let off = () => {}
     if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
       let asked = false
-      navigator.serviceWorker.register(`/sw.js?v=${BUILD ?? "0"}`).then((reg) => {
+      navigator.serviceWorker.register(SW_URL).then((reg) => {
         const offer = (w: ServiceWorker) =>
           toast("New version available", {
             id: "sw-update",

@@ -393,9 +393,9 @@ function PhoneActivity({ stats, link }: { stats: KeyStat[]; link: { d: string; t
     <SectionShell variant="section" title="From your phone" aside={<span className="whitespace-nowrap">vs. 30-day avg</span>}>
       <ul className="grid grid-cols-2 gap-3 xl:gap-4">
         {stats.map((s, i) => (
-          // An odd count lets the first tile (steps) span the row, so the grid never ends on a hole.
+          // An odd count lets the first tile (steps) span the row as a wide strip that spells out its comparison.
           <li key={s.key} className={cn("grid", stats.length % 2 === 1 && i === 0 && "col-span-2")}>
-            <KeyStatRow variant="tile" {...statProps(s, link)} />
+            <KeyStatRow variant="tile" {...statProps(s, link)} wide={stats.length % 2 === 1 && i === 0} />
           </li>
         ))}
       </ul>

@@ -29,7 +29,10 @@ export default async function ActivityPage({ params }: PageProps<"/activity/[id]
   const today = todayOf(ctx)
 
   const Icon = ACTIVITY_ICON[vm.kind]
-  const tiles = vm.stats.filter((k) => k.key !== "duration")
+  // No heart rate at all (band off): one notice replaces the empty chart, the empty zones and the dashed heart-rate
+  // tiles, instead of the same "band not worn" line three times over an empty page.
+  const noHr = vm.hr.value === null && vm.zones.value === null
+  const tiles = vm.stats.filter((k) => k.key !== "duration" && !(noHr && k.metric.value === null))
 
   return (
     <DetailShell
@@ -41,37 +44,49 @@ export default async function ActivityPage({ params }: PageProps<"/activity/[id]
       hero={<Hero vm={vm} />}
       // the reference app draws the heart rate and the zone rows on the ground, not in cards [latest-activity-1].
       primary={
-        <div className="space-y-6">
-          <section aria-labelledby="hr-title">
-            <h2 id="hr-title" className="sr-only">
-              Heart rate
-            </h2>
-            <IntradayHrChart variant="activity" data={hrSeries(vm.hr, vm.maxHr)} />
-          </section>
-          <section aria-labelledby="zones-title">
-            <h2 id="zones-title" className="sr-only">
-              Time in zones
-            </h2>
-            <ZoneBars variant="rows" data={vm.zones} note={vm.zoneNote} emptyCopy="No heart-rate zones for this activity." />
-          </section>
-        </div>
+        noHr ? (
+          <Card className="items-center gap-0 px-4 py-2">
+            <ReasonPlaceholder reason={vm.hr.reason} size="md" copy={noHrCopy(vm.hr.reason)} />
+          </Card>
+        ) : (
+          <div className="space-y-6">
+            <section aria-labelledby="hr-title">
+              <h2 id="hr-title" className="sr-only">
+                Heart rate
+              </h2>
+              <IntradayHrChart variant="activity" data={hrSeries(vm.hr, vm.maxHr)} />
+            </section>
+            <section aria-labelledby="zones-title">
+              <h2 id="zones-title" className="sr-only">
+                Time in zones
+              </h2>
+              <ZoneBars variant="rows" data={vm.zones} note={vm.zoneNote} emptyCopy="No heart-rate zones for this activity." />
+            </section>
+          </div>
+        )
       }
       secondary={[
-        <SectionShell key="stats" variant="section" title="Key statistics" aside="vs. 30-day average" level={2} className="flex flex-col">
-          <div className="grid flex-1 grid-cols-2 gap-3 md:grid-cols-3 xl:gap-4">
-            {tiles.map((k) => (
-              <KeyStatRow key={k.key} variant="tile" {...statProps(k)} />
-            ))}
-          </div>
-        </SectionShell>,
+        tiles.length > 0 && (
+          <SectionShell key="stats" variant="section" title="Key statistics" aside="vs. 30-day average" level={2} className={cn("flex flex-col", noHr && "xl:col-span-2")}>
+            <div className={cn("grid flex-1 grid-cols-2 gap-3 xl:gap-4", tiles.length > 2 && "md:grid-cols-3")}>
+              {tiles.map((k, i) => {
+                // An odd last tile spans the phone's two columns as a wide strip that spells out its comparison.
+                const wide = tiles.length % 2 === 1 && i === tiles.length - 1
+                return <KeyStatRow key={k.key} variant="tile" {...statProps(k)} wide={wide && "md"} className={cn(wide && "max-md:col-span-2")} />
+              })}
+            </div>
+          </SectionShell>
+        ),
         // A titled section like Key statistics beside it, so both columns carry a heading and their cards start and end
-        // on one line on laptop (SYM8).
-        <SectionShell key="hrr" variant="section" title="Heart rate recovery" level={2} className="flex flex-col">
-          <Card className="flex-1 justify-center gap-0 p-4 xl:p-5">
-            <HeartRateRecovery hrr={vm.hrr} />
-          </Card>
-        </SectionShell>,
-      ]}
+        // on one line on laptop (SYM8). Without heart rate there is nothing to recover from, and the notice says why.
+        !noHr && (
+          <SectionShell key="hrr" variant="section" title="Heart rate recovery" level={2} className="flex flex-col">
+            <Card className="flex-1 justify-center gap-0 p-4 xl:p-5">
+              <HeartRateRecovery hrr={vm.hrr} />
+            </Card>
+          </SectionShell>
+        ),
+      ].filter(Boolean)}
       footer={vm.insight && <InsightCard body={vm.insight} />}
     />
   )
@@ -98,7 +113,8 @@ function Hero({ vm }: { vm: ActivityVM }) {
         </div>
       </div>
       {s === null ? (
-        <ReasonPlaceholder reason={vm.strain.reason} size="sm" />
+        // The band-off notice under the hero already says why; repeating it here was the first of three copies.
+        vm.hr.value !== null && <ReasonPlaceholder reason={vm.strain.reason} size="sm" />
       ) : (
         vm.dayStrain !== null && (
           <p className={CAPTION}>
@@ -108,6 +124,12 @@ function Hero({ vm }: { vm: ActivityVM }) {
       )}
     </div>
   )
+}
+
+/** The one band-off notice: what is missing and why. */
+function noHrCopy(reason: string | null | undefined) {
+  const what = "heart rate, zones or strain for this activity"
+  return reason === "band_not_worn" ? `Band not worn, so there's no ${what}.` : `Too little heart-rate data to show ${what}.`
 }
 
 function HeartRateRecovery({ hrr }: { hrr: ActivityVM["hrr"] }) {

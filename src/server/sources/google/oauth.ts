@@ -59,6 +59,15 @@ export class GoogleError extends Error {
   }
 }
 
+/** Runs a write that binds tokens. A failed query's error message carries its params (the tokens), so it never escapes. */
+async function storeTokens(where: string, write: () => Promise<unknown>): Promise<void> {
+  try {
+    await write();
+  } catch {
+    throw new GoogleError("token_store_failed", undefined, where);
+  }
+}
+
 type Google = { clientId: string; clientSecret: string };
 type Deps = { fetch?: typeof fetch; now?: () => number };
 
@@ -225,10 +234,12 @@ export async function exchangeCode(
     if (!(await hasGrant(db, userId))) {
       throw new GoogleError("auth_revoked", r.status, "token exchange returned no refresh_token; revoke the app's access in your Google account and connect again");
     }
-    await db
-      .update(oauthTokens)
-      .set({ accessToken: r.accessToken, expiresAt: t + r.expiresIn, updatedAt: t, ...who })
-      .where(eq(oauthTokens.userId, userId));
+    await storeTokens("token exchange", () =>
+      db
+        .update(oauthTokens)
+        .set({ accessToken: r.accessToken, expiresAt: t + r.expiresIn, updatedAt: t, ...who })
+        .where(eq(oauthTokens.userId, userId)),
+    );
     return account;
   }
   const row = {
@@ -240,10 +251,9 @@ export async function exchangeCode(
     updatedAt: t,
     ...who,
   };
-  await db
-    .insert(oauthTokens)
-    .values({ userId, ...row })
-    .onConflictDoUpdate({ target: oauthTokens.userId, set: row });
+  await storeTokens("token exchange", () =>
+    db.insert(oauthTokens).values({ userId, ...row }).onConflictDoUpdate({ target: oauthTokens.userId, set: row }),
+  );
   return account;
 }
 
@@ -334,15 +344,17 @@ export async function getAccessToken(db: Db, userId: number, google: Google, o: 
     }
     throw new GoogleError(r.code, r.status, "token refresh");
   }
-  await db
-    .update(oauthTokens)
-    .set({
-      accessToken: r.accessToken,
-      expiresAt: t + r.expiresIn,
-      refreshToken: r.refreshToken ?? row.refreshToken,
-      scope: r.scope ?? row.scope,
-      updatedAt: t,
-    })
-    .where(eq(oauthTokens.userId, userId));
+  await storeTokens("token refresh", () =>
+    db
+      .update(oauthTokens)
+      .set({
+        accessToken: r.accessToken,
+        expiresAt: t + r.expiresIn,
+        refreshToken: r.refreshToken ?? row.refreshToken,
+        scope: r.scope ?? row.scope,
+        updatedAt: t,
+      })
+      .where(eq(oauthTokens.userId, userId)),
+  );
   return r.accessToken;
 }
