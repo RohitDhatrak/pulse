@@ -1,7 +1,7 @@
 // Ports RecoveryScorer.kt (Charge: z-scores against personal baselines through a logistic) and the
 // daily-aggregate gate from WatchRecovery.kt. Fitbit nightly HRV is a daily aggregate, so Recovery waits
 // for minBaselineNights accepted prior nights.
-import { foldHistory, hrvCfg, isUsable, restingHRCfg } from "./baselines";
+import { foldHistory, hrvCfg, isUsable, restingHRCfg, zSpread } from "./baselines";
 import { forCharge } from "./confidence";
 import type { BaselineState, ScoreConfidence } from "./types";
 
@@ -60,13 +60,13 @@ export function band(score: number): RecoveryBand {
   return "green";
 }
 
-/** Mean and spread in abs-dev units, as in BaselineState. */
+/** Mean and spread in abs-dev units, as in BaselineState (driverBaseline applies the short-history shrink). */
 export interface DriverBaseline {
   mean: number;
   spread: number;
 }
 
-export const driverBaseline = (s: BaselineState): DriverBaseline => ({ mean: s.baseline, spread: s.spread });
+export const driverBaseline = (s: BaselineState): DriverBaseline => ({ mean: s.baseline, spread: zSpread(s) });
 
 /** (value − mean) / (1.253 × spread). */
 export function zScore(value: number, mean: number, spread: number): number {

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { foldHistory, hrvCfg } from "./baselines";
+import { foldHistory, hrvCfg, zSpread } from "./baselines";
 import {
   band,
   bandRedMax,
+  driverBaseline,
   gatedRecovery,
   logisticK,
   logisticZ0,
@@ -101,7 +102,8 @@ describe("RecoveryRequiredHrvBaselineTest", () => {
 
 describe("RecoverySaturationGuardTest", () => {
   const undamped = (hrv: number, rhr: number, hrvB: BaselineState, rhrB: BaselineState) => {
-    const z = (wHRV * zScore(hrv, hrvB.baseline, hrvB.spread) + wRHR * zScore(rhrB.baseline, rhr, rhrB.spread)) / (wHRV + wRHR);
+    // The raw composite: z against each baseline's z-score spread (shrink included), no saturation easing.
+    const z = (wHRV * zScore(hrv, hrvB.baseline, zSpread(hrvB)) + wRHR * zScore(rhrB.baseline, rhr, zSpread(rhrB))) / (wHRV + wRHR);
     return 100 / (1 + Math.exp(-logisticK * (z - logisticZ0)));
   };
   const hrvB = baseline(50, 6.265);
@@ -135,11 +137,11 @@ describe("RecoverySaturationGuardTest", () => {
   });
 
   it("a firing night still scores the raw composite and stays red", () => {
-    const sat = parasympatheticSaturation(zScore(41, hrvB.baseline, hrvB.spread), zScore(rhrB.baseline, 48, rhrB.spread));
+    const sat = parasympatheticSaturation(zScore(40, hrvB.baseline, zSpread(hrvB)), zScore(rhrB.baseline, 47, zSpread(rhrB)));
     expect(sat.active).toBe(true);
     expect(sat.dampFraction).toBeGreaterThan(0.4);
-    expect(score(41, 48)).toBeCloseTo(undamped(41, 48, hrvB, rhrB), 9);
-    expect(score(41, 48)).toBeLessThan(bandRedMax);
+    expect(score(40, 47)).toBeCloseTo(undamped(40, 47, hrvB, rhrB), 9);
+    expect(score(40, 47)).toBeLessThan(bandRedMax);
   });
 
   it("fatigue and good nights are unchanged too", () => {
@@ -278,5 +280,54 @@ describe("plan scenarios", () => {
     const terms = { hrv: 58, rhr: 53, resp: 15, rhrBaseline: baseline(55, 3), respBaseline: baseline(15.5, 1), sleepPerf: 0.8, skinTempDev: 0.2 };
     expect(gatedRecovery({ ...terms, hrvBaseline }).recovery).toBe(recoveryFromStates({ ...terms, hrvBaseline }));
     expect(gatedRecovery({ ...terms, hrvBaseline }).confidence).toBe("solid");
+  });
+});
+
+describe("short-history z shrink in Recovery", () => {
+  it("driverBaseline hands Recovery the shrunk spread: spread × (n + 2) / n", () => {
+    const b = baseline(50, 10, 7);
+    expect(driverBaseline(b)).toEqual({ mean: 50, spread: zSpread(b) });
+    expect(driverBaseline(b).spread).toBeCloseTo((b.spread * 9) / 7, 12);
+  });
+
+  it("recoveryFromStates scores every z term against the shrunk spread", () => {
+    const hrvBaseline = baseline(50, 10, 7);
+    const rhrBaseline = baseline(55, 4, 9);
+    const respBaseline = baseline(15, 1, 20);
+    const args = { hrv: 42, rhr: 58, resp: 16, sleepPerf: 0.8 };
+    const manual = recovery({
+      ...args,
+      hrvBaseline: { mean: 50, spread: (hrvBaseline.spread * 9) / 7 },
+      rhrBaseline: { mean: 55, spread: (rhrBaseline.spread * 11) / 9 },
+      respBaseline: { mean: 15, spread: (respBaseline.spread * 22) / 20 },
+    });
+    expect(recoveryFromStates({ ...args, hrvBaseline, rhrBaseline, respBaseline })).toBeCloseTo(manual!, 12);
+  });
+
+  it("the same night against the same σ reads less extreme on a young baseline", () => {
+    // Neutral = HRV and RHR exactly at baseline; a young baseline pulls the score towards it.
+    const score = (hrv: number, rhr: number, nValid: number) =>
+      recoveryFromStates({ hrv, rhr, hrvBaseline: baseline(50, 10, nValid), rhrBaseline: baseline(55, 4, nValid) })!;
+    const neutral = (n: number) => score(50, 55, n);
+    for (const [hrv, rhr] of [
+      [35, 60],
+      [65, 50],
+    ]) {
+      const young = Math.abs(score(hrv, rhr, 7) - neutral(7));
+      const mid = Math.abs(score(hrv, rhr, 14) - neutral(14));
+      const old = Math.abs(score(hrv, rhr, 120) - neutral(120));
+      expect(young).toBeLessThan(mid);
+      expect(mid).toBeLessThan(old);
+    }
+    // At the baseline itself the shrink changes nothing.
+    expect(neutral(7)).toBeCloseTo(neutral(120), 12);
+  });
+
+  it("the HRV term's z is exactly the raw z × n / (n + 2)", () => {
+    // Only the HRV term: Recovery = logistic(z), so invert it to read back the z that was used.
+    const b = baseline(50, 10, 7);
+    const r = recoveryFromStates({ hrv: 40, rhr: null, hrvBaseline: b })!;
+    const z = logisticZ0 - Math.log(100 / r - 1) / logisticK;
+    expect(z).toBeCloseTo((-10 / 10) * (7 / 9), 9);
   });
 });

@@ -1,7 +1,7 @@
 // Own algorithm (docs/algorithms/health-monitor.md): last night's five vitals against personal ranges
 // (Google's where the caller has them, else baseline mean ± 2σ from the Winsorized EWMA baselines; SpO2 also
 // floored at 95 %), plus noop's illness signal as the combined flag.
-import { foldHistory, hrvCfg, isUsable, respCfg, restingHRCfg, sigma, skinTempCfg } from "../scoring/baselines";
+import { foldHistory, hrvCfg, isUsable, respCfg, restingHRCfg, skinTempCfg, zSigma } from "../scoring/baselines";
 import { illnessFromDays, type IllnessContext, type IllnessDay, type IllnessResult } from "../scoring/illness";
 import type { MetricCfg } from "../scoring/types";
 
@@ -76,8 +76,8 @@ export function healthMonitor(
     }
     const state = foldHistory(prior.map((d) => pick(d) ?? null), cfg);
     if (!isUsable(state)) return { key, value, range: null, status: "no_data" };
-    let low = state.baseline - c.rangeSigmas * sigma(state);
-    let high = state.baseline + c.rangeSigmas * sigma(state);
+    let low = state.baseline - c.rangeSigmas * zSigma(state);
+    let high = state.baseline + c.rangeSigmas * zSigma(state);
     // SpO2 is one-sided: never high, and low below the floor even inside the personal range.
     if (key === "spo2") [low, high] = [Math.max(low, c.spo2FloorPct), 100];
     const status: VitalStatus = value == null ? "no_data" : value < low ? "low" : value > high ? "high" : "in_range";

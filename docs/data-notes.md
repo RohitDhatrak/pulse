@@ -323,16 +323,16 @@ These are the plan's open data questions, plus the gaps in Hælan's findings. Ti
 
 ## Fitted baseline spreads (seed values)
 
-**These are seed values, not Fitbit Air data.** They come from one run of the pipeline (U10) on a fresh 180-day demo database (`DATA_SOURCE=demo`, the seed scenario in `src/server/sources/seed/scenario.ts`), via `PULSE_E2E=1 pnpm vitest run src/server/pipeline/pipeline.seed.test.ts`. Repeat this section with real values after the first real backfill.
+**These are seed values, not Fitbit Air data.** Re-run for scoring version 9 (2026-10-06), when the spread became a running mean over the first nights. They come from one run of the pipeline on a fresh 180-day demo database (`DATA_SOURCE=demo`, the seed scenario in `src/server/sources/seed/scenario.ts`), via `PULSE_E2E=1 pnpm vitest run src/server/pipeline/pipeline.seed.test.ts`. Repeat this section with real values after the first real backfill.
 
 ```mermaid
 flowchart LR
-  N[Nightly value, day D] --> F[Winsorized EWMA fold, nights before D]
+  N[Nightly value, day D] --> F[Winsorized EWMA fold, nights before D<br/>spread weight max of λ21 and 1/n]
   F --> S[Spread, abs-dev units]
   S --> FL{Below the metric's floor?}
   FL -->|yes| B[Floor binds: spread = floor]
   FL -->|no| K[Fitted spread]
-  B --> Z[z = value − mean, ÷ 1.253 × spread]
+  B --> Z["z = value − mean, ÷ 1.253 × spread × (n + 2)/n"]
   K --> Z
   Z --> R[Recovery term]
 ```
@@ -341,14 +341,17 @@ The spread is in noop's abs-dev units, so σ = 1.253 × spread. The figures are 
 
 | Baseline | noop floor | p10 | Median | p90 | Days at the floor |
 |---|---|---|---|---|---|
-| HRV (`hrv_ms`) | 5 ms | 5.2 | 6.1 | 6.8 | 9 of 166 |
-| Resting HR (`sessionRestingHR`) | 2 bpm | 2.0 | 2.0 | 2.1 | 108 of 166 |
-| Respiratory rate (`resp_bpm`) | 0.5 | 0.5 | 0.5 | 0.5 | 143 of 166 |
+| HRV (`hrv_ms`) | 5 ms | 5.6 | 6.7 | 7.8 | 0 of 166 |
+| Resting HR (`sessionRestingHR`) | 2 bpm | 2.0 | 2.0 | 2.1 | 86 of 166 |
+| Respiratory rate (`resp_bpm`) | 0.5 | 0.5 | 0.5 | 0.5 | 144 of 166 |
 
-- **HRV** sits just above its floor, so the floor rarely binds on the seed.
+The same run on version 8 code gave HRV 5.4 / 6.5 / 7.3 with 1 day at the floor, and RHR 87 days at the floor. The
+version 8 spread was still climbing from its floor seed on the early trusted days.
+
+- **HRV** sits above its floor, so the floor never binds on the seed.
 - **Resting HR and respiratory rate** sit on their floors most days. The seed draws them with small night-to-night noise, so the floors set their z-scores. On Fitbit's smoothed nightly values the same may happen. If it does, those two terms are compressed toward zero, and the floors should be tuned per metric with a `scoring_version` bump.
 
-**Recovery bands on the seed.** Of the 170 scored days, 63 are green (37 %), 84 yellow (49 %) and 23 red (14 %). The other 10 days are the 7 calibrating days, the 2 band-off nights and the no-HRV night.
+**Recovery bands on the seed.** Of the 170 scored days, 61 are green (36 %), 85 yellow (50 %) and 24 red (14 %) on version 9 (62 / 80 / 28 on version 8 in the same run: early nights read less extreme now). The other 10 days are the 7 calibrating days, the 2 band-off nights and the no-HRV night.
 
 **Other seed distributions from the same run** (Strain on the reference app's 0–21 scale; complete days only):
 

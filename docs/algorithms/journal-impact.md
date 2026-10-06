@@ -36,7 +36,7 @@ flowchart LR
 | Input | Shape | Notes |
 |---|---|---|
 | `entries` | `{ day, tags: Record<tag, boolean \| number> }[]` | One row per day with a check-in. U10 builds it from `journal_entries`, with values 0/1 or counts. |
-| `outcomes` | `{ day, recovery, hrvZ, sleepPerf }[]` | One row per day, with nulls where a score is missing. Recovery and sleep performance are 0–100. `hrvZ` is the night's HRV z-score against its baseline. |
+| `outcomes` | `{ day, recovery, hrvZ, sleepPerf }[]` | One row per day, with nulls where a score is missing. Recovery and sleep performance are 0–100. `hrvZ` is the night's HRV z-score against its baseline: `baselines.deviation`, so it carries the same short-history shrink as Recovery (× n / (n + 2); see [baselines](baselines.md)). |
 | `asOf` | `YYYY-MM-DD` | Usually today. For a report, the period's last day. |
 
 ## Outputs

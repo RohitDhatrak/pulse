@@ -60,8 +60,8 @@ flowchart LR
 
 | Item | Verdict | Notes |
 |---|---|---|
-| Weights, z-scores, logistic, bands | MATCH | `recovery.ts:8-125` = `RecoveryScorer.kt:66-404` |
-| Baseline fold (EWMA, winsorising, seeding, staleness) | MATCH | `baselines.ts` = `Baselines.kt`, line for line |
+| Weights, z-scores, logistic, bands | MATCH, except the z shrink | `recovery.ts:8-125` = `RecoveryScorer.kt:66-404`. Since scoring version 9, `driverBaseline` widens each spread by (n + 2)/n, so every z is shrunk by n/(n + 2) on a short history (`docs/algorithms/baselines.md`) |
+| Baseline fold (EWMA, winsorising, seeding, staleness) | MATCH, except the spread weight | `baselines.ts` = `Baselines.kt` line for line, except one deliberate change in scoring version 9: the spread's EWMA weight is max(λ21, 1/n), so the first ~30 nights are a running mean instead of a slow climb from the floor seed (`docs/algorithms/baselines.md`) |
 | **Which nights feed the baseline** | **DIFF, the largest** | noop: one fold over a **21-day window that includes tonight** (`ChargeBaselines.kt`), with recalibration epochs and device-era resets. Pulse: a causal fold over **all history that excludes tonight**, with no epochs. Pulse's z-scores run larger and adapt more slowly after a real shift (`docs/research/recovery-readiness.md:21`) |
 | Score gate | DIFF (intentional) | noop needs HRV and RHR. Pulse scores without RHR (that term drops), gates every night at ≥7 nights and needs staged sleep |
 | RHR source, skin-temperature baseline | DIFF (intentional) | Google's daily resting HR and Google's temperature baseline first (`google-vs-pulse-metrics.md`). Pulse doesn't round skin Δ to 2 dp as noop does (minor) |

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { zShrinkK } from "./baselines";
 import { forCharge } from "./confidence";
 import { baselineVerdict, chargeDrivers, displayRounded, skinTempVerdict, type ChargeDriverVerdict } from "./drivers";
 import { logisticScore, recoveryFromStates } from "./recovery";
@@ -11,9 +12,13 @@ const baseline = (mean: number, sigma: number, nValid = 14): BaselineState => ({
   nightsSinceUpdate: 0,
   status: nValid >= 14 ? "trusted" : "provisional",
 });
+/**
+ * A trusted baseline whose z-score spread (after the n / (n + k) shrink) is exactly `spread`, so the exact
+ * half-tie inputs below stay ties. The pre-scale round-trips bit-exactly for every spread used here.
+ */
 const raw = (mean: number, spread: number): BaselineState => ({
   baseline: mean,
-  spread,
+  spread: (spread * 14) / (14 + zShrinkK),
   nValid: 14,
   nightsSinceUpdate: 0,
   status: "trusted",
@@ -235,5 +240,27 @@ describe("plan scenarios", () => {
     const total = recoveryFromStates(args)! - logisticScore(0);
     // Each row is rounded to an integer (±0.5); the logistic is not additive, so this holds only near baseline.
     expect(Math.abs(sum - total)).toBeLessThanOrEqual(0.5 * d.length);
+  });
+});
+
+describe("short-history z shrink in the driver rows", () => {
+  // HRV 0.55 σ low and RHR 0.55 σ low: just past the 0.5 saturation entry on raw z, under it once shrunk.
+  const hrv = 50 - 0.55 * 10;
+  const rhr = 55 - 0.55 * 4;
+  const verdict = (nValid: number) =>
+    row(chargeDrivers({ hrv, rhr, hrvBaseline: baseline(50, 10, nValid), rhrBaseline: baseline(55, 4, nValid) }), "HEART_RATE_VARIABILITY")
+      .verdict;
+
+  it("saturation is detected on the shrunk z, so a marginal signature on a young baseline does not fire", () => {
+    expect(verdict(100_000)).toBe("HRV_SATURATION_LIMITING");
+    expect(verdict(14)).toBe("BELOW_BASELINE_LIMITING"); // 0.55 × 14/16 = 0.48 < 0.5
+  });
+
+  it("driver points shrink with the score: the same HRV dip costs fewer points on a young baseline", () => {
+    const points = (nValid: number) =>
+      row(chargeDrivers({ hrv: 35, rhr: 55, hrvBaseline: baseline(50, 10, nValid), rhrBaseline: baseline(55, 4, nValid) }), "HEART_RATE_VARIABILITY")
+        .deltaPoints;
+    expect(points(7)).toBeLessThan(0);
+    expect(Math.abs(points(7))).toBeLessThan(Math.abs(points(120)));
   });
 });

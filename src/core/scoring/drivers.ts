@@ -2,7 +2,7 @@
 // the score minus the score with that term held at its baseline (z = 0): a marginal effect, so the rows
 // are not additive far from baseline.
 import { isUsable } from "./baselines";
-import { parasympatheticSaturation, recoveryFromStates, sleepPerfCenter, zScore } from "./recovery";
+import { driverBaseline, parasympatheticSaturation, recoveryFromStates, sleepPerfCenter, zScore } from "./recovery";
 import type { BaselineState } from "./types";
 
 export type ChargeDriverLabel =
@@ -71,8 +71,8 @@ export function chargeDrivers(a: ChargeDriverArgs): ChargeDriver[] {
     return n === 0 ? 0 : n; // no -0: Kotlin Int has none
   };
 
-  const hrvZFull = zScore(a.hrv, a.hrvBaseline.baseline, a.hrvBaseline.spread);
-  const rhrZFull = rhrB && a.rhr != null ? zScore(rhrB.baseline, a.rhr, rhrB.spread) : null;
+  const hrvZFull = zScore(a.hrv, a.hrvBaseline.baseline, driverBaseline(a.hrvBaseline).spread);
+  const rhrZFull = rhrB && a.rhr != null ? zScore(rhrB.baseline, a.rhr, driverBaseline(rhrB).spread) : null;
   const saturationDetected = parasympatheticSaturation(hrvZFull, rhrZFull).active;
 
   const drivers: ChargeDriver[] = [];

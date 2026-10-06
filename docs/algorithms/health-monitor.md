@@ -2,7 +2,7 @@
 
 Code: `src/core/algorithms/healthMonitor.ts`. Tests: `healthMonitor.test.ts`.
 
-The Health Monitor checks last night's five vitals against your own normal ranges and shows "N of 5 in range". The vitals are resting HR, HRV, respiratory rate, SpO2 and skin-temperature deviation. Where Google gives a range, Pulse uses it (resting HR and HRV from its personal-range roll-ups, skin temperature from its 30-night SD); every other range is your baseline mean ± 2σ, and SpO2 also has a fixed floor of 95 %. noop's illness signal is shown alongside as a combined flag. This is a wellness view, not a diagnosis.
+The Health Monitor checks last night's five vitals against your own normal ranges and shows "N of 5 in range". The vitals are resting HR, HRV, respiratory rate, SpO2 and skin-temperature deviation. Where Google gives a range, Pulse uses it (resting HR and HRV from its personal-range roll-ups, skin temperature from its 30-night SD); every other range is your baseline mean ± 2σ (widened a little while the baseline is young; see [baselines](baselines.md)), and SpO2 also has a fixed floor of 95 %. noop's illness signal is shown alongside as a combined flag. This is a wellness view, not a diagnosis.
 
 ## Flow
 
@@ -16,7 +16,7 @@ flowchart TB
   P --> F[foldHistory per vital: Winsorized EWMA]
   F --> U{Baseline usable?}
   U -->|no| ND[no_data]
-  U -->|yes| R[Range = mean ± 2σ]
+  U -->|yes| R[Range = mean ± 2 × zSigma]
   R --> S{SpO2?}
   S -->|yes| FL[low = max of range low, 95; high = 100]
   S -->|no| C
@@ -32,9 +32,9 @@ flowchart TB
 ## Formula
 
 0. **Google's range first.** The caller (`scores.ts` `googleRanges`) passes last night's ranges from Google: resting HR = `[rhr_range_low, rhr_range_high]` and HRV = `[hrv_range_low, hrv_range_high]` from the `dailyRollUp` personal ranges, and skin temperature = ± 2 × `temp_sd_c` (Google's 30-night SD of nightly − baseline) around 0, since the deviation is already relative to Google's baseline. A vital with one uses it as is (`rangeSource: "google"`), even before Pulse's baseline is usable; steps 1–2 are skipped for it. Google's skin-temperature range has no floor, so it can be narrower than Pulse's ±0.75 °C.
-1. **Baselines.** For each vital, fold the prior nights' values, oldest first and excluding last night, through `baselines.foldHistory` with that vital's `MetricCfg`. This gives a Winsorized EWMA centre and spread, with hard outliers rejected once settled.
-2. **Range** = centre ± 2 × `baselines.sigma(state)`, where σ = 1.253 × spread. The floor spreads keep σ from collapsing on smooth nightly values.
-3. **SpO2** is one-sided. The low bound is max(centre − 2σ, 95), and the high bound is 100, so a high SpO2 is never flagged.
+1. **Baselines.** For each vital, fold the prior nights' values, oldest first and excluding last night, through `baselines.foldHistory` with that vital's `MetricCfg`. This gives a Winsorized EWMA centre and spread, with hard outliers rejected once settled. Over the first ~30 nights the spread is the running mean of the nights' deviations, so it reflects your real wobble from the start ([baselines](baselines.md)).
+2. **Range** = centre ± 2 × `baselines.zSigma(state)`, where zSigma = 1.253 × spread × (n + 2) / n and n is the baseline's accepted nights. The (n + 2) / n factor is the short-history shrink every z-score uses: with 7 nights the range is 9/7 ≈ 1.29× the raw ±2σ, with 30 nights 1.07×, and it keeps fading. A night is flagged on the same scale as Recovery's z. The floor spreads keep σ from collapsing on smooth nightly values.
+3. **SpO2** is one-sided. The low bound is max(centre − 2 × zSigma, 95), and the high bound is 100, so a high SpO2 is never flagged.
 4. **Status.** The value is `low` below the range, `high` above it, and `in_range` otherwise. It is `no_data` when last night has no value or the baseline is not usable (fewer than 4 accepted nights, or stale).
 5. **Counts.** `inRange` is the number of `in_range` vitals, shown as "N of 5". `flagged` is the number that are high or low.
 6. **Illness.** `illness.illnessFromDays(days, journal)` runs over the same rows. It z-scores RHR, HRV, skin temperature and respiration against the 30 prior nights, and it is quiet until 14 of those nights have RHR or HRV. SpO2 is not one of its signals.
@@ -56,16 +56,17 @@ flowchart TB
 
 | Constant | Value | Kind |
 |---|---|---|
-| `healthMonitorConfig.rangeSigmas` | 2 | spec |
+| `healthMonitorConfig.rangeSigmas` | 2 | spec; applied to `zSigma` (with the short-history shrink, `zShrinkK` = 2) |
 | `healthMonitorConfig.spo2FloorPct` | 95 | spec; a common cut-off for normal resting SpO2 |
 | `healthMonitorConfig.spo2Cfg` | plausible 70–100, floor spread 0.5 | *tunable*; there is no noop config for SpO2 |
 | `healthMonitorConfig.skinTempDevCfg` | plausible −5 to 5 °C, floor spread 0.3 | *tunable*; `skin_temp`'s floor, with bounds for a deviation |
 | RHR, HRV, respiration configs | floor spreads 2 bpm, 5 ms, 0.5 | noop: `Baselines.kt` (`metricCfg`) |
 
-**The floors set the narrowest range.** At each floor, ±2σ is about ±5.0 bpm for RHR, ±12.5 ms for HRV, ±1.25 for respiration, ±1.25 points for SpO2 and ±0.75 °C for skin temperature.
+**The floors set the narrowest range.** At each floor, on a long history, ±2σ is about ±5.0 bpm for RHR, ±12.5 ms for HRV, ±1.25 for respiration, ±1.25 points for SpO2 and ±0.75 °C for skin temperature.
 
 ## Edge rules
 
+- **A young baseline has a wider range**: by (n + 2) / n, so 1.5× at 4 nights and 1.29× at 7. A test checks that a night just past the raw 2σ but inside the widened range is not flagged early on.
 - **Fewer than 4 prior nights** with a value make that vital `no_data`, with no range, unless Google gave one.
 - **A stale baseline** (no value for more than 14 nights) is also `no_data`, until it has refreshed.
 - **`inRange` never counts `no_data`**, so a sparse night can show "3 of 5" with nothing flagged. The UI should show the no-data vitals as such, not as out of range.
@@ -74,17 +75,21 @@ flowchart TB
 
 1. **Ordinary night** (a test). Forty nights with RHR around 55, HRV 60, respiration 14.5, SpO2 97 and skin temperature ±0.1 °C. A night at those values is **5 of 5**, with the illness signal quiet.
 2. **SpO2 94** (a test). Nights alternate 92 and 98, so the personal range is wide and includes 94. The floor still makes it **low**, with range [95, 100].
-3. **The seeded illness peak, 2026-08-04 in `data/demo.db`:**
+3. **The seeded illness peak, 2026-08-04 on the demo database** (scoring version 9):
 
-   | Vital | Value | Range | Status |
-   |---|---|---|---|
-   | Resting HR | 62 | 51.4–61.8 | high |
-   | HRV | 40.8 | 36.2–66.6 | in range |
-   | Respiration | 16.3 | 13.5–16.0 | high |
-   | SpO2 | 93.5 | 95.0–100 | low |
-   | Skin temp | +0.4 | −0.7 to +0.8 | in range |
+   | Vital | Value | Range | Source | Status |
+   |---|---|---|---|---|
+   | Resting HR | 62 | 52.4–60.7 | Google | high |
+   | HRV | 41.0 | 37.1–67.9 | Google | in range |
+   | Respiration | 16.0 | 13.4–16.1 | Pulse | in range |
+   | SpO2 | 93.4 | 95.1–100 | Pulse | low |
+   | Skin temp | +0.66 | −0.5 to +0.5 | Google | high |
 
-   That is **2 of 5 in range, 3 flagged**, and the illness signal is **raised** (score 63). The day before, it is raised too, with SpO2 low only. The test builds the same peak from the seed's `EFFECTS.illness` on a flat history, and it flags at least 3 of 5.
+   That is **2 of 5 in range, 3 flagged**, and the illness signal reads **already unwell** (score 75). The day before
+   is 3 of 5 (SpO2 low, skin temperature high), also already unwell (69). Version 9's early-baseline change moved
+   only the respiration high bound here (16.0 → 16.1): by August the baselines have over 100 nights, so the shrink is
+   below 2 %. The test builds the same peak from the seed's `EFFECTS.illness` on a flat history, and it flags at
+   least 3 of 5.
 
 ## Sources
 

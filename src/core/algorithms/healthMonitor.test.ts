@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EFFECTS } from "../../server/sources/seed/scenario";
+import { foldHistory, restingHRCfg, sigma, zSigma } from "../scoring/baselines";
 import { healthMonitor, type HealthMonitorDay } from "./healthMonitor";
 
 const iso = (i: number) => new Date(Date.UTC(2026, 5, 1 + i)).toISOString().slice(0, 10);
@@ -87,5 +88,28 @@ describe("healthMonitor", () => {
     expect(r.inRange).toBeLessThanOrEqual(2);
     expect(r.illness.level).toBe("raised");
     expect(r.illness.baselineTrusted).toBe(true);
+  });
+});
+
+describe("healthMonitor: short-history shrink on the personal range", () => {
+  const rhrRange = (days: HealthMonitorDay[]) => healthMonitor(days).vitals.find((v) => v.key === "restingHr")!.range!;
+
+  it("the range is the baseline ± 2 × zSigma of the fold over the prior nights", () => {
+    for (const n of [8, 15, 41]) {
+      const days = history({}, n);
+      const state = foldHistory(days.slice(0, -1).map((d) => d.rhr ?? null), restingHRCfg);
+      const r = rhrRange(days);
+      expect(r.low).toBeCloseTo(state.baseline - 2 * zSigma(state), 12);
+      expect(r.high).toBeCloseTo(state.baseline + 2 * zSigma(state), 12);
+      // Wider than the raw ±2σ by exactly (n + 2) / n.
+      expect((r.high - r.low) / (4 * sigma(state))).toBeCloseTo((state.nValid + 2) / state.nValid, 12);
+    }
+  });
+
+  it("a reading just inside raw 2σ but outside the widened range is not flagged early on", () => {
+    const days = history({}, 8);
+    const state = foldHistory(days.slice(0, -1).map((d) => d.rhr ?? null), restingHRCfg);
+    const between = state.baseline + 2.1 * sigma(state); // past 2σ, inside 2 × (9/7)σ
+    expect(status(history({ rhr: between }, 8)).restingHr).toBe("in_range");
   });
 });

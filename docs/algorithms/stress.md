@@ -39,7 +39,7 @@ flowchart TB
    - it and the 2 minutes on each side have 0 steps, and
    - it does not overlap any workout or sleep session (main sleep or nap). A minute that is only partly covered is excluded.
 3. **Reference and σ.**
-   - When the daytime baseline is usable (at least 4 accepted days, not stale), the reference is its centre and σ = `baselines.sigma(baseline)` = 1.253 × spread. The `daytime_hr` floor spread of 3 bpm keeps σ at 3.76 bpm or more.
+   - When the daytime baseline is usable (at least 4 accepted days, not stale), the reference is its centre and σ = `baselines.sigma(baseline)` = 1.253 × spread. The `daytime_hr` floor spread of 3 bpm keeps σ at 3.76 bpm or more. Since scoring version 9, the spread is the running mean of the first days' deviations (no slow climb from the floor; [baselines](baselines.md)). Stress keeps the raw σ: it does not apply the n / (n + 2) z shrink that Recovery uses.
    - Otherwise σ is a fixed **7.65 bpm** (15 / 1.96), and the result is marked **provisional**. The reference is the baseline centre if it has accepted any day, else today's own aggregate (step 6).
 4. **z** = (minute mean HR − reference) ÷ σ.
 5. **Stress** = 3 / (1 + e^(−k(z − z₀))), with k = 1.5 and z₀ = 1.5. It lies in (0, 3).

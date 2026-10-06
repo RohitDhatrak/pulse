@@ -53,9 +53,9 @@ flowchart TB
   RR --> BP
   TMP --> BS
 
-  BH --> Z1["z_HRV = (x − m) / 1.253·spread"]
-  BR --> Z2["z_RHR = (m − x) / 1.253·spread"]
-  BP --> Z3["z_Resp = (m − x) / 1.253·spread"]
+  BH --> Z1["z_HRV = (x − m) / zSigma"]
+  BR --> Z2["z_RHR = (m − x) / zSigma"]
+  BP --> Z3["z_Resp = (m − x) / zSigma"]
   REST --> Z4["z_Sleep = (perf − 0.85) / 0.12"]
   BS --> Z5["z_Skin = −|T − m| / 1.0 °C"]
 
@@ -93,8 +93,8 @@ flowchart TB
   - `skinTempDev`: the night's skin temperature minus our own EWMA skin-temperature baseline, in °C.
   - `recoveryIndexSlope` and `priorDayEffort` are supported by the function but never passed, so those terms are dormant.
 - **Per-term z** (oriented so that higher is better):
-  - HRV: `(x − m) / (1.253·spread)` in **raw ms**.
-  - RHR and resp: `(m − x) / (1.253·spread)`, so a value **below** baseline scores positive.
+  - HRV: `(x − m) / zSigma` in **raw ms**, where zSigma = 1.253·spread·(n + 2)/n (version 9's short-history shrink; n = the baseline's accepted nights; see `docs/algorithms/baselines.md`).
+  - RHR and resp: `(m − x) / zSigma`, so a value **below** baseline scores positive.
   - Sleep: `(perf − 0.85) / 0.12`, a fixed population centre, not personal.
   - Skin temperature: `−|dev| / 1.0 °C`, a symmetric penalty in raw °C, not a z.
 - **Composite**: weights HRV 0.55, RHR 0.20, sleep 0.15, resp 0.05, skin 0.05, recovery index 0.05, activity balance 0.05. Missing terms drop out and the remaining weights renormalise. In practice the five live terms sum to 1.0.
@@ -109,7 +109,7 @@ Sensitivity of the composite, with all other terms at baseline:
 |---|---|
 | Everything at baseline | 58 |
 | HRV −0.5σ | 47 |
-| HRV −1σ | 36 |
+| HRV −1σ | 36 on a long history; 39 at 14 nights and 41 at 7, from the z shrink |
 | HRV +1σ | 77 |
 | Sleep performance 60 % | 46 |
 | Skin temperature +0.5 °C | 57 |
@@ -117,7 +117,8 @@ Sensitivity of the composite, with all other terms at baseline:
 ### Baselines, `baselines.ts`
 
 - **Centre**: an EWMA with a 14-night half-life. Each new value is first Winsorized to centre ± 3·spread.
-- **Spread**: an EWMA (21-night half-life) of the absolute deviation of the **unclamped** value, floored per metric. σ = 1.253 × spread, which is the Gaussian conversion from mean absolute deviation.
+- **Spread**: an EWMA of the absolute deviation of the **unclamped** value, floored per metric. σ = 1.253 × spread, which is the Gaussian conversion from mean absolute deviation. Since scoring version 9 the weight is max(λ(21 nights), 1/n): a plain running mean of the deviations over roughly the first 30 nights, then the 21-night EWMA. Before that the spread started at the floor and took one to two months to reach the real wobble, so early z-scores were 1.4–2× too large for users who wobble more than the floor.
+- **z shrink** (version 9): every z drawn from a baseline (Recovery terms, driver rows, `hrvZ`, Health Monitor ranges) is multiplied by n/(n + 2): × 0.78 at 7 nights, × 0.94 at 30, fading continuously. Readiness, Stress and the displayed σ use the raw spread. Details and the simulation behind k = 2 are in `docs/algorithms/baselines.md`.
 - **Young regime**: below 8 valid nights the centre uses a 3-night half-life, the Winsorizing band is 2.5 × wider, and the hard-outlier gate is off.
 - **Hard outlier**: once settled, a value more than 5·spread (≈ 4σ) away is not folded, and `nightsSinceUpdate` is reset to 0.
 - **Status**: calibrating < 4 valid nights, provisional < 14, trusted ≥ 14. A baseline goes stale after 14 nights without an update.

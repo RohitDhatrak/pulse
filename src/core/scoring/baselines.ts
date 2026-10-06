@@ -1,5 +1,7 @@
 // Ports Baselines.kt: Winsorized EWMA personal baselines, plus the BaselineState.usable / trusted getters
 // from AnalyticsModels.kt. Not ported: the manual-recalibration epoch fold and the device-era boundary.
+// Pulse's own (SCORING_VERSION 9): the spread is a running mean over the first nights, and z-scores carry an
+// n / (n + 2) short-history shrink. Why and how they were calibrated: docs/algorithms/baselines.md.
 import type { BaselineState, BaselineStatus, Deviation, MetricCfg } from "./types";
 
 export const winsorK = 3.0;
@@ -111,9 +113,11 @@ export function update(
   const clamped = Math.max(lo, Math.min(hi, value));
   const newBaseline = effLb * clamped + (1.0 - effLb) * prev.baseline;
 
-  // Spread tracks the UNCLAMPED value.
+  // Spread tracks the UNCLAMPED value. With few nights it is the plain mean of the deviations seen so far (the
+  // floor seed drops out on night 2); it hands over to the long EWMA once 1/n falls below it (about night 30).
   const absDev = Math.abs(value - newBaseline);
-  const newSpread = Math.max(cfg.floorSpread, ls * absDev + (1.0 - ls) * prev.spread);
+  const effLs = Math.max(ls, 1.0 / prev.nValid);
+  const newSpread = Math.max(cfg.floorSpread, effLs * absDev + (1.0 - effLs) * prev.spread);
   return state(newBaseline, newSpread, prev.nValid + 1, 0);
 }
 
@@ -129,8 +133,17 @@ export function foldHistory(values: (number | null)[], cfg: MetricCfg, rejectHar
 /** Gaussian σ from the abs-dev spread: 1.253 × spread, floored away from zero. */
 export const sigma = (s: BaselineState): number => Math.max(1.253 * s.spread, 1e-9);
 
+/** Shrinks z by nValid / (nValid + zShrinkK): a short history estimates both centre and spread noisily. */
+export const zShrinkK = 2;
+
+/** Spread widened by (n + zShrinkK) / n, which shrinks every z drawn from it; fades as nValid grows. */
+export const zSpread = (s: BaselineState): number => (s.spread * (s.nValid + zShrinkK)) / Math.max(s.nValid, 1);
+
+/** σ for z-scores and personal ranges: sigma() with the short-history shrink. */
+export const zSigma = (s: BaselineState): number => Math.max(1.253 * zSpread(s), 1e-9);
+
 export function deviation(value: number, s: BaselineState): Deviation {
-  const z = (value - s.baseline) / sigma(s);
+  const z = (value - s.baseline) / zSigma(s);
   const ratio = s.baseline !== 0 ? value / s.baseline - 1.0 : 0.0;
   return { z, delta: value - s.baseline, ratio, inNormalRange: Math.abs(z) <= 1.0 };
 }

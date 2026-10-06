@@ -21,9 +21,12 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * stored key is `pulseAge` (was a brand name), so stored healthspan rows rescore. 6: Google's inputs first (its daily
  * zones, resting HR, time in zones, skin-temperature baseline and personal ranges), four named zones. 7: five
  * display zones on heart-rate reserve (Strain's and WHOOP's 50/60/70/80/90%) in place of Google's four. 8: max HR
- * no longer from Google's PEAK zone (a flat 220), so zones and Strain use the person's own or Tanaka's.
+ * no longer from Google's PEAK zone (a flat 220), so zones and Strain use the person's own or Tanaka's. 9: a
+ * baseline's spread is learned as a running mean over its first nights (it used to start at the floor and climb
+ * for weeks), and z-scores shrink by n / (n + 2), so early Recovery, drivers, Health Monitor ranges, Readiness and
+ * Journal impact all move.
  */
-export const SCORING_VERSION = 8;
+export const SCORING_VERSION = 9;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */

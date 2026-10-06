@@ -130,7 +130,33 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.stress": "66d650df74998208",
     "reports": "7c7cfdf8c1583777",
   },
-
+  // 9: baseline spread learned as a running mean over the first nights and z shrunk by n / (n + 2). Recovery and
+  // everything downstream of it (energy bank, journal impact, reports) moved, as did Readiness (training load,
+  // strain target), the Health Monitor ranges and the daytime-HR stress baseline. Strain's key moves with the
+  // version stamp only: Effort and Sleep are unchanged (parity.test.ts).
+  9: {
+    "daily_scores.scoring_version": "06731b2819e3281d",
+    "daily_scores.strain": "60c2ca00c1d33909",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "3c95e7ed1511d5ae",
+    "daily_scores.sleep": "ccb090c5c5766471",
+    "daily_scores.training_load": "567d7878110ac897",
+    "daily_scores.strain_target": "96040c38909a9d4d",
+    "daily_scores.sleep_planner": "bf57a92ddfecd8e0",
+    "daily_scores.energy_bank": "0a1f9754780adc24",
+    "daily_scores.stress": "291a11279b7e0c99",
+    "daily_scores.health_monitor": "38a813fd4cae5652",
+    "daily_scores.healthspan": "683be47b969df06b",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "4fca8ad358140f31",
+    "intraday_series.energy_bank": "bf0680aa15a7c40b",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "c0bf14266ee71abd",
+    "intraday_series.stress": "1a9c6cffc7a1e62f",
+    "reports": "87673c1fac280cf4",
+  },
 };
 
 // Numbers are rounded to 10 significant digits first, so a last-ulp difference in Math between Node

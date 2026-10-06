@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { foldHistory, restingHRCfg, sigma } from "./baselines";
 import { acwrSignal, evaluate, evaluateWithTrainingLoad, mean, type ReadinessDay, sampleSD } from "./readiness";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -142,5 +143,24 @@ describe("ReadinessTrainingLoadTest", () => {
     expect(paired.trainingLoad.endDay).toBe("2026-01-20");
     expect(paired.trainingLoad.contiguousDays).toBe(20);
     expect(paired.trainingLoad.points.at(-1)!.load).toBe(10);
+  });
+});
+
+describe("Readiness and the early-baseline fix", () => {
+  const rhrs = Array.from({ length: 28 }, (_, i) => (i % 2 === 0 ? 56 : 48));
+  const days = (todayRhr: number) => [...rhrs.map((r, i) => d(i + 1, 60, r, 10)), d(29, 60, todayRhr, 10)];
+  // Readiness re-folds its trailing window with hard-outlier rejection off.
+  const state = foldHistory(rhrs, restingHRCfg, false);
+
+  it("learns the window's real spread (±4 bpm), not the 2 bpm floor plus a slow climb", () => {
+    // Before the fix the 2 bpm seed still held about 30 % weight after 28 nights (spread ≈ 3.4).
+    expect(Math.abs(state.spread - 4)).toBeLessThan(0.3);
+  });
+
+  it("does not apply the n / (n + 2) shrink: its window never grows, so the shrink would never fade", () => {
+    // Raw z = −0.52 is "watch"; shrunk by 28/30 it would be −0.485, "neutral".
+    const r = evaluate(days(state.baseline + 0.52 * sigma(state)));
+    expect(flagOf(r, "rhr")).toBe("watch");
+    expect(flagOf(evaluate(days(state.baseline + 0.48 * sigma(state))), "rhr")).toBe("neutral");
   });
 });
