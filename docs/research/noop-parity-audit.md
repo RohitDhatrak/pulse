@@ -54,6 +54,7 @@ flowchart LR
 | Sleep debt ledger | MATCH (function) | 0.55 carry, 10-minute clear, 14 nights. Pulse rebuilds it daily with that day's need |
 | Nap credit | **DIFF** | noop counts a nap for the same day as the main night. Pulse credits yesterday's naps to day D, so a nap shows one day late |
 | Sleep planner | Pulse's own | noop has only a circadian ideal window (core body temperature minimum + 2.5 h, not ported) |
+| Recovery forecast strain nudge | DIFF (deliberate, scoring version 12) | noop's `RecoveryForecast.kt` nudges ±9 per 12 Effort points vs the 14-day average. Pulse: −3 per Strain point above the typical session, never positive; noop's term gave every rest day and not-yet-trained morning +12 and made seed forecasts worse (`docs/algorithms/recovery-forecast.md`) |
 | Stage percentages | **DIFF** | noop uses largest remainder, so stages sum to 100. Pulse rounds each one, so rows can sum to 99 or 101 |
 
 ## Recovery
@@ -65,7 +66,7 @@ flowchart LR
 | **Which nights feed the baseline** | **DIFF, the largest** | noop: one fold over a **21-day window that includes tonight** (`ChargeBaselines.kt`), with recalibration epochs and device-era resets. Pulse: a causal fold over **all history that excludes tonight**, with no epochs. Pulse's z-scores run larger and adapt more slowly after a real shift (`docs/research/recovery-readiness.md:21`) |
 | Score gate | DIFF (intentional) | noop needs HRV and RHR. Pulse scores without RHR (that term drops), gates every night at ≥7 nights and needs staged sleep |
 | RHR source, skin-temperature baseline | DIFF (intentional) | Google's daily resting HR and Google's temperature baseline first (`google-vs-pulse-metrics.md`). Pulse doesn't round skin Δ to 2 dp as noop does (minor) |
-| Readiness (ACWR, z cut-offs, monotony) | MATCH | `readiness.ts` = `ReadinessEngine.kt` |
+| Readiness (ACWR, z cut-offs, monotony) | MATCH for the z cut-offs; DIFF (deliberate) for load | `readiness.ts` = `ReadinessEngine.kt`, except since scoring version 10: ACWR and monotony on linear TRIMP instead of Effort, calendar-day windows ending today, "ramping down" informational, and CTL/ATL (`TrainingLoadEngine.kt`) carried across gaps of up to 3 days (`docs/algorithms/training-load.md`) |
 | HRV readiness (SWC tier, overreaching watch) | **NOT PORTED** | `HRVReadiness.kt:62-159` |
 | Illness signal and z adapter | MATCH | Confounders differ: Pulse reads journal tags (alcohol, sauna, travel, illness) but never sets hard/late workout, which noop does |
 | Health Monitor ranges | DIFF | Pulse: Google's ranges, else personal ±2 SD once 4 nights, else no data. noop: personal ±2 SD once 14 nights, else **population ranges** (RHR 40-60, HRV 40-120, respiration 12-20, SpO2 95-100, skin ±0.6). Pulse has no population fallback |

@@ -157,6 +157,85 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.stress": "1a9c6cffc7a1e62f",
     "reports": "87673c1fac280cf4",
   },
+  // 10: training load on linear TRIMP (stored as strain.trimp), calendar-day ACWR windows, ramping down informational
+  // (no Strain Target lift), CTL/ATL carried across gaps of up to 3 days. Only strain (the new trimp field and the
+  // version stamp), training_load, strain_target and reports (training balance) moved; recovery, Effort and sleep are
+  // unchanged (parity.test.ts passes as recorded for version 9).
+  10: {
+    "daily_scores.scoring_version": "bfc634c893f9c22c",
+    "daily_scores.strain": "493a4493412b85cc",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "3c95e7ed1511d5ae",
+    "daily_scores.sleep": "ccb090c5c5766471",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "cd255276abf758ab",
+    "daily_scores.sleep_planner": "bf57a92ddfecd8e0",
+    "daily_scores.energy_bank": "0a1f9754780adc24",
+    "daily_scores.stress": "291a11279b7e0c99",
+    "daily_scores.health_monitor": "38a813fd4cae5652",
+    "daily_scores.healthspan": "683be47b969df06b",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "4fca8ad358140f31",
+    "intraday_series.energy_bank": "bf0680aa15a7c40b",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "c0bf14266ee71abd",
+    "intraday_series.stress": "1a9c6cffc7a1e62f",
+    "reports": "51c0dbdcab00adac",
+  },
+  // 11: Strain Target in linear load (typical session × a Recovery multiplier centred on your own 28 days, about one
+  // point wide, +10 % per 4 weeks at most, capped when ramping or returning). Only strain_target moved, plus the
+  // version stamp (and strain's key, which hashes it).
+  11: {
+    "daily_scores.scoring_version": "16e50b07b414d86c",
+    "daily_scores.strain": "00c33afebe8d5431",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "3c95e7ed1511d5ae",
+    "daily_scores.sleep": "ccb090c5c5766471",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "b95583b5932e682d",
+    "daily_scores.sleep_planner": "bf57a92ddfecd8e0",
+    "daily_scores.energy_bank": "0a1f9754780adc24",
+    "daily_scores.stress": "291a11279b7e0c99",
+    "daily_scores.health_monitor": "38a813fd4cae5652",
+    "daily_scores.healthspan": "683be47b969df06b",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "4fca8ad358140f31",
+    "intraday_series.energy_bank": "bf0680aa15a7c40b",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "c0bf14266ee71abd",
+    "intraday_series.stress": "1a9c6cffc7a1e62f",
+    "reports": "51c0dbdcab00adac",
+  },
+  // 12: Sleep Planner extra sleep and the Recovery forecast's strain nudge, one-sided against the typical session.
+  // Moved: sleep_planner, recovery (its stored forecast; recovery values unchanged, parity.test.ts) and the version
+  // stamp (and strain's key, which hashes it).
+  12: {
+    "daily_scores.scoring_version": "939826e567133b72",
+    "daily_scores.strain": "982b95196843ac88",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "cfac343b38091918",
+    "daily_scores.sleep": "ccb090c5c5766471",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "b95583b5932e682d",
+    "daily_scores.sleep_planner": "af4c19bd722155e6",
+    "daily_scores.energy_bank": "0a1f9754780adc24",
+    "daily_scores.stress": "291a11279b7e0c99",
+    "daily_scores.health_monitor": "38a813fd4cae5652",
+    "daily_scores.healthspan": "683be47b969df06b",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "4fca8ad358140f31",
+    "intraday_series.energy_bank": "bf0680aa15a7c40b",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "c0bf14266ee71abd",
+    "intraday_series.stress": "1a9c6cffc7a1e62f",
+    "reports": "51c0dbdcab00adac",
+  },
 };
 
 // Numbers are rounded to 10 significant digits first, so a last-ulp difference in Math between Node

@@ -7,7 +7,7 @@ import { readHr, readSamples } from "../samples";
 import { addDays } from "../time";
 import { hrRecovery } from "@/core/scoring/hrRecovery";
 import { sessionRestingHR } from "@/core/scoring/restingHr";
-import { defaultRestingHR, strain } from "@/core/scoring/strain";
+import { defaultRestingHR, strain, strainDetail } from "@/core/scoring/strain";
 import type { BaselineState, HrSample } from "@/core/scoring/types";
 import { timeInZone, zones as hrZones } from "@/core/scoring/zones";
 import { minuteLoad } from "@/core/algorithms/energyBank";
@@ -146,6 +146,7 @@ function stage1Day(
   const noon = Math.min(n, 720);
   const withHr = (from: number, to: number) => means.slice(from, to).filter((v) => v != null).length;
 
+  const dayStrain = strainDetail(dayHr, maxHr, restingHr);
   const s1: Stage1Day = {
     key,
     hrCount: dayHr.length,
@@ -155,7 +156,8 @@ function stage1Day(
     restingHr,
     restingHrSource: dailyRhr != null ? "daily" : sessionRhr != null ? "session" : "default",
     maxHr,
-    effort: strain(dayHr, maxHr, restingHr),
+    effort: dayStrain?.effort ?? null,
+    trimp: dayStrain?.trimp ?? null,
     zoneLower: zoneSet.zones.map((z) => round(z.lower, 1)),
     zoneSeconds: tiz(dayHr),
     dayAggregate: probe.dayAggregate,

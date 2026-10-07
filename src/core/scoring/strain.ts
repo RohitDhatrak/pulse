@@ -177,6 +177,21 @@ export function strain(
   sex = "male",
   denominator: number | null = null,
 ): number | null {
+  return strainDetail(hr, maxHR, restingHR, method, sex, denominator)?.effort ?? null;
+}
+
+/**
+ * strain() plus the linear load behind it: `trimp` is the TRIMP that `effort` is the log map of (Edwards
+ * zone-minutes, or Banister above its floor). Training load sums and averages `trimp`, never `effort`.
+ */
+export function strainDetail(
+  hr: HrSample[],
+  maxHR: number | null = null,
+  restingHR: number = defaultRestingHR,
+  method: StrainMethod = "edwards",
+  sex = "male",
+  denominator: number | null = null,
+): { effort: number; trimp: number } | null {
   const resolvedDenominator = denominator ?? logMapDenominator(method, sex);
   const effMax = maxHR ?? defaultMaxHR();
   let enoughData = false;
@@ -198,5 +213,5 @@ export function strain(
     method === "banister"
       ? banisterTRIMP(hr, restingHR, hrReserve, durations, banisterB(sex), banisterBaselineRatePerMinute(banisterB(sex)))
       : edwardsTRIMP(hr, restingHR, hrReserve, durations);
-  return trimpToStrain(trimp, resolvedDenominator);
+  return { effort: trimpToStrain(trimp, resolvedDenominator), trimp };
 }

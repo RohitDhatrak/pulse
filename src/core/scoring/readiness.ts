@@ -1,17 +1,23 @@
 // Ports ReadinessEngine.kt (HRV / RHR / resp z-signals, ACWR, Foster monotony → a level) and the
 // evaluateWithTrainingLoad wrapper from ReadinessTrainingLoad.kt. Not ported: the memo cache and copy ids.
-import { foldHistory, isUsable, readinessHRVLnCfg, restingHRCfg } from "./baselines";
+// Pulse's own (SCORING_VERSION 10): ACWR, monotony and CTL/ATL run on linear TRIMP (`load`), not on the log-mapped
+// Effort; the ACWR windows are calendar days ending today; "ramping down" is informational. Why:
+// docs/algorithms/training-load.md.
+import { foldHistory, isoEpochDay, isUsable, readinessHRVLnCfg, restingHRCfg } from "./baselines";
 import { readiness as readinessConfidence } from "./confidence";
 import { evaluate as evaluateTrainingLoad, standardConfig, type TrainingLoadConfig, type TrainingLoadResult } from "./trainingLoad";
 import type { MetricCfg, ScoreConfidence } from "./types";
 
-/** One DailyMetric row's readiness fields. `effort` is daily Effort 0–100. */
+/**
+ * One day's readiness fields. `load` is the day's linear TRIMP (`Stage1Day.trimp`): 0 is a measured rest day,
+ * null a day without a usable load (band not worn).
+ */
 export interface ReadinessDay {
   day: string;
   hrv?: number | null;
   rhr?: number | null;
   resp?: number | null;
-  effort?: number | null;
+  load?: number | null;
 }
 
 export type ReadinessLevel = "primed" | "balanced" | "strained" | "rundown" | "insufficient";
@@ -40,7 +46,7 @@ export interface ReadinessSignal {
 export interface Readiness {
   level: ReadinessLevel;
   signals: ReadinessSignal[];
-  /** Acute:chronic workload ratio, or null without enough Effort history. */
+  /** Acute:chronic workload ratio on TRIMP, or null without enough load history. */
   acwr: number | null;
   /** Foster monotony over the last week, or null. */
   monotony: number | null;
@@ -51,12 +57,16 @@ export const baselineWindow = 30;
 export const minBaseline = 7;
 export const acuteWindow = 7;
 export const chronicWindow = 28;
+/** Days with a load needed in the 28-day chronic window, and in the 7-day acute window. */
 export const minChronic = 14;
+export const minAcute = 4;
 export const respZWatch = 1.5;
 export const respZBad = 2.0;
 /** SleepStager.respPlausibleRangeBpm, inclusive. */
 export const respPlausibleRange = { min: 8.0, max: 25.0 };
 export const monotonyWatch = 2.0;
+/** An SD at or below this share of the mean (or of 1) is treated as zero: no monotony for identical days. */
+export const monotonySdEpsilon = 1e-9;
 
 const inResp = (v: number) => v >= respPlausibleRange.min && v <= respPlausibleRange.max;
 
@@ -115,7 +125,8 @@ export function acwrBand(ratio: number): AcwrBand {
   return "LOAD_SPIKING";
 }
 
-const ACWR_FLAG: Record<AcwrBand, ReadinessFlag> = { LOAD_RAMPING_DOWN: "watch", LOAD_SWEET_SPOT: "good", LOAD_BUILDING_FAST: "watch", LOAD_SPIKING: "bad" };
+// Ramping down is informational: on linear load it is every deload, illness or holiday week, not a readiness problem.
+const ACWR_FLAG: Record<AcwrBand, ReadinessFlag> = { LOAD_RAMPING_DOWN: "neutral", LOAD_SWEET_SPOT: "good", LOAD_BUILDING_FAST: "watch", LOAD_SPIKING: "bad" };
 
 export function acwrSignal(ratio: number, acute: number, chronic: number): ReadinessSignal {
   const detail = acwrBand(ratio);
@@ -137,7 +148,8 @@ function synthesize(signals: ReadinessSignal[], hasHistory: boolean): ReadinessL
 
 /**
  * Readiness from daily rows in any order. "Today" is the row for `today` when given (none → insufficient),
- * else the newest row. As in noop, the Effort series for ACWR / monotony spans every row, even after `today`.
+ * else the newest row. ACWR and monotony use the `load` of the calendar days ending today (rows after it are
+ * ignored): acute = the mean over the days with a load among the last 7, chronic = the same over the last 28.
  */
 export function evaluate(days: ReadinessDay[], today: string | null = null): Readiness {
   const sorted = [...days].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
@@ -165,21 +177,26 @@ export function evaluate(days: ReadinessDay[], today: string | null = null): Rea
     }
   }
 
-  const effort = pick(sorted, (d) => d.effort);
+  const todayOrdinal = isoEpochDay(latest.day);
+  const lastDays = (n: number) =>
+    sorted.filter((d) => {
+      const o = isoEpochDay(d.day);
+      return o != null && todayOrdinal != null && o <= todayOrdinal && o > todayOrdinal - n;
+    });
+  const acuteLoads = pick(lastDays(acuteWindow), (d) => d.load);
+  const chronicLoads = pick(lastDays(chronicWindow), (d) => d.load);
   let acwr: number | null = null;
   let monotony: number | null = null;
-  if (effort.length >= minChronic) {
-    const acute = mean(effort.slice(-acuteWindow)) as number;
-    const chronic = mean(effort.slice(-chronicWindow)) as number;
+  if (chronicLoads.length >= minChronic && acuteLoads.length >= minAcute) {
+    const acute = mean(acuteLoads) as number;
+    const chronic = mean(chronicLoads) as number;
     if (chronic > 0) {
       acwr = acute / chronic;
       signals.push(acwrSignal(acwr, acute, chronic));
     }
-    const week = effort.slice(-acuteWindow);
-    const sd = sampleSD(week);
-    const m = mean(week);
-    if (week.length >= 4 && sd != null && sd > 0 && m != null) {
-      monotony = m / sd;
+    const sd = sampleSD(acuteLoads);
+    if (sd != null && sd > monotonySdEpsilon * Math.max(1, Math.abs(acute))) {
+      monotony = acute / sd;
       if (monotony >= monotonyWatch) {
         signals.push({ key: "monotony", flag: "watch", detail: "MONOTONY_WATCH", evidence: { kind: "monotony", value: monotony } });
       }
@@ -200,7 +217,7 @@ export function evaluateWithTrainingLoad(
   return {
     readiness: evaluate(days, today),
     trainingLoad: evaluateTrainingLoad(
-      days.map((d) => ({ day: d.day, load: d.effort ?? null })),
+      days.map((d) => ({ day: d.day, load: d.load ?? null })),
       today,
       config,
     ),

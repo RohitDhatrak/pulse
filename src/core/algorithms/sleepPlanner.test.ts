@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effortFromStrainScale } from "../scoring/strain";
+import { toStrainScale, trimpToStrain } from "../scoring/strain";
 import { isWeekendDay, sleepPlan, sleepPlannerConfig, type SleepPlannerInput, type WakeNight } from "./sleepPlanner";
 
 const iso = (d: number) => new Date(Date.UTC(2026, 8, d)).toISOString().slice(0, 10); // September 2026
@@ -8,10 +8,13 @@ const nights: WakeNight[] = Array.from({ length: 14 }, (_, i) => {
   const day = iso(17 + i);
   return { day, wakeMin: isWeekendDay(day) ? 540 : 420, efficiency: 0.9 };
 });
+/** Day Strain (0–21) → TRIMP. */
+const T = (s: number) => Math.pow(7201, s / 21) - 1;
+const S = (t: number) => toStrainScale(trimpToStrain(t));
 const input = (over: Partial<SleepPlannerInput> = {}): SleepPlannerInput => ({
   baselineNeedHours: 8,
-  effort: effortFromStrainScale(10),
-  meanEffort28: effortFromStrainScale(10),
+  todayLoad: T(10),
+  typicalSession: T(10),
   debtMin: 0,
   napMin: 0,
   nights,
@@ -34,10 +37,11 @@ describe("sleepPlan need", () => {
     expect(sleepPlan(input({ napMin: 30 })).needMin).toBeCloseTo(450, 10);
   });
 
-  it("adds 0.05 h per Day Strain point above the 28-day mean, never less for a light day", () => {
-    expect(sleepPlan(input({ effort: effortFromStrainScale(16) })).parts.strainMin).toBeCloseTo(6 * 0.05 * 60, 8);
-    expect(sleepPlan(input({ effort: effortFromStrainScale(4) })).parts.strainMin).toBe(0);
-    expect(sleepPlan(input({ effort: null })).parts.strainMin).toBe(0);
+  it("adds 0.05 h per Day Strain point above your typical session, never less for a light day", () => {
+    expect(sleepPlan(input({ todayLoad: T(16) })).parts.strainMin).toBeCloseTo(6 * 0.05 * 60, 1);
+    expect(sleepPlan(input({ todayLoad: T(4) })).parts.strainMin).toBe(0);
+    expect(sleepPlan(input({ todayLoad: null })).parts.strainMin).toBe(0);
+    expect(sleepPlan(input({ typicalSession: null })).parts.strainMin).toBe(0);
   });
 });
 
@@ -75,5 +79,37 @@ describe("sleepPlan bedtimes", () => {
     const none = sleepPlan(input({ nights: [] }));
     expect(none).toMatchObject({ wakeMin: null, plans: [], efficiency: sleepPlannerConfig.defaultEfficiency });
     expect(none.needMin).toBeCloseTo(480, 10);
+  });
+});
+
+describe("sleepPlan strain extra: against your typical session (SCORING_VERSION 12)", () => {
+  const extra = (todayLoad: number | null, typicalSession: number | null) => sleepPlan(input({ todayLoad, typicalSession })).parts.strainMin;
+
+  it("a rest day, a day still below your session, and a routine session all add 0", () => {
+    // Version 11 compared with the average day (rest days included): a routine session added about 8 min.
+    for (const load of [0, 9, 60, 118]) expect(extra(load, 118)).toBe(0);
+  });
+
+  it("1.5× / 2× / 3× your session add about 3 / 5 / 8 minutes", () => {
+    expect(extra(1.5 * 118, 118)).toBeCloseTo(3 * (S(1.5 * 118) - S(118)), 8);
+    expect(Math.round(extra(1.5 * 118, 118))).toBe(3);
+    expect(Math.round(extra(2 * 118, 118))).toBe(5);
+    expect(Math.round(extra(3 * 118, 118))).toBe(8);
+  });
+
+  it(`is capped at ${sleepPlannerConfig.maxStrainMin} minutes`, () => {
+    expect(extra(1e7, 10)).toBe(sleepPlannerConfig.maxStrainMin);
+  });
+
+  it("means the same for light, moderate, heavy, daily and sedentary trainers", () => {
+    for (const session of [11, 50, 118, 150, 300]) {
+      expect(extra(session, session)).toBe(0);
+      expect(extra(2 * session, session)).toBeCloseTo(extra(2 * 118, 118), 0);
+    }
+  });
+
+  it("a day only adds sleep once it passes your usual session, so a morning plan is not inflated", () => {
+    expect([2, 5, 8].map((so) => extra(so, 118))).toEqual([0, 0, 0]);
+    expect(extra(240, 118)).toBeGreaterThan(0);
   });
 });

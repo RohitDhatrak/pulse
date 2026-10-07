@@ -124,20 +124,20 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "What goes in",
         rows: [
-          { term: "Today’s Recovery", detail: "Picks the band. Without a Recovery score there is no target." },
-          { term: "Your last 28\u00a0days of Strain", detail: "The average of the days with Strain, today not included, is your base." },
-          { term: "Training load (ACWR)", detail: "Your last 7\u00a0days of Strain against your last 28, up to yesterday." },
+          { term: "Your typical session", detail: "The middle of your training days over the last 28\u00a0days (rest days left out), measured in heart-rate load. It can rise at most 10% a month." },
+          { term: "Today’s Recovery, against your usual", detail: "Compared with your own last 28\u00a0days of Recovery. Without a Recovery score there is no target." },
+          { term: "Training load (ACWR)", detail: "Your heart-rate load over the last 7\u00a0days against the last 28, up to yesterday." },
         ],
       },
       {
         title: "How it is weighted",
         rows: [
-          { term: "Green Recovery", detail: "Base × 1.0 to base × 1.25" },
-          { term: "Yellow Recovery", detail: "Base × 0.8 to base × 1.0" },
-          { term: "Red Recovery", detail: "Base × 0.5 to base × 0.75" },
+          { term: "Your usual Recovery", detail: "About your typical session, give or take 25%." },
+          { term: "Better than usual", detail: "Up to about 1.4× your typical session." },
+          { term: "Worse than usual", detail: "Down to about 0.35× your typical session." },
         ],
         paragraphs: [
-          "If your training load is above 1.3, the top of the range is capped at your base, since load is already climbing fast. Below 0.8, both ends rise by 10%. The range is then kept between 4 and 19 and at least 2 wide; a range that is too narrow widens downwards. A base of 12 on a green day gives 12.0 - 15.0.",
+          "The amount changes smoothly with Recovery, with no jump at the colour edges, and is worked out in heart-rate load before it is shown on the 0 to 21 Strain scale, where the range is about 1 point wide. If your training load is above 1.3, or you have had no session for 5\u00a0days (illness, a holiday), the top of the range is held at your typical session. With a typical session of Strain 11.3 and an average Recovery, the range is 10.8 - 11.8.",
         ],
       },
       {
@@ -151,7 +151,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "With fewer than 14\u00a0days of Strain in the last 28, Pulse uses a starting range for your band, marked as an estimate: green 14.0 - 18.0, yellow 10.0 - 14.0, red 6.0 - 10.0. The target does not know your training plan, races or injuries. It is a guide, not a prescription.",
+          "The target needs 7\u00a0days of heart-rate data; with fewer than 14 it is built from the days you have and marked as an estimate. The target does not know your training plan, races or injuries. It is a guide, not a prescription.",
         ],
       },
     ],
@@ -221,7 +221,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "How it is weighted",
         paragraphs: [
-          "Tonight’s need = your sleep need + 3\u00a0minutes for each Strain point above your 28-day average + 20% of your sleep debt − today’s nap time.",
+          "Tonight’s need = your sleep need + 3\u00a0minutes for each Strain point today goes above your typical training session (up to 30\u00a0minutes) + 20% of your sleep debt − today’s nap time. A rest day or a usual session adds nothing; twice your usual session adds about 5\u00a0minutes.",
           "Sleep debt runs over your last 14\u00a0nights with sleep. Each night, debt becomes 55% of (need + the debt so far − sleep), with the previous day’s naps counted as sleep; anything under 10\u00a0minutes clears to zero.",
           "Bedtimes count back from your median wake time on recent weekday or weekend mornings, to match tomorrow, allowing for your median efficiency (90% until known). A need of 8\u00a0hours, a 07:00 wake and 90% efficiency give a Peak bedtime of 22:07.",
         ],
@@ -450,25 +450,25 @@ export const SCORE_DOCS: ScoreDoc[] = [
   {
     slug: "training-balance",
     name: "Training balance",
-    summary: "Whether your recent strain is above or below what you are used to.",
+    summary: "Whether your recent training load is above or below what you are used to.",
     href: "/health/fitness",
     sections: [
       {
         title: "What goes in",
         paragraphs: [
-          "Your daily Strain. A day with the band worn but too little heart rate counts as 0; a day without the band is skipped. Today’s Strain so far counts toward today’s ratio.",
+          "Your daily heart-rate load: the minutes you spent in each heart-rate zone, weighted 1 to 5 (the TRIMP behind Strain, before Strain squashes it onto 0 to 21, so twice the work counts twice). A day with the band worn but too little heart rate counts as 0; a day without the band is skipped. Today’s load so far counts toward today’s ratio.",
         ],
       },
       {
         title: "How it is weighted",
         paragraphs: [
-          "Training load (ACWR) is your average Strain over the last 7\u00a0days with data, divided by your average over the last 28. 1.00 means this week matches your usual. Reports use the last day of the week or month that has a ratio; Fitness shows today’s.",
+          "Training load (ACWR) is your average daily load over the last 7\u00a0calendar days, divided by your average over the last 28 (both over the days the band was worn). 1.00 means this week matches your usual; twice your usual load for a week reads 1.60. Reports use the last day of the week or month that has a ratio; Fitness shows today’s.",
         ],
       },
       {
         title: "What the bands mean",
         rows: [
-          { term: "Below 0.80", detail: "Undertrained (Detraining on Fitness): load dropped below your usual." },
+          { term: "Below 0.80", detail: "Undertrained (Detraining on Fitness): load dropped below your usual. Shown for information only: a lighter week is not a warning." },
           { term: "0.80-1.29", detail: "Balanced (Optimal): the usual sweet spot." },
           { term: "1.30-1.49", detail: "Overreaching (Pushing): load is rising faster than you are used to." },
           { term: "1.50 and up", detail: "Overreaching (High risk): load jumped well above your usual." },
@@ -477,7 +477,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "Training load needs 14\u00a0days of Strain; until there are 28, your usual is the average of the days you have. It compares you with yourself, so it says nothing about whether your usual load suits your goals. The 0.8-1.3 sweet spot comes from team-sport injury research (Gabbett 2016) and is a rule of thumb.",
+          "Training load needs 14\u00a0days with load in the last 28, and 4 in the last 7; until there are 28, your usual is the average of the days you have. It compares you with yourself, so it says nothing about whether your usual load suits your goals. The 0.8-1.3 sweet spot comes from team-sport injury research (Gabbett 2016) and is a rule of thumb.",
         ],
       },
     ],
@@ -563,7 +563,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
         title: "What goes in",
         rows: [
           { term: "Recent Recovery", detail: "Your last 14\u00a0scores." },
-          { term: "Today’s Strain", detail: "So far, against your average over the last 14\u00a0days." },
+          { term: "Today’s Strain", detail: "So far, against your typical training session over the last 28\u00a0days. Only a day harder than that counts." },
           { term: "Tonight’s sleep", detail: "Pulse assumes you sleep tonight’s Peak need." },
         ],
       },
@@ -571,7 +571,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
         title: "How it is weighted",
         paragraphs: ["The forecast starts from your 14-day average Recovery and adds three nudges:"],
         rows: [
-          { term: "Strain", detail: "About 3.6\u00a0points off for each Strain point above your 14-day average, or on for each below, up to 12." },
+          { term: "Strain", detail: "3\u00a0points off for each Strain point today goes above your typical session, up to 12. A lighter day, or a day you have not trained yet, adds nothing." },
           { term: "Sleep", detail: "Planned sleep 10% above your usual need adds 1.4\u00a0points, up to 3.5; less than your need takes points off." },
           { term: "Trend", detail: "If Recovery has been climbing or falling, it eases back by the daily slope, up to 8\u00a0points." },
         ],
@@ -601,7 +601,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "What goes in",
         paragraphs: [
-          "Your daily Strain, on Pulse’s internal 0-100 effort scale rather than 0 to 21. A day with the band worn but too little heart rate counts as 0.",
+          "Your daily heart-rate load (TRIMP: zone-weighted minutes), the same load as Training balance, so the numbers are load units rather than Strain. A day with the band worn but too little heart rate counts as 0.",
         ],
       },
       {
@@ -623,7 +623,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "It needs 14\u00a0days in a row with Strain data, and a day without the band starts the run again. It settles after about 42\u00a0days. Heart rate is its only input, so load that barely raises heart rate is missed.",
+          "It needs 14\u00a0days with load. Up to 3\u00a0days in a row without the band are skipped; a longer gap starts the run again. It settles after about 42\u00a0days. Heart rate is its only input, so load that barely raises heart rate is missed.",
         ],
       },
     ],

@@ -18,6 +18,8 @@ The numbers in the worked examples below come from a scratch script that re-impl
 **1. Every load ratio and average is computed on the log-scaled Effort, which mostly disables the ACWR, monotony and CTL/ATL logic.** Effort is `100 × ln(TRIMP + 1) / ln(7201)`. A log map is fine for showing one day's number. But ACWR, monotony, CTL, ATL, TSB and the Strain Target's ACWR rules all take ratios or averages of that log value, and they assume the load is linear. In log units, a week with **3–4× the usual linear load** only reaches an ACWR of 1.3. Reaching 1.5 (the "spiking" band) needs **6–11×**, so it is practically unreachable. Monotony goes the other way and is inflated. On the seed's typical week (four workout days at strain 11.3 and three rest days at 5.4), monotony on Effort is **2.78**, so it flags "watch" at the ≥ 2.0 threshold. On linear TRIMP the same week scores **1.22**. Foster's monotony and Banister's fitness–fatigue model are defined on additive load ([Foster 1998](https://pubmed.ncbi.nlm.nih.gov/9662690/); [Morton, Fitz-Clarke & Banister 1990](https://journals.physiology.org/doi/10.1152/jappl.1990.69.3.1171)). Google's Target Load also sums Cardio Load over 7 days ([Phillips et al., Google](https://arxiv.org/abs/2508.11613)).
 **Proposal:** store a linear daily load (TRIMP) next to Effort. Feed ACWR, monotony, CTL/ATL/TSB and the Strain Target from it. Keep Effort for display only.
 
+(✅ done in scoring version 10; see `docs/algorithms/training-load.md`). TRIMP is stored as `strain.trimp`. ACWR, monotony and CTL/ATL/TSB use it. The Sleep Planner and the Recovery forecast stay on Effort, because their constants are in strain points. Strain Target moved fully to TRIMP in version 11 (`docs/algorithms/strain-target.md`). On the seed, monotony ≥ 2 fell from 147 to 17 of 167 days, and the training block now reaches ACWR 1.98 (it peaked at 1.35).
+
 **2. The default TRIMP is not the one Google uses, so daily Effort will rank days differently from Google's Cardio Load.** Our default is Edwards-style: stepped weights 1–5 at 50/60/70/80/90 % of heart-rate reserve (%HRR). Google publishes its Cardio Load as **Banister's exponential TRIMP on %HRR** (k = 1.92 for men, 1.67 for women), computed per minute, with three changes. A minute needs at least **30 % HRR**. It needs **movement evidence** from the accelerometer. Load between **30 and 40 % HRR is down-weighted** ([Phillips et al.](https://arxiv.org/html/2508.11613v1); [Google Health Help](https://support.google.com/fitbit/answer/15402655?hl=en)). Two things follow. Our Edwards day ignores everything below 50 % HRR, which is about 119 bpm here, while Google counts from 30 % (about 93 bpm). And our "Edwards" is not Edwards: the original uses % of **HRmax**, not %HRR ([Edwards via Frontiers 2020](https://www.frontiersin.org/articles/10.3389/fphys.2020.00480/full)).
 **Proposal:** make `method = "banister"` the default (the code exists already). Pass `profile.sex` from the pipeline, which today always falls back to "male". Replace the 10 % HRR sedentary floor with Google's 30 % floor, plus a 30–40 % ramp. Gate each minute on steps > 0 or being inside an exercise session. Compute on minute-mean HR.
 
@@ -94,14 +96,14 @@ There are five zones at 50/60/70/80/90/100 % of HRmax, or five custom lower boun
 
 ### Training load (`trainingLoad.ts`, `readiness.ts`)
 
-- **Daily load.** The day's Effort. A worn day with null Effort is 0. An unworn day is null.
+- **Daily load.** The day's TRIMP (`strain.trimp`; Effort before version 10). A worn day with null Effort is 0. An unworn day is null.
 - **CTL, ATL and TSB.**
   - These are EWMAs with α = 1 − e^(−1/τ): τ = 42 days for CTL and 7 days for ATL.
-  - They are seeded with the mean of the first 7 days, over the longest gap-free run ending on the target day.
+  - They are seeded with the mean of the first 7 days, over the run ending on the target day. Since version 10 the run is carried across gaps of up to 3 days.
   - At least 14 days give "building"; at least 42 give "established".
   - TSB = CTL − ATL.
-- **ACWR** (readiness). The mean Effort of the last 7 days divided by the mean of the last 28, which includes those 7 (a coupled ratio). It needs at least 14 days. The bands are < 0.8 "ramping down", < 1.3 "sweet spot", < 1.5 "building fast", and otherwise "spiking". "Spiking" makes the readiness level strained or run-down.
-- **Monotony.** The mean divided by the sample SD of the last 7 days' Effort, with at least 4 days. At ≥ 2.0 it flags "watch".
+- **ACWR** (readiness). The mean TRIMP of the last 7 calendar days divided by the mean of the last 28, which includes those 7 (a coupled ratio). It needs at least 14 days with a load in the 28 and 4 in the 7. The bands are < 0.8 "ramping down" (information only since version 10), < 1.3 "sweet spot", < 1.5 "building fast", and otherwise "spiking". "Spiking" makes the readiness level strained or run-down.
+- **Monotony.** The mean divided by the sample SD of the last 7 days' TRIMP, with at least 4 days. At ≥ 2.0 it flags "watch".
 
 ### Strain Target (`strainTarget.ts`)
 
@@ -109,7 +111,7 @@ There are five zones at 50/60/70/80/90/100 % of HRmax, or five custom lower boun
 - **Recovery band.** The range is the base times the band's multipliers: green [1.0, 1.25], yellow [0.8, 1.0], red [0.5, 0.75].
 - **ACWR rules.**
   - ACWR > 1.3 caps the upper bound at the base.
-  - ACWR < 0.8 multiplies both bounds by 1.1.
+  - ~~ACWR < 0.8 multiplies both bounds by 1.1.~~ Removed in version 10.
 - **Bounds.** Clamp to [4, 19], with a width of at least 2, widened downwards.
 
 ### Energy Bank (`energyBank.ts`)

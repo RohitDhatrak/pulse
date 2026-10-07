@@ -12,6 +12,8 @@ import {
   type Stage1Day,
   type StrainTargetRow,
 } from ".";
+import { forecast as recoveryForecast } from "@/core/scoring/forecast";
+import { trimpToStrain } from "@/core/scoring/strain";
 import { load } from "./data";
 import { stage1 } from "./stage1";
 import { seedPull } from "../sources/seed/generate";
@@ -216,22 +218,62 @@ describe("scale contracts", () => {
       if (t.reason !== null) continue;
       expect(t.low).toBeGreaterThanOrEqual(4);
       expect(t.high).toBeLessThanOrEqual(19);
-      expect(t.high - t.low).toBeGreaterThanOrEqual(2 - 1e-9);
+      // Version 11: about one Strain point wide (÷1.25 … ×1.25 in load), around a personal typical session on 0–21.
+      expect(t.high - t.low).toBeGreaterThan(0.5);
+      expect(t.high - t.low).toBeLessThan(1.5);
+      expect(t.base).toBeGreaterThan(4);
+      expect(t.base).toBeLessThanOrEqual(21);
     }
+    // The first target (day 8) is built from the person's own 7 days, not the fixed 14–18 green range.
+    const first = js<StrainTargetRow>("strain_target", dayAt(7));
+    expect(first).toMatchObject({ reason: null, coldStart: true });
+    if (first.reason === null) expect(first.high).toBeLessThan(14);
   });
 
-  it("feeds Training load one row per calendar day: 0 on a worn rest day, null only when the band was off", () => {
+  it("feeds Training load one row per calendar day on linear TRIMP; band-off days are a gap it carries", () => {
     for (const d of allDays) {
-      const s1 = js<{ effort: number | null; hrCount: number }>("strain", d);
-      const tl = js<{ contiguousDays: number }>("training_load", d);
-      if (s1.hrCount === 0) expect(tl.contiguousDays).toBe(0);
+      const s1 = js<{ effort: number | null; trimp: number | null; hrCount: number }>("strain", d);
+      // TRIMP is stored with Effort and is exactly what Effort is the log map of.
+      expect(s1.trimp == null).toBe(s1.effort == null);
+      if (s1.trimp != null) expect(trimpToStrain(s1.trimp)).toBe(s1.effort);
     }
-    // The band-off days (156) break the run; it rebuilds one day at a time after.
-    expect(js<{ contiguousDays: number }>("training_load", dayAt(158)).contiguousDays).toBeLessThan(5);
-    expect(js<{ contiguousDays: number }>("training_load", dayAt(150)).contiguousDays).toBe(151);
+    // The band is off from day 155 09:00 to day 157 23:52. Day 156 has no HR at all: a gap, which no longer restarts
+    // the run (up to 3 days are carried). Day 157 has a few worn minutes, too few for Effort: a measured 0, as before.
+    const run = (i: number) => js<{ contiguousDays: number; state: string }>("training_load", dayAt(i));
+    expect(js<{ hrCount: number }>("strain", dayAt(156)).hrCount).toBe(0);
+    expect(run(156).contiguousDays).toBe(run(155).contiguousDays);
+    expect(run(157).contiguousDays).toBe(run(155).contiguousDays + 1);
+    expect(run(158).contiguousDays).toBe(run(155).contiguousDays + 2);
+    expect(run(158).state).toBe("established");
+    expect(run(150).contiguousDays).toBe(151);
   });
 });
 
+describe("forecast strain nudge on the seed (SCORING_VERSION 12)", () => {
+  it("never raises the forecast, and is no less accurate than leaving the strain term out", () => {
+    type Fc = { charge: number; plannedSleepHours: number; needHours: number };
+    const recs: number[] = [];
+    let withTerm = 0;
+    let withoutTerm = 0;
+    let n = 0;
+    for (let i = 0; i < allDays.length - 1; i++) {
+      const rec = js<RecoveryRow & { forecast?: Fc | null }>("recovery", allDays[i]);
+      if (rec.value != null) recs.push(rec.value);
+      const fc = rec.forecast;
+      if (!fc) continue;
+      // The same forecast without the strain term (null typical session).
+      const plain = recoveryForecast({ recentCharge: recs, todayLoad: null, plannedSleepHours: fc.plannedSleepHours, needHours: fc.needHours })!;
+      expect(fc.charge).toBeLessThanOrEqual(plain.charge);
+      const next = js<RecoveryRow>("recovery", allDays[i + 1]).value;
+      if (next == null) continue;
+      withTerm += Math.abs(next - fc.charge);
+      withoutTerm += Math.abs(next - plain.charge);
+      n++;
+    }
+    expect(n).toBeGreaterThan(140);
+    expect(withTerm / n).toBeLessThanOrEqual(withoutTerm / n + 0.1);
+  });
+});
 describe("recovery gating on the seed", () => {
   it("days 1–7 calibrate with the nights left, and day 8 is the first score", () => {
     for (let i = 0; i < 7; i++) {

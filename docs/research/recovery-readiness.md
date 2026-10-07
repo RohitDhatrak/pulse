@@ -14,7 +14,7 @@ Where a source could only be read through an abstract or a search excerpt, the r
 
 ## Summary: the top five findings
 
-1. **The training-load signals run on a log-compressed scale, so monotony fires on ordinary weeks and ACWR cannot see a spike.** Readiness computes ACWR and Foster monotony from daily Effort, and Effort is `100·ln(TRIMP+1)/ln(7201)`. A ratio of logs is not a ratio of loads. With the seed scenario's typical days (rest day Effort 25.7, about 9 TRIMP; workout day Effort 53.8, about 118 TRIMP), an ordinary 4-workout week has a monotony of **2.78 on Effort but 1.22 on TRIMP**, so the "monotony ≥ 2.0" watch flag fires on a normal week. A week in which every workout doubles in TRIMP gives an ACWR of **1.57 on TRIMP but only 1.08 on Effort**, which reads as "sweet spot". On top of this, the ACWR itself has weak evidence behind it (Impellizzeri 2020; Lolli 2019). **Proposal:** compute ACWR, monotony and CTL/ATL/TSB on linear TRIMP (invert Effort, or store TRIMP). Switch ACWR to an uncoupled EWMA. Treat it as information only, so it no longer moves the Readiness level, and drop the "ramping down" watch flag.
+1. **The training-load signals run on a log-compressed scale, so monotony fires on ordinary weeks and ACWR cannot see a spike.** (✅ done in scoring version 10; see `docs/algorithms/training-load.md`): ACWR, monotony and CTL/ATL now run on stored linear TRIMP, in calendar-day windows; the coupled 7/28 ratio and its bands were kept (an uncoupled ratio bands the same days identically with remapped edges), and "ramping down" became informational. Readiness computes ACWR and Foster monotony from daily Effort, and Effort is `100·ln(TRIMP+1)/ln(7201)`. A ratio of logs is not a ratio of loads. With the seed scenario's typical days (rest day Effort 25.7, about 9 TRIMP; workout day Effort 53.8, about 118 TRIMP), an ordinary 4-workout week has a monotony of **2.78 on Effort but 1.22 on TRIMP**, so the "monotony ≥ 2.0" watch flag fires on a normal week. A week in which every workout doubles in TRIMP gives an ACWR of **1.57 on TRIMP but only 1.08 on Effort**, which reads as "sweet spot". On top of this, the ACWR itself has weak evidence behind it (Impellizzeri 2020; Lolli 2019). **Proposal:** compute ACWR, monotony and CTL/ATL/TSB on linear TRIMP (invert Effort, or store TRIMP). Switch ACWR to an uncoupled EWMA. Treat it as information only, so it no longer moves the Readiness level, and drop the "ramping down" watch flag.
 
 2. **Recovery z-scores HRV in raw milliseconds against a fixed 5 ms floor, while Readiness z-scores the same HRV in ln(ms).** RMSSD is right-skewed and its spread grows with its level, which is why the HRV-monitoring literature works in ln(RMSSD). A 5 ms floor is a σ of at least 6.3 ms. That is a 25 % coefficient of variation for someone at 25 ms, and 6 % for someone at 100 ms, so the same physiological change moves Charge very differently for different people. **Proposal:** z-score the Recovery HRV term on ln(RMSSD). The `readiness_hrv_ln` config already exists, and its 0.08 floor (σ ≈ 10 %) matches published day-to-day variability of nocturnal ln(RMSSD).
 
@@ -71,8 +71,8 @@ flowchart TB
     RH["ln HRV z over trailing 30 rows (EWMA re-fold)"]
     RRH["RHR z (EWMA re-fold)"]
     RRS["Resp z (mean / sample SD, no floor)"]
-    AC["ACWR = mean Effort 7 / mean Effort 28"]
-    MO["Monotony = mean / SD of last 7 Effort values"]
+    AC["ACWR = mean TRIMP, last 7 calendar days / last 28"]
+    MO["Monotony = mean / SD of the last 7 days' TRIMP"]
   end
   RH & RRH & RRS & AC & MO --> LVL["primed / balanced / strained / rundown"]
 
@@ -132,23 +132,23 @@ This is a rule-based level, not a 0–100 score.
 - **RHR signal**: the same re-fold in bpm.
 - **Thresholds** for both: z ≥ 0.5 good; ≥ −0.5 neutral; ≥ −1.0 watch; otherwise bad.
 - **Respiratory rate**: z against a plain mean and sample SD of the trailing rows, with no floor. z ≥ 1.5 is watch and z ≥ 2.0 is bad. Only increases are flagged.
-- **ACWR** = mean of the last 7 Effort values ÷ mean of the last 28, which is the coupled form. It needs ≥ 14 values.
-  - < 0.8 is watch ("ramping down").
+- **ACWR** = mean daily TRIMP over the last 7 calendar days ÷ the same over the last 28, which is the coupled form. It needs ≥ 14 days with a load in the 28 and ≥ 4 in the 7. (Before version 10: Effort, and the last 7 / 28 non-null rows.)
+  - < 0.8 is neutral ("ramping down", information only since version 10; it was watch).
   - < 1.3 is good.
   - < 1.5 is watch.
   - ≥ 1.5 is bad.
-- **Monotony** = mean ÷ SD of the last 7 Effort values (at least 4 needed). ≥ 2.0 is watch.
+- **Monotony** = mean ÷ SD of the last 7 calendar days' TRIMP (at least 4 needed; an SD that is rounding noise counts as 0). ≥ 2.0 is watch.
 - **Level**:
   - **rundown**: 2 or more bad signals, or a bad vital together with a bad ACWR.
   - **strained**: any one bad signal.
   - **primed**: 2 or more good signals and no watch signals.
   - **balanced**: everything else.
-- Note: "last 7 values" counts non-null rows, not calendar days, so a gap stretches the window.
+- Note: before version 10, "last 7 values" counted non-null rows, not calendar days, so a gap stretched the window. Fixed.
 
 ### Training load, `trainingLoad.ts`
 
-- **CTL and ATL**: Banister-style EWMAs of daily Effort with τ = 42 and 7 days, seeded with the mean of the first 7 days. TSB = CTL − ATL.
-- **Window**: only the longest gap-free run ending on the target day is used.
+- **CTL and ATL**: Banister-style EWMAs of daily TRIMP (Effort before version 10) with τ = 42 and 7 days, seeded with the mean of the first 7 days. TSB = CTL − ATL.
+- **Window**: the run ending on the target day, carried across gaps of up to 3 days without a load (version 10; before, any gap restarted it).
 - **Use**: display only. It does not feed the Readiness level.
 
 ### Forecast, `forecast.ts`

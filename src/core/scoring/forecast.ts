@@ -1,13 +1,16 @@
 // Ports RecoveryForecast.kt: an evening estimate of tomorrow-morning Recovery from the recent Recovery mean
-// plus three signed nudges (strain debt, sleep adequacy, mean reversion), with a ± band. APPROXIMATE.
+// plus three nudges (strain, sleep adequacy, mean reversion), with a ± band. APPROXIMATE.
+// Deliberate diff (SCORING_VERSION 12): the strain nudge is one-sided, −3 per Day Strain point today goes above your
+// typical training session (capped at −12). noop's two-sided "Effort vs the 14-day average" gave every rest day and
+// every not-yet-trained morning +12, and made seed forecasts worse (docs/algorithms/recovery-forecast.md).
+import { strainPointsAbove } from "./load";
 import { defaultSleepNeedHours } from "./sleep";
 import type { ScoreConfidence } from "./types";
 
 export const baselineWindow = 14;
 export const minBaselineNights = 5;
-export const effortWindow = 14;
-export const strainWeight = 9.0;
-export const effortSpread = 12.0;
+/** Recovery points off tomorrow per Day Strain point today goes above your typical session (*tunable*; uncalibrated). */
+export const strainPointsPerRecovery = 3.0;
 export const strainAdjCap = 12.0;
 export const sleepWeight = 14.0;
 export const sleepOverCap = 0.25;
@@ -39,10 +42,10 @@ export interface RecoveryForecast {
 export interface ForecastArgs {
   /** Daily Recovery 0–100, oldest first. */
   recentCharge: number[];
-  /** Daily Effort 0–100, oldest first; empty drops the strain term. */
-  recentEffort?: number[];
-  /** Today's Effort 0–100; null drops the strain term. */
-  todayEffort: number | null;
+  /** Today's load so far (TRIMP); null drops the strain term. */
+  todayLoad: number | null;
+  /** Your typical training session (TRIMP); null drops the strain term. */
+  typicalSession?: number | null;
   /** Negative is treated as 0. */
   plannedSleepHours: number;
   /** null → defaultNeedHours. */
@@ -53,7 +56,6 @@ export interface ForecastArgs {
 
 /** null until there are minBaselineNights of recent Recovery. */
 export function forecast(a: ForecastArgs): RecoveryForecast | null {
-  const recentEffort = a.recentEffort ?? [];
   const chargeWindow = a.recentCharge.slice(-baselineWindow);
   const nights = chargeWindow.length;
   if (nights < minBaselineNights) return null;
@@ -62,11 +64,8 @@ export function forecast(a: ForecastArgs): RecoveryForecast | null {
   const sd = sampleSD(chargeWindow);
   const slope = leastSquaresSlope(chargeWindow);
 
-  let strainAdj = 0.0;
-  if (a.todayEffort != null && recentEffort.length > 0) {
-    const excess = (a.todayEffort - mean(recentEffort.slice(-effortWindow))) / effortSpread;
-    strainAdj = clamp(-strainWeight * excess, -strainAdjCap, strainAdjCap);
-  }
+  // Never positive: a light day, or a day not yet past your usual session, leaves tomorrow alone.
+  const strainAdj = -Math.min(strainAdjCap, strainPointsPerRecovery * strainPointsAbove(a.todayLoad, a.typicalSession ?? null));
 
   const need = Math.max(a.needHours ?? defaultNeedHours, 0.1);
   const sleep = Math.max(a.plannedSleepHours, 0.0);

@@ -1,5 +1,7 @@
-// Ports TrainingLoadEngine.kt: CTL/ATL/TSB as EWMAs of daily Effort (same units as the load, not TRIMP),
-// over the longest gap-free suffix ending on the target day. Seeded from the mean of the first primeDays.
+// Ports TrainingLoadEngine.kt: CTL/ATL/TSB as EWMAs of the daily load (same units as the load), seeded from the
+// mean of the first primeDays. Pulse feeds linear TRIMP (SCORING_VERSION 10; it was log-mapped Effort) and, unlike
+// noop, carries the run across short gaps: up to `maxGapDays` days in a row without a load are skipped (no EWMA
+// step) instead of restarting history. See docs/algorithms/training-load.md.
 import { isoEpochDay } from "./baselines";
 
 export interface TrainingLoadConfig {
@@ -8,6 +10,8 @@ export interface TrainingLoadConfig {
   primeDays: number;
   minimumDays: number;
   establishedDays: number;
+  /** Longest run of days without a load that the history carries across; absent = 0 (noop: any gap restarts). */
+  maxGapDays?: number;
 }
 
 export const standardConfig: TrainingLoadConfig = {
@@ -16,6 +20,7 @@ export const standardConfig: TrainingLoadConfig = {
   primeDays: 7,
   minimumDays: 14,
   establishedDays: 42,
+  maxGapDays: 3,
 };
 
 const isValidConfig = (c: TrainingLoadConfig): boolean =>
@@ -25,7 +30,8 @@ const isValidConfig = (c: TrainingLoadConfig): boolean =>
   c.acuteTimeConstantDays > 0.0 &&
   c.primeDays > 0 &&
   c.minimumDays >= c.primeDays &&
-  c.establishedDays >= c.minimumDays;
+  c.establishedDays >= c.minimumDays &&
+  (c.maxGapDays === undefined || (Number.isInteger(c.maxGapDays) && c.maxGapDays >= 0));
 
 /** `load == null` is no usable observation; `load == 0` is a measured rest day. */
 export interface DailyLoad {
@@ -56,6 +62,7 @@ export interface TrainingLoadPoint {
 export interface TrainingLoadResult {
   state: TrainingLoadState;
   unavailableReason: TrainingLoadUnavailableReason | null;
+  /** Days with a load in the current run (gaps of up to maxGapDays inside it are not counted). */
   contiguousDays: number;
   startDay: string | null;
   endDay: string | null;
@@ -124,14 +131,20 @@ export function evaluate(
   const targetIndex = parsed.findIndex((p) => p.ordinal === targetOrdinal);
   if (targetIndex < 0) return unavailable("MISSING_TARGET_DAY", 0);
 
-  // Walk back until the first calendar gap or unobserved load.
+  // Walk back day by day until more than maxGapDays in a row have no load (missing row or null load). Gap days
+  // are skipped: they add no point and no EWMA step.
+  const maxGap = config.maxGapDays ?? 0;
+  const byOrdinal = new Map(parsed.map((p) => [p.ordinal, p]));
   const ordered: { day: string; load: number }[] = [];
-  let expected = targetOrdinal;
-  for (let i = targetIndex; i >= 0; i--) {
-    const item = parsed[i];
-    if (item.ordinal !== expected || item.load == null) break;
+  let gap = 0;
+  for (let ordinal = targetOrdinal; ordinal >= parsed[0].ordinal; ordinal--) {
+    const item = byOrdinal.get(ordinal);
+    if (item?.load == null) {
+      if (++gap > maxGap) break;
+      continue;
+    }
+    gap = 0;
     ordered.push({ day: item.day, load: item.load });
-    expected -= 1;
   }
   ordered.reverse();
   const contiguousDays = ordered.length;

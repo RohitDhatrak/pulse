@@ -24,9 +24,16 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * no longer from Google's PEAK zone (a flat 220), so zones and Strain use the person's own or Tanaka's. 9: a
  * baseline's spread is learned as a running mean over its first nights (it used to start at the floor and climb
  * for weeks), and z-scores shrink by n / (n + 2), so early Recovery, drivers, Health Monitor ranges, Readiness and
- * Journal impact all move.
+ * Journal impact all move. 10: training load (ACWR, monotony, CTL/ATL/TSB) on each day's linear TRIMP (now stored
+ * as `strain.trimp`) instead of the log-mapped Effort; ACWR windows in calendar days ending today; "ramping down"
+ * informational (no watch signal, no Strain Target lift); CTL/ATL carried across gaps of up to 3 days. 11: Strain
+ * Target in linear load: your typical session × a Recovery multiplier centred on your own last 28 days, about one
+ * Strain point wide, +10 % growth per 4 weeks at most, capped at your usual session when ramping or back from a break.
+ * 12: the Sleep Planner's extra sleep and the Recovery forecast's strain nudge count only the Strain points today goes
+ * above your typical session (one-sided; they compared with your average day, so every rest day and every
+ * not-yet-trained morning nudged the forecast +12).
  */
-export const SCORING_VERSION = 9;
+export const SCORING_VERSION = 12;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
@@ -52,6 +59,8 @@ export type Stage1Day = {
   maxHr: number;
   /** Effort 0–100, or null with too little HR. */
   effort: number | null;
+  /** The linear TRIMP behind `effort` (null with it). Training load (ACWR, monotony, CTL/ATL) runs on this. */
+  trimp: number | null;
   /** Zones 1–5 on heart-rate reserve: lower bounds (bpm) and seconds. */
   zoneLower: number[];
   zoneSeconds: number[];

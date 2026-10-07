@@ -154,7 +154,7 @@ const META: Record<string, Meta> = {
   },
   "strain-target": {
     title: "Strain Target: a daily training range from your Recovery",
-    description: "Pulse sets today's Strain range from your Recovery band and 28-day load, then caps fast ramp-ups with the acute:chronic workload ratio.",
+    description: "Pulse sets today's Strain range from your typical training session and how today's Recovery compares with your usual, then holds it back during fast ramp-ups and after a break.",
     keywords: ["how much should i train today", "strain target", "daily strain goal"],
     shot: "phone-strain",
     sources: [S.gabbett2016, S.noop],
@@ -287,7 +287,7 @@ const META: Record<string, Meta> = {
   },
   "training-balance": {
     title: "Training balance: acute:chronic workload ratio (ACWR)",
-    description: "Pulse compares your last 7 days of Strain with your last 28 to show whether your load is balanced, rising fast or dropping off.",
+    description: "Pulse compares your heart-rate load over the last 7 days with the last 28 to show whether your load is balanced, rising fast or dropping off.",
     keywords: ["acute chronic workload ratio", "acwr calculator", "am i overtraining"],
     shot: "laptop-trends",
     scale: {
@@ -340,8 +340,8 @@ const META: Record<string, Meta> = {
   },
   "training-load": {
     slug: "fitness-fatigue-form",
-    title: "Fitness, fatigue and form from daily Strain",
-    description: "Pulse tracks long-term fitness, short-term fatigue and form (the gap between them) from your daily Strain with 42-day and 7-day averages.",
+    title: "Fitness, fatigue and form from daily training load",
+    description: "Pulse tracks long-term fitness, short-term fatigue and form (the gap between them) from your daily heart-rate load with 42-day and 7-day averages.",
     keywords: ["fitness fatigue form", "training load chart", "ctl atl tsb"],
     sources: [
       { label: "Hellard P, et al. Assessing the limitations of the Banister model in monitoring training. J Sports Sci 2006;24(5):509-20", url: "https://doi.org/10.1080/02640410500244697" },

@@ -17,6 +17,7 @@ import {
   sampleDurationsMinutes,
   strain,
   strainDenominator,
+  strainDetail,
   toStrainScale,
   trimpToStrain,
   strainScaleMax,
@@ -242,5 +243,42 @@ describe("plan scenarios and helpers", () => {
     expect(estimateHRmax(hist, null).source).toBe("observed");
     expect(estimateHRmax([150], 40)).toEqual({ hrmax: 180, source: "tanaka" });
     expect(estimateHRmax([150], null)).toEqual({ hrmax: 0, source: "unknown" });
+  });
+});
+
+describe("strainDetail: the linear TRIMP behind Effort (training load input)", () => {
+  // An hour at 150 bpm plus an hour at 90: zone 3 and below-zone minutes, enough readings for a score.
+  const day = [...every(150, 3600), ...every(90, 3600).map((x) => ({ ...x, ts: x.ts + 3600 }))];
+
+  it("Effort is exactly the log map of the returned TRIMP (Edwards)", () => {
+    const d = strainDetail(day, 190, 60)!;
+    expect(d.effort).toBe(trimpToStrain(d.trimp));
+    expect(d.trimp).toBeCloseTo(edwardsTRIMP(day, 60, 130, sampleDurationsMinutes(day)), EPS);
+  });
+
+  it("strain() is unchanged: it returns strainDetail().effort", () => {
+    for (const [max, rest] of [[190, 60], [175, 48], [205, 70]] as const) {
+      expect(strain(day, max, rest)).toBe(strainDetail(day, max, rest)!.effort);
+      expect(strain(day, max, rest, "banister", "female")).toBe(strainDetail(day, max, rest, "banister", "female")!.effort);
+    }
+  });
+
+  it("Banister: Effort is the log map of the floored TRIMP with the Banister denominator", () => {
+    const d = strainDetail(day, 190, 60, "banister", "male")!;
+    expect(d.effort).toBe(trimpToStrain(d.trimp, logMapDenominator("banister", "male")));
+  });
+
+  it("null exactly when strain() is null (too little data, or max ≤ resting)", () => {
+    expect(strainDetail(every(120, 10), 190, 60)).toBeNull();
+    expect(strain(every(120, 10), 190, 60)).toBeNull();
+    expect(strainDetail(day, 60, 60)).toBeNull();
+  });
+
+  it("TRIMP is linear where Effort is not: doubling the hard hour doubles its TRIMP but adds few Effort points", () => {
+    const hard = (n: number) => every(170, n);
+    const one = strainDetail(hard(3600), 190, 60)!;
+    const two = strainDetail(hard(7200), 190, 60)!;
+    expect(two.trimp / one.trimp).toBeCloseTo(2, 2);
+    expect(two.effort - one.effort).toBeLessThan(10);
   });
 });

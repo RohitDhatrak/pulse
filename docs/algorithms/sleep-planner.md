@@ -9,7 +9,7 @@ The Sleep Planner answers "when should I go to bed tonight?". It works out tonig
 ```mermaid
 flowchart TB
   BN[personalizedNeedHours] --> NEED[Need tonight]
-  EF[Today's Effort vs 28-day mean] --> SA[+0.05 h per Day Strain point above the mean]
+  EF[Today's load so far vs your typical session] --> SA[+0.05 h per Day Strain point above it, up to 30 min]
   SA --> NEED
   DB[Sleep debt this morning] --> DR[+ debt × 0.2]
   DR --> NEED
@@ -29,7 +29,7 @@ flowchart TB
 
    need = baseline + strain + debt − nap, floored at 0, where:
    - **baseline** = noop's `personalizedNeedHours` × 60. That is the upper quartile of nightly sleep, floored at the population target and capped at 9.5 h.
-   - **strain** = 0.05 h × 60 × max(0, today's Day Strain − the 28-day mean Day Strain). Both are on the reference app's 0–21 scale, through `toStrainScale`. A light day never lowers the need.
+   - **strain** = min(30, 0.05 h × 60 × `strainPointsAbove(todayLoad, typicalSession)`): 3 minutes per Day Strain point that today's load (TRIMP so far) goes above your **typical training session** (`typicalSession`, the median of the training days in the 28 days before today, as Strain Target uses). Both are converted to the 0–21 scale through `trimpToStrain` and `toStrainScale`. A rest day, a routine session or a day not yet past your session adds 0; a light day never lowers the need. *Before scoring version 12* it compared with the 28-day **average** Strain, rest days included (see § Why the strain term changed).
    - **debt** = 0.2 × this morning's sleep debt in minutes (`ledger(...).magnitudeMin`), so a debt is repaid over about five nights.
    - **nap** = today's minutes asleep in naps.
 2. **Typical wake time.** Over the last 14 main sleeps, take the median local wake time of the nights whose wake day is the same kind as tomorrow: weekday (Monday to Friday) or weekend (Saturday and Sunday). If none of the 14 is of that kind, use all 14.
@@ -43,8 +43,8 @@ flowchart TB
 | Input | Unit | Notes |
 |---|---|---|
 | `baselineNeedHours` | hours | `personalizedNeedHours(nightlyHours, age)`, the same need the debt ledger used. |
-| `effort` | Effort 0–100, or null | Today's strain so far. null skips the strain term. |
-| `meanEffort28` | Effort 0–100, or null | The mean over the 28 days before today. |
+| `todayLoad` | TRIMP, or null | Today's load so far (`strain.trimp`; 0 when worn with too little heart rate). null skips the strain term. |
+| `typicalSession` | TRIMP, or null | `typicalSession` over the 28 days before today. null skips the strain term. |
 | `debtMin` | minutes | This morning's debt magnitude. |
 | `napMin` | minutes | Asleep minutes in today's non-main sessions. |
 | `nights` | `{ day, wakeMin, efficiency }[]`, oldest first | Recent main sleeps. `day` is the wake day, `yyyy-MM-dd`. `wakeMin` is the **local** wake time in minutes after midnight; U10 converts from unix seconds in the user's time zone. The last 14 are used. |
@@ -56,7 +56,8 @@ All of these live in `sleepPlannerConfig`.
 
 | Constant | Value | Kind |
 |---|---|---|
-| `hoursPerStrainPoint` | 0.05 h per Day Strain point | *tunable* (spec) |
+| `hoursPerStrainPoint` | 0.05 h per Day Strain point above your typical session | *tunable* (spec); no published source |
+| `maxStrainMin` | 30 | Pulse v12: bounds an extreme day |
 | `debtRepayShare` | 0.2 | *tunable* (spec) |
 | `windowNights` | 14 | spec |
 | `defaultEfficiency` | 0.9 | *tunable*: a typical healthy-adult efficiency, used only before any night has one |
@@ -70,8 +71,8 @@ All of these live in `sleepPlannerConfig`.
 
 ## Worked examples
 
-1. **The base case** (a test). Need 8 h, no debt, today's strain at the 28-day mean, no nap: need = **480 min**. Tomorrow is a weekday, with a typical wake of 07:00 and efficiency 0.9. The 100 % bedtime is 07:00 − 480 / 0.9 = 07:00 − 533.3 min = **22:07** the evening before.
-2. **A heavier day.** Need 8 h, 60 min of debt (+12), Day Strain 16 against a mean of 10 (+6 × 0.05 h = +18 min), and a 20 min nap (−20): need = **490 min**. With a weekday wake of 07:00 and efficiency 0.9:
+1. **The base case** (a test). Need 8 h, no debt, today's load equal to your typical session, no nap: need = **480 min**. Tomorrow is a weekday, with a typical wake of 07:00 and efficiency 0.9. The 100 % bedtime is 07:00 − 480 / 0.9 = 07:00 − 533.3 min = **22:07** the evening before.
+2. **A heavier day.** Need 8 h, 60 min of debt (+12), Day Strain 16 against a typical session of 10 (+6 × 0.05 h = +18 min), and a 20 min nap (−20): need = **490 min**. With a weekday wake of 07:00 and efficiency 0.9:
 
    | Share | Asleep | In bed | Bedtime |
    |---|---|---|---|
@@ -80,6 +81,18 @@ All of these live in `sleepPlannerConfig`.
    | 70 % | 343 min | 381.1 min | **00:39** |
 
 3. **A weekend morning** (a test). With weekend wakes at 09:00 and weekday wakes at 07:00, the same need gives bedtimes exactly 2 h later on a Friday night than on a Wednesday.
+
+## Why the strain term changed (scoring version 12)
+
+Tested on the real function, five trainer types and the 180-day demo database:
+
+| Before (vs the 28-day average day) | After (vs your typical session) |
+|---|---|
+| A moderate trainer's **routine** session added +8 min; a daily trainer's identical session added 0 (no rest days in their average) | A routine session adds 0 for everyone; 1.5× / 2× / 3× your session add about 3 / 5 / 8 min for every trainer type |
+| Extra sleep on 83 of 174 seed days (p90 12.4, max 15.3 min) | 38 of 174 days (p90 1.8, max 5.5 min): only the days that really were harder |
+| A plan made in the morning counted the morning's tiny load against the average | Load below your usual session counts as 0, so the plan only grows once today passes your usual session |
+
+The 3 minutes per point is kept from before; there is no published rate, and the demo data cannot calibrate it.
 
 ## Sources
 

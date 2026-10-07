@@ -17,17 +17,17 @@ import { LoadChart } from "./LoadChart"
 export const metadata = { title: "Fitness" }
 
 const BODY = "text-[15px] leading-[22px] text-pretty text-foreground-secondary"
-// Both thresholds follow the pipeline: ACWR shows after 14 days of strain (readiness `minChronic`), fitness and fatigue
-// after 14 days in a row (training load `minimumDays`).
-const NO_LOAD = "Training load needs 14 days of strain."
-const NO_FFS = "Fitness, fatigue and form need 14 days of strain in a row."
+// Both thresholds follow the pipeline: ACWR shows after 14 days with load in the last 28 (readiness `minChronic`),
+// fitness and fatigue after 14 days with load, gaps of up to 3 days allowed (training load `minimumDays`, `maxGapDays`).
+const NO_LOAD = "Training load needs 14 days of heart-rate data in the last 4 weeks."
+const NO_FFS = "Fitness, fatigue and form need 14 days of heart-rate data, with no gap longer than 3 days."
 
 const INFO = {
   title: "About Fitness",
   body: (
     <p>
       VO2 max is the most oxygen your body can use during hard exercise. Pulse ranks it against people of your age and sex from the FRIEND registry.
-      Training load compares your last 7 days of strain with your last 28 (the acute to chronic ratio); 0.8 to 1.3 is the usual sweet spot.
+      Training load compares your heart-rate load over the last 7 days with the last 28 (the acute to chronic ratio); 0.8 to 1.3 is the usual sweet spot.
     </p>
   ),
 }

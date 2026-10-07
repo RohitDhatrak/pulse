@@ -1,11 +1,14 @@
 // Own algorithm (docs/algorithms/sleep-planner.md): tonight's sleep need (noop's personalised need, plus a
 // strain adjustment and part of the debt, minus today's naps) and the bedtimes that reach 100 %, 85 % and
-// 70 % of it before the typical wake time.
-import { toStrainScale } from "../scoring/strain";
+// 70 % of it before the typical wake time. Since SCORING_VERSION 12 the strain adjustment counts only the Strain
+// points today goes above your typical training session (it was above your average day, rest days included).
+import { strainPointsAbove } from "../scoring/load";
 
 export const sleepPlannerConfig = {
-  /** Hours of extra need per Day Strain point (0–21) above the 28-day mean (*tunable*). */
+  /** Hours of extra need per Day Strain point (0–21) above your typical session (*tunable*; no published source). */
   hoursPerStrainPoint: 0.05,
+  /** Most the strain adjustment adds, minutes. */
+  maxStrainMin: 30,
   /** Share of the current debt to repay tonight (*tunable*). */
   debtRepayShare: 0.2,
   /** Nights behind the typical wake time and efficiency (spec). */
@@ -28,10 +31,10 @@ export interface WakeNight {
 export interface SleepPlannerInput {
   /** personalizedNeedHours for tonight. */
   baselineNeedHours: number;
-  /** Today's Effort, 0–100. */
-  effort: number | null;
-  /** Mean daily Effort over the prior 28 days, 0–100, or null. */
-  meanEffort28: number | null;
+  /** Today's load so far (TRIMP), or null. */
+  todayLoad: number | null;
+  /** Your typical training session (TRIMP, `typicalSession` over the prior 28 days), or null. */
+  typicalSession: number | null;
   /** ledger(...).magnitudeMin as of this morning. */
   debtMin: number;
   /** Minutes asleep in today's naps. */
@@ -76,11 +79,11 @@ function median(xs: number[]): number | null {
 
 export function sleepPlan(input: SleepPlannerInput): SleepPlan {
   const c = sleepPlannerConfig;
-  const strainAbove =
-    input.effort != null && input.meanEffort28 != null ? Math.max(0, toStrainScale(input.effort) - toStrainScale(input.meanEffort28)) : 0;
+  // One-sided: a rest day, a routine session or a day not yet past your usual session adds nothing.
+  const strainAbove = strainPointsAbove(input.todayLoad, input.typicalSession);
   const parts = {
     baselineMin: input.baselineNeedHours * 60,
-    strainMin: strainAbove * c.hoursPerStrainPoint * 60,
+    strainMin: Math.min(c.maxStrainMin, strainAbove * c.hoursPerStrainPoint * 60),
     debtMin: Math.max(0, input.debtMin) * c.debtRepayShare,
     napMin: Math.max(0, input.napMin),
   };

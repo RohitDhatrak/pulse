@@ -21,6 +21,7 @@ import type { ReportDay } from "@/core/algorithms/reports";
 import { sleepPlan, type SleepPlan } from "@/core/algorithms/sleepPlanner";
 import { sleepRegularityIndex, sriConsistency, sriDisplay } from "@/core/algorithms/sleepRegularity";
 import { strainTarget } from "@/core/algorithms/strainTarget";
+import { typicalSession } from "@/core/scoring/load";
 import { stress } from "@/core/algorithms/stress";
 import { type Data, r1, round, type Segment, type Session } from "./data";
 import type {
@@ -66,7 +67,6 @@ export const newFold = () => ({
   monitorRows: [] as HealthMonitorDay[],
   hsRows: [] as HealthspanDay[],
   outcomes: [] as OutcomeDay[],
-  efforts: [] as (number | null)[],
   recoveries: [] as number[],
   aggregates: [] as (number | null)[],
   reportRows: [] as ReportDay[],
@@ -100,11 +100,6 @@ export function dayOf(data: Data, inputs: Inputs, day: string, opts: PipelineOpt
 
 const summarize = (s: BaselineState | null): BaselineSummary =>
   s && { mean: s.baseline, sd: sigma(s), status: s.status, nValid: s.nValid };
-
-const meanOf = (xs: (number | null | undefined)[]) => {
-  const v = xs.filter((x): x is number => x != null);
-  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
-};
 
 function nightOf(main: Session, segments: Segment[] | undefined): NonNullable<SleepRow["main"]> {
   const staged = main.stagesStatus === "SUCCEEDED" && !!segments?.length;
@@ -285,11 +280,12 @@ function skinDeviation(d: Day, skinB: BaselineState | null): number | null {
   return skinB && isUsable(skinB) ? t - skinB.baseline : null;
 }
 
-// ── Training load and readiness (today's strain counts toward today's ACWR) ──
+// ── Training load and readiness (today's load counts toward today's ACWR) ──
 
 export function scoreTrainingLoad(f: Fold, d: Day, rec: RecoveryRow): TrainingLoadRow {
   const { hrv, rhr, resp } = rec.inputs;
-  f.readinessRows.push({ day: d.day, hrv, rhr, resp, effort: d.s1.effort ?? (d.worn ? 0 : null) });
+  // Linear TRIMP, not Effort: a worn day with too little HR is a measured 0, an unworn day has no load.
+  f.readinessRows.push({ day: d.day, hrv, rhr, resp, load: d.s1.trimp ?? (d.worn ? 0 : null) });
   const { readiness, trainingLoad } = evaluateWithTrainingLoad(f.readinessRows, d.day);
   return {
     acwr: readiness.acwr,
@@ -304,12 +300,31 @@ export function scoreTrainingLoad(f: Fold, d: Day, rec: RecoveryRow): TrainingLo
   };
 }
 
-// ── Strain Target: prior days' Effort and ACWR ───────────────────────────────
+// ── Strain Target: prior days' load (TRIMP) and Recovery, and yesterday's ACWR ──
 
-export const scoreStrainTarget = (f: Fold, rec: RecoveryRow): StrainTargetRow =>
-  rec.value == null
-    ? { reason: rec.reason!, ...(rec.nightsLeft !== undefined && { nightsLeft: rec.nightsLeft }) }
-    : { reason: null, ...strainTarget(f.efforts.slice(), rec.value, f.prevAcwr) };
+export function scoreStrainTarget(f: Fold, rec: RecoveryRow): StrainTargetRow {
+  if (rec.value == null) return { reason: rec.reason!, ...(rec.nightsLeft !== undefined && { nightsLeft: rec.nightsLeft }) };
+  // scoreRecovery and scoreTrainingLoad have already added today's row; the target uses the days before it.
+  const t = strainTarget({
+    priorLoad: f.readinessRows.slice(0, -1).map((r) => r.load ?? null),
+    priorRecovery: f.recoveries.slice(0, -1),
+    recovery: rec.value,
+    acwr: f.prevAcwr,
+  });
+  return t ? { reason: null, ...t } : { reason: "calibrating" };
+}
+
+// ── Today's load against your typical session (Sleep Planner, forecast) ──────
+
+/** Today's load so far (TRIMP): a worn day with too little heart rate is 0, an unworn day null. */
+const todayLoad = (d: Day) => d.s1.trimp ?? (d.worn ? 0 : null);
+
+/** Typical training session over the 28 days before today, as Strain Target computes it; null without loads. */
+function priorTypicalSession(f: Fold): number | null {
+  // scoreTrainingLoad has already added today's row.
+  const loads = f.readinessRows.slice(0, -1).slice(-28).flatMap((r) => (r.load != null ? [r.load] : []));
+  return typicalSession(loads);
+}
 
 // ── Sleep Planner (tonight) ──────────────────────────────────────────────────
 
@@ -322,8 +337,8 @@ export function scorePlanner(f: Fold, d: Day, sleep: SleepRow, tz: string) {
   const tonightNeed = personalizedNeedHours(f.nights.slice(-28).map((n) => n.hours), d.age.whole);
   const plan = sleepPlan({
     baselineNeedHours: tonightNeed,
-    effort: d.s1.effort,
-    meanEffort28: meanOf(f.efforts.slice(-28)),
+    todayLoad: todayLoad(d),
+    typicalSession: priorTypicalSession(f),
     debtMin: sleep.debtMin,
     napMin: d.naps.reduce((a, n) => a + n.asleepMin, 0),
     nights: f.wakeNights,
@@ -341,8 +356,8 @@ export const forecastOf = (f: Fold, d: Day, rec: RecoveryRow, plan: SleepPlan, t
   rec.value != null && f.recoveries.length >= 14
     ? recoveryForecast({
         recentCharge: f.recoveries,
-        recentEffort: f.efforts.filter((e): e is number => e != null).slice(-14),
-        todayEffort: d.s1.effort,
+        todayLoad: todayLoad(d),
+        typicalSession: priorTypicalSession(f),
         plannedSleepHours: plan.needMin / 60,
         needHours: tonightNeed,
         needNights: f.nights.length,

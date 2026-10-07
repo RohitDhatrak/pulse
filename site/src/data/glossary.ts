@@ -2,7 +2,7 @@
 export type Term = { term: string; id: string; definition: string; metric?: string }
 
 export const GLOSSARY: Term[] = [
-  { term: "Acute:chronic workload ratio (ACWR)", id: "acwr", metric: "training-balance", definition: "Your average Strain over the last 7 days divided by your average over the last 28. 1.0 means this week matches your usual load." },
+  { term: "Acute:chronic workload ratio (ACWR)", id: "acwr", metric: "training-balance", definition: "Your average daily heart-rate load over the last 7 days divided by your average over the last 28. 1.0 means this week matches your usual load." },
   { term: "Baseline", id: "baseline", definition: "Your own normal for a vital, built from earlier nights only: a running average that leans on the last two weeks and clips extreme nights. Pulse compares each night with it rather than with other people." },
   { term: "Energy Bank", id: "energy-bank", metric: "energy-bank", definition: "A 0-100% estimate of the energy left in your day. It starts from Recovery and sleep, drains with time awake, heart-rate load and stress, and recharges with calm minutes and naps." },
   { term: "Fitbit Air", id: "fitbit-air", definition: "Google's screenless fitness band. It records heart rate, sleep and other vitals and syncs them to the Google Health app, which is where Pulse reads them from." },

@@ -195,7 +195,7 @@ export type StrainVM = {
   isToday: boolean;
   strain: Metric<number>;
   soFar: boolean;
-  target: Metric<{ low: number; high: number; estimate: boolean; acwrRule: "capped" | "lifted" | null }>;
+  target: Metric<{ low: number; high: number; estimate: boolean; acwrRule: "capped" | "returning" | null }>;
   summary: KeyStat[];
   coach: string | null;
   hr: Metric<HrChart>;

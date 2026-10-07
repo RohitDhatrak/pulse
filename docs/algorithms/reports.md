@@ -28,7 +28,7 @@ flowchart LR
 2. **Averages.** For each of recovery (0–100), strain (0–21), sleep performance (0–100), sleep hours, HRV (ms) and resting HR (bpm): the mean over the period's days where that value is not null. With no values it is null.
 3. **Deltas.** Current average − previous period's average. The previous period is the week or month before. A delta is null when either side is null. The previous period may itself be partial.
 4. **Bands.** Each day with a recovery score counts once, in red (< 34), yellow (< 67) or green, using noop's `band()`. The counts sum to the days with recovery.
-5. **Training balance.** The ACWR of the period's last day that has one, classified by `acwrBand`, the banding of noop's readiness engine that Fitness also uses: < 0.8 ramping down, < 1.3 sweet spot, < 1.5 building fast, else spiking. Null when the period has no ACWR.
+5. **Training balance.** The ACWR of the period's last day that has one (on linear heart-rate load since scoring version 10; [training-load](training-load.md)), classified by `acwrBand`, the banding of noop's readiness engine that Fitness also uses: < 0.8 ramping down, < 1.3 sweet spot, < 1.5 building fast, else spiking. Null when the period has no ACWR.
 6. **Sleep consistency.** The mean of the daily Sleep Regularity display values (0–100).
 7. **Top impacts.** From the `TagImpact[]` the caller passes: tags whose recovery effect is `positive` or `negative`, by |Δ| largest first, at most 3.
 8. **Best and worst day.** The highest and lowest recovery in the period. Ties go to the earliest day.

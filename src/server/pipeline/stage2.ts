@@ -116,7 +116,6 @@ export async function stage2(db: Db, data: Data, opts: PipelineOptions) {
     f.rhrB = update(f.rhrB, recovery.inputs.rhr, restingHRCfg);
     f.respB = update(f.respB, recovery.inputs.resp, respCfg);
     f.skinB = update(f.skinB, d.dm?.nightlyTempC ?? null, skinTempCfg);
-    f.efforts.push(d.s1.effort);
     f.prevAcwr = trainingLoad.acwr;
   }
   await flush();
