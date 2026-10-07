@@ -312,6 +312,24 @@ describe("sleep need on the seed (SCORING_VERSION 15)", () => {
   });
 });
 
+describe("Recovery's sleep centre on the seed (SCORING_VERSION 17)", () => {
+  it("is 0.85 for the first 7 nights, then the mean of the prior 28 nights' sleepPerf", () => {
+    const prior: number[] = [];
+    for (const day of allDays) {
+      const inputs = js<RecoveryRow>("recovery", day).inputs as RecoveryRow["inputs"] & { sleepCentre?: number };
+      expect(inputs.sleepCentre).toBeDefined();
+      if (prior.length < 7) expect(inputs.sleepCentre).toBe(0.85);
+      else {
+        const recent = prior.slice(-28);
+        expect(inputs.sleepCentre!).toBeCloseTo(recent.reduce((a, b) => a + b, 0) / recent.length, 12);
+      }
+      expect(inputs.sleepCentre!).toBeGreaterThanOrEqual(0.4);
+      expect(inputs.sleepCentre!).toBeLessThanOrEqual(1);
+      if (inputs.sleepPerf != null) prior.push(inputs.sleepPerf);
+    }
+  });
+});
+
 describe("recovery gating on the seed", () => {
   it("days 1–7 calibrate with the nights left, and day 8 is the first score", () => {
     for (let i = 0; i < 7; i++) {

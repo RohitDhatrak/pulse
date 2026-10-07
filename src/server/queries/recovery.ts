@@ -25,12 +25,12 @@ const SUBJECT: Record<ChargeDriver["label"], string> = {
   SKIN_TEMPERATURE: "Skin temperature",
 };
 
-/** "HRV above baseline", "Strong night of sleep", … from noop's verdicts. */
+/** "HRV above baseline", "Better sleep than your usual", … from noop's verdicts. */
 export function driverLabel(d: ChargeDriver): string {
   const s = SUBJECT[d.label];
   const v = d.verdict;
-  if (v === "STRONG_NIGHT_SUPPORTING") return "Strong night of sleep";
-  if (v === "BELOW_GOOD_NIGHT_LIMITING") return "Sleep below a good night";
+  if (v === "STRONG_NIGHT_SUPPORTING") return "Better sleep than your usual";
+  if (v === "BELOW_GOOD_NIGHT_LIMITING") return "Sleep below your usual";
   if (v === "TYPICAL_NIGHT") return "Typical night of sleep";
   if (v === "WARMER_THAN_BASELINE_LIMITING") return "Skin temperature warmer than usual";
   if (v === "COOLER_THAN_BASELINE_LIMITING") return "Skin temperature cooler than usual";
@@ -136,8 +136,8 @@ export function contributors(row: DayRow | undefined, isToday: boolean): Contrib
       label: "Sleep performance",
       unit: "%",
       metric: metric("sleep", inputs?.sleepPerf != null ? inputs.sleepPerf * 100 : null, missing),
-      // The score centres sleep at 85% with a 12-point scale (noop's sleepPerfCenter / sleepPerfScale).
-      baseline: { mean: sleepPerfCenter * 100, sd: sleepPerfScale * 100 },
+      // Since scoring version 17 the sleep term centres on your own usual night (inputs.sleepCentre), 12-point scale.
+      baseline: { mean: (inputs?.sleepCentre ?? sleepPerfCenter) * 100, sd: sleepPerfScale * 100 },
       points: pts("sleep"),
       direction: "up",
     },

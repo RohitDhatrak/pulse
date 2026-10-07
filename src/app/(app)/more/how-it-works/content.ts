@@ -29,7 +29,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
         rows: [
           { term: "Heart rate variability", detail: "Fitbit’s nightly HRV, in ms. Higher is better." },
           { term: "Resting heart rate", detail: "Fitbit’s daily resting heart rate from Google, in bpm; the lowest 5-minute average during sleep only on a day Google has none. Lower is better." },
-          { term: "Sleep performance", detail: "Last night’s Sleep Performance. 85% is neutral." },
+          { term: "Sleep performance", detail: "Last night’s Sleep Performance against your own average over the last 28\u00a0nights (85% until you have 7)." },
           { term: "Respiratory rate", detail: "Breaths per minute asleep, in rpm. Higher counts against you." },
           { term: "Skin temperature", detail: "Distance from Google’s skin-temperature baseline (your 30-night median), in °C; Pulse’s own baseline only when Google gives none. Either direction counts against you." },
         ],
@@ -37,7 +37,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "How it is weighted",
         paragraphs: [
-          "Each input is measured in units of your usual night-to-night swing from baseline. Sleep moves one unit per 12\u00a0points away from 85%, skin temperature one unit per 1\u00a0°C. A missing input’s weight is shared among the rest.",
+          "Each input is measured in units of your usual night-to-night swing from baseline. Sleep moves one unit per 12\u00a0points away from your own average, skin temperature one unit per 1\u00a0°C. A missing input’s weight is shared among the rest.",
         ],
         rows: [
           { term: "HRV", detail: "55%" },

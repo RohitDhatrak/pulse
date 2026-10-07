@@ -37,9 +37,10 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * sex (it scaled the others up by 9 / n), and counts steps and zones 1–3 once, the larger penalty. 15: sleep need is
  * the median of the last 28 nights (was the upper quartile), floored at 7 h asleep for adults (was 8), 7.5 h before
  * 7 nights (was 8): a healthy 7 h sleeper no longer carries 73 min of permanent debt. 16: the Health Monitor's own
- * ranges are ± 2.5σ (was 2); Google's ranges and the SpO2 95 % floor are unchanged.
+ * ranges are ± 2.5σ (was 2); Google's ranges and the SpO2 95 % floor are unchanged. 17: Recovery's sleep term is
+ * centred on your own average sleep performance over the prior 28 nights (0.85 until 7 exist), not a fixed 0.85.
  */
-export const SCORING_VERSION = 16;
+export const SCORING_VERSION = 17;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
@@ -97,7 +98,8 @@ export type RecoveryRow = {
   terms: string[];
   /** The score gained a term after it was first shown. */
   updated: boolean;
-  inputs: { hrv: number | null; rhr: number | null; resp: number | null; sleepPerf: number | null; skinTempDev: number | null };
+  /** `sleepCentre`: your usual sleep performance (0–1) the sleep term was scored against (SCORING_VERSION 17). */
+  inputs: { hrv: number | null; rhr: number | null; resp: number | null; sleepPerf: number | null; sleepCentre?: number; skinTempDev: number | null };
   baselines: { hrv: BaselineSummary; rhr: BaselineSummary; resp: BaselineSummary; skinTemp: BaselineSummary };
   hrvZ: number | null;
   drivers: ChargeDriver[];

@@ -21,8 +21,24 @@ export const logisticZ0 = -0.2;
 export const populationMean = 58.0;
 export const bandRedMax = 34.0;
 export const bandYellowMax = 67.0;
+/** noop's fixed sleep centre; since SCORING_VERSION 17 only the cold-start centre (personalSleepCentre). */
 export const sleepPerfCenter = 0.85;
 export const sleepPerfScale = 0.12;
+/** Prior nights behind the personal sleep centre, and how many it needs (fewer → sleepPerfCenter). */
+export const sleepCentreWindow = 28;
+export const minSleepCentreNights = 7;
+
+/**
+ * Your usual sleep performance: the mean of the last `sleepCentreWindow` prior values (0–1), or the fixed 0.85 with
+ * fewer than `minSleepCentreNights`. A centre only: the scale stays the fixed 0.12, because your own night-to-night
+ * spread is small (about ±3 points) and dividing by it would swing Recovery ±5–7 points on ordinary nights.
+ * See docs/algorithms/recovery-sleep-term.md.
+ */
+export function personalSleepCentre(prior: number[]): number {
+  const recent = prior.slice(-sleepCentreWindow);
+  if (recent.length < minSleepCentreNights) return sleepPerfCenter;
+  return recent.reduce((a, b) => a + b, 0) / recent.length;
+}
 
 // Parasympathetic-saturation guard: detected and reported, deliberately NOT applied to the score.
 export const satEnterZ = 0.5;
@@ -85,6 +101,8 @@ export interface RecoveryArgs {
   respBaseline?: DriverBaseline | null;
   /** Rest composite / 100, or efficiency, in [0, 1]. */
   sleepPerf?: number | null;
+  /** Your usual sleep performance (personalSleepCentre); absent → noop's fixed sleepPerfCenter. */
+  sleepCentre?: number | null;
   /** Raw ±°C from the personal skin-temp baseline; a symmetric penalty. */
   skinTempDev?: number | null;
   hrvBaselineUsable?: boolean;
@@ -106,7 +124,7 @@ export function recovery(a: RecoveryArgs): number | null {
   terms.push([zScore(a.hrv, hrvB.mean, hrvB.spread), wHRV]);
   if (a.rhrBaseline && a.rhr != null) terms.push([zScore(a.rhrBaseline.mean, a.rhr, a.rhrBaseline.spread), wRHR]);
   if (a.resp != null && a.respBaseline) terms.push([zScore(a.respBaseline.mean, a.resp, a.respBaseline.spread), wResp]);
-  if (a.sleepPerf != null) terms.push([(a.sleepPerf - sleepPerfCenter) / sleepPerfScale, wSleep]);
+  if (a.sleepPerf != null) terms.push([(a.sleepPerf - (a.sleepCentre ?? sleepPerfCenter)) / sleepPerfScale, wSleep]);
   if (a.skinTempDev != null) terms.push([-Math.abs(a.skinTempDev) / skinTempDevScale, wSkinTemp]);
   if (a.recoveryIndexSlope != null) terms.push([-a.recoveryIndexSlope / recoveryIndexScaleBpmPerHr, wRecoveryIndex]);
   if (a.priorDayEffort != null && a.effortBaseline) {

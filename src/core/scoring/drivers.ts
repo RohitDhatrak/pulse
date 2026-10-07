@@ -54,6 +54,8 @@ export interface ChargeDriverArgs {
   respBaseline?: BaselineState | null;
   /** In [0, 1]. */
   sleepPerf?: number | null;
+  /** Your usual sleep performance (personalSleepCentre); absent → the fixed sleepPerfCenter. */
+  sleepCentre?: number | null;
   skinTempDev?: number | null;
 }
 
@@ -100,13 +102,14 @@ export function chargeDrivers(a: ChargeDriverArgs): ChargeDriver[] {
   }
 
   if (a.sleepPerf != null) {
+    const centre = a.sleepCentre ?? sleepPerfCenter;
     drivers.push({
       label: "SLEEP_QUALITY",
-      deltaPoints: points(recoveryFromStates({ ...args, sleepPerf: sleepPerfCenter })),
+      deltaPoints: points(recoveryFromStates({ ...args, sleepPerf: centre })),
       value: a.sleepPerf * 100.0,
-      baseline: null,
+      baseline: centre * 100.0,
       unit: "PERCENT",
-      verdict: sleepVerdict(a.sleepPerf),
+      verdict: sleepVerdict(a.sleepPerf, centre),
     });
   }
 
@@ -171,9 +174,9 @@ export function baselineVerdict(
   return deltaPoints > 0 ? "BELOW_BASELINE_SUPPORTING" : "BELOW_BASELINE_LIMITING";
 }
 
-function sleepVerdict(sleepPerf: number): ChargeDriverVerdict {
-  if (sleepPerf > sleepPerfCenter) return "STRONG_NIGHT_SUPPORTING";
-  if (sleepPerf < sleepPerfCenter) return "BELOW_GOOD_NIGHT_LIMITING";
+function sleepVerdict(sleepPerf: number, centre: number): ChargeDriverVerdict {
+  if (sleepPerf > centre) return "STRONG_NIGHT_SUPPORTING";
+  if (sleepPerf < centre) return "BELOW_GOOD_NIGHT_LIMITING";
   return "TYPICAL_NIGHT";
 }
 

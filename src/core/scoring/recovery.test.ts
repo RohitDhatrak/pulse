@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { foldHistory, hrvCfg, zSpread } from "./baselines";
+import { personalizedNeedHours, rest } from "./sleep";
 import {
   band,
   bandRedMax,
@@ -7,6 +8,10 @@ import {
   gatedRecovery,
   logisticK,
   logisticZ0,
+  minSleepCentreNights,
+  personalSleepCentre,
+  sleepCentreWindow,
+  sleepPerfScale,
   minBaselineNights,
   parasympatheticSaturation,
   recovery,
@@ -329,5 +334,87 @@ describe("short-history z shrink in Recovery", () => {
     const r = recoveryFromStates({ hrv: 40, rhr: null, hrvBaseline: b })!;
     const z = logisticZ0 - Math.log(100 / r - 1) / logisticK;
     expect(z).toBeCloseTo((-10 / 10) * (7 / 9), 9);
+  });
+});
+
+describe("sleep term centred on your own usual night (SCORING_VERSION 17)", () => {
+  const atBaseline = { hrv: 60, hrvBaseline: { mean: 60, spread: 8 }, rhr: 55, rhrBaseline: { mean: 55, spread: 2.5 } };
+  const R = (sleepPerf: number | null, sleepCentre?: number) => recovery({ ...atBaseline, sleepPerf, sleepCentre })!;
+
+  it("personalSleepCentre: 0.85 under 7 nights, else the mean of the last 28", () => {
+    expect(minSleepCentreNights).toBe(7);
+    expect(sleepCentreWindow).toBe(28);
+    expect(personalSleepCentre([])).toBe(sleepPerfCenter);
+    expect(personalSleepCentre(Array(6).fill(0.95))).toBe(sleepPerfCenter);
+    expect(personalSleepCentre(Array(7).fill(0.95))).toBeCloseTo(0.95, 12);
+    // Older values than the last 28 are ignored.
+    expect(personalSleepCentre([...Array(10).fill(0.5), ...Array(28).fill(0.9)])).toBeCloseTo(0.9, 12);
+    expect(personalSleepCentre([0.8, 0.9, 0.85, 0.95, 0.75, 0.9, 0.85])).toBeCloseTo(6 / 7, 12);
+  });
+
+  it("a centre shifts the term exactly like shifting last night's score; none keeps noop's 0.85", () => {
+    expect(R(0.92, 0.9)).toBeCloseTo(R(0.87), 12);
+    expect(R(0.9)).toBeCloseTo(R(0.9, sleepPerfCenter), 12);
+    expect(R(0.9, 0.9)).toBeCloseTo(R(sleepPerfCenter), 12); // your usual night is neutral
+    expect(R(null, 0.7)).toBeCloseTo(R(null), 12);
+  });
+
+  describe("simulated sleepers (the real sleep score, v15 need)", () => {
+    const sleepers = [
+      { name: "good", h: 7.5, eff: 0.92, deep: 0.16, rem: 0.22, sri: 85 },
+      { name: "typical", h: 7.0, eff: 0.88, deep: 0.14, rem: 0.21, sri: 78 },
+      { name: "older adult", h: 7.0, eff: 0.85, deep: 0.08, rem: 0.18, sri: 80 },
+      { name: "restless", h: 6.5, eff: 0.8, deep: 0.12, rem: 0.18, sri: 70 },
+    ];
+    /** 60 ordinary nights' sleep scores (0–1), then one bad night (5 h at 75 % efficiency). */
+    const nights = (p: (typeof sleepers)[number]) => {
+      let x = 5;
+      const rnd = () => ((x = (x * 1103515245 + 12345) % 2147483648), x / 2147483648);
+      const g = () => Math.sqrt(-2 * Math.log(Math.max(rnd(), 1e-12))) * Math.cos(2 * Math.PI * rnd());
+      const hours: number[] = [];
+      return Array.from({ length: 61 }, (_, d) => {
+        const bad = d === 60;
+        const h = bad ? 5 : Math.max(4, p.h + 0.5 * g());
+        const eff = bad ? 0.75 : Math.min(0.98, p.eff + 0.03 * g());
+        const need = personalizedNeedHours(hours.slice(-28), 40);
+        hours.push(h);
+        return rest(h * 3600, eff, Math.max(0, p.deep + 0.02 * g()) * h * 3600, Math.max(0, p.rem + 0.03 * g()) * h * 3600, need, p.sri / 100)! / 100;
+      });
+    };
+    const neutral = R(sleepPerfCenter);
+    const stats = (perf: number[], centreAt: (i: number) => number) => {
+      const off = perf.slice(30, 60).map((v, k) => R(v, centreAt(30 + k)) - neutral);
+      const mean = off.reduce((a, b) => a + b, 0) / off.length;
+      const swing = Math.sqrt(off.reduce((a, v) => a + (v - mean) ** 2, 0) / off.length);
+      return { mean, swing, bad: R(perf[60], centreAt(60)) - neutral };
+    };
+
+    for (const p of sleepers) {
+      it(`${p.name}: no permanent offset with your own centre (the fixed 0.85 gave ≥ 1 point), same swing, a bad night still counts`, () => {
+        const perf = nights(p);
+        const fixed = stats(perf, () => sleepPerfCenter);
+        const own = stats(perf, (i) => personalSleepCentre(perf.slice(0, i)));
+        // Fixed 0.85: good +2.7, typical +1.0, older adult −2.1, restless −3.0 points every day.
+        expect(Math.abs(fixed.mean)).toBeGreaterThanOrEqual(1);
+        expect(Math.abs(own.mean)).toBeLessThanOrEqual(0.8);
+        expect(Math.abs(own.swing - fixed.swing)).toBeLessThanOrEqual(0.2);
+        expect(own.bad).toBeLessThanOrEqual(-4);
+        expect(own.bad).toBeGreaterThanOrEqual(-12);
+      });
+    }
+
+    it("the rejected design (z against your own sleep spread) would swing ordinary nights by over 4 points", () => {
+      const perf = nights(sleepers[1]);
+      const z = (i: number) => {
+        const prior = perf.slice(Math.max(0, i - 28), i);
+        const m = prior.reduce((a, b) => a + b, 0) / prior.length;
+        const sd = Math.sqrt(prior.reduce((a, v) => a + (v - m) ** 2, 0) / prior.length);
+        return (perf[i] - m) / Math.max(sd, 0.015);
+      };
+      // Feed the personal z through the same term: sleepPerf = 0.85 + z × 0.12.
+      const off = perf.slice(30, 60).map((_, k) => R(sleepPerfCenter + z(30 + k) * sleepPerfScale) - neutral);
+      const mean = off.reduce((a, b) => a + b, 0) / off.length;
+      expect(Math.sqrt(off.reduce((a, v) => a + (v - mean) ** 2, 0) / off.length)).toBeGreaterThan(4);
+    });
   });
 });

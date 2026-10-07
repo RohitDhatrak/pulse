@@ -264,3 +264,22 @@ describe("short-history z shrink in the driver rows", () => {
     expect(Math.abs(points(7))).toBeLessThan(Math.abs(points(120)));
   });
 });
+
+describe("sleep driver row against your usual night (SCORING_VERSION 17)", () => {
+  const args = (sleepPerf: number, sleepCentre?: number) => ({ hrv: 50, rhr: 55, hrvBaseline: baseline(50, 10), rhrBaseline: baseline(55, 4), sleepPerf, sleepCentre });
+  const sleepRow = (sleepPerf: number, sleepCentre?: number) => row(chargeDrivers(args(sleepPerf, sleepCentre)), "SLEEP_QUALITY");
+
+  it("is 0 points and a typical night at your centre, with your centre as its baseline", () => {
+    expect(sleepRow(0.91, 0.91)).toMatchObject({ deltaPoints: 0, baseline: 91, verdict: "TYPICAL_NIGHT" });
+  });
+
+  it("above your centre supports, below it limits, even when both sit above the old fixed 85", () => {
+    expect(sleepRow(0.95, 0.91).verdict).toBe("STRONG_NIGHT_SUPPORTING");
+    expect(sleepRow(0.88, 0.91)).toMatchObject({ verdict: "BELOW_GOOD_NIGHT_LIMITING" });
+    expect(sleepRow(0.88, 0.91).deltaPoints).toBeLessThanOrEqual(0);
+  });
+
+  it("without a centre it keeps noop's fixed 85", () => {
+    expect(sleepRow(0.85)).toMatchObject({ deltaPoints: 0, baseline: 85 });
+  });
+});

@@ -7,7 +7,7 @@ import { deviation, isTrusted, isUsable, sigma } from "@/core/scoring/baselines"
 import { chargeDrivers, type ChargeDriver } from "@/core/scoring/drivers";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
 import { evaluateWithTrainingLoad, type ReadinessDay } from "@/core/scoring/readiness";
-import { gatedRecovery, minBaselineNights } from "@/core/scoring/recovery";
+import { gatedRecovery, minBaselineNights, personalSleepCentre } from "@/core/scoring/recovery";
 import { creditedSleepMin, hypnogramMetrics, ledger, minNeedNights, personalizedNeedHours, rest } from "@/core/scoring/sleep";
 import { toStrainScale } from "@/core/scoring/strain";
 import { foldDaytimeBaseline } from "@/core/scoring/stressBase";
@@ -68,6 +68,8 @@ export const newFold = () => ({
   hsRows: [] as HealthspanDay[],
   outcomes: [] as OutcomeDay[],
   recoveries: [] as number[],
+  /** Each prior night's sleepPerf as Recovery used it (0–1), oldest first, for the personal sleep centre. */
+  sleepPerfs: [] as number[],
   /** Each prior day's median still-minute HR (stress().stillMedianHr), oldest first. */
   stillMedians: [] as (number | null)[],
   reportRows: [] as ReportDay[],
@@ -210,6 +212,9 @@ export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
   const resp = dm?.respBpm ?? null;
   const skinTempDev = skinDeviation(d, skinB);
   const sleepPerf = sleep.performance != null ? sleep.performance / 100 : main ? main.efficiency : null;
+  // Your usual night from the prior nights only (0.85 until 7 exist); today's joins after scoring.
+  const sleepCentre = personalSleepCentre(f.sleepPerfs);
+  if (sleepPerf != null) f.sleepPerfs.push(sleepPerf);
   const stale = (
     [
       ["hrv", hrvB],
@@ -232,14 +237,14 @@ export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
   else if (mainSession.stagesStatus !== "SUCCEEDED" || hrv == null) reason = "no_hrv_last_night";
   else {
     const g = hrvB
-      ? gatedRecovery({ hrv, rhr, resp, hrvBaseline: hrvB, rhrBaseline: rhrUsable, respBaseline: respUsable, sleepPerf, skinTempDev })
+      ? gatedRecovery({ hrv, rhr, resp, hrvBaseline: hrvB, rhrBaseline: rhrUsable, respBaseline: respUsable, sleepPerf, sleepCentre, skinTempDev })
       : { recovery: null };
     if (g.recovery == null) {
       reason = "calibrating";
       nightsLeft = Math.max(1, minBaselineNights - (hrvB?.nValid ?? 0));
     } else {
       value = g.recovery;
-      drivers = chargeDrivers({ hrv, rhr, resp, hrvBaseline: hrvB!, rhrBaseline: rhrUsable, respBaseline: respUsable, sleepPerf, skinTempDev });
+      drivers = chargeDrivers({ hrv, rhr, resp, hrvBaseline: hrvB!, rhrBaseline: rhrUsable, respBaseline: respUsable, sleepPerf, sleepCentre, skinTempDev });
     }
   }
   const terms =
@@ -264,7 +269,7 @@ export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
     stale,
     terms,
     updated,
-    inputs: { hrv, rhr, resp, sleepPerf, skinTempDev },
+    inputs: { hrv, rhr, resp, sleepPerf, sleepCentre, skinTempDev },
     baselines: { hrv: summarize(hrvB), rhr: summarize(rhrB), resp: summarize(respB), skinTemp: summarize(skinB) },
     hrvZ,
     drivers,

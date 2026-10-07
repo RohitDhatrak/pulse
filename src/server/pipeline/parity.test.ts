@@ -3,6 +3,8 @@
 // demo's inputs changed, not the scorers). Re-recorded for SCORING_VERSION 9 (early-baseline spread and z shrink):
 // only recovery moved; strain and sleep are byte-identical to the previous snapshot. Re-recorded for SCORING_VERSION 15
 // (sleep need: median, adult floor 7 h): sleep and recovery moved by design; strain is byte-identical.
+// Re-recorded for SCORING_VERSION 17 (Recovery's sleep term centred on your own usual night): only recovery moved;
+// strain and sleep are byte-identical.
 import { expect, it } from "vitest";
 import { rows, sql } from "../db";
 import { seeded, USER } from "../testing";
