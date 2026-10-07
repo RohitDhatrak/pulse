@@ -42,8 +42,14 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * 18: journal impact uses a Welch t interval (was a percentile bootstrap, which flagged 12.5 % of null effects at
  * 90 %), labels an effect clear only when it survives Benjamini–Hochberg (q 0.1) across that metric's behaviours and
  * "possible" otherwise, and leaves days next to an illness out of the other behaviours' comparisons.
+ * 19: Pulse Age against a person who meets health guidelines (VO2max median, 8,000 steps, 100 + 15 zone minutes,
+ * SRI 81, resting HR 60 / 64) instead of a fit one; run and daily VO2max blended by count (one run reading replaced
+ * six months of estimates); activity curves on rolling 7-day windows; no result before 14 days of activity data;
+ * zone and strength minutes only on days worn ≥ 10 h awake; strength unknown until a workout is logged; no long-sleep
+ * or high-strength penalty; per-sex lean mass; SRI below 65 and the VO2max reference past 75 extended; steps ramp
+ * between 55 and 65 (see docs/handoff/pulse-age-issues.md).
  */
-export const SCORING_VERSION = 18;
+export const SCORING_VERSION = 19;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
@@ -188,7 +194,8 @@ export type SleepPlannerRow =
 
 export type HealthMonitorRow = (HealthMonitorResult & { reason: null; stale: string[] }) | { reason: ReasonCode };
 
-export type HealthspanRow = (HealthspanResult & { reason: null; age: number }) | { reason: ReasonCode; dataDays: number };
+/** `activityDays`: days with zone data (worn ≥ 10 h awake) in the 6 months; Pulse Age needs 14 (scoring version 19). */
+export type HealthspanRow = (HealthspanResult & { reason: null; age: number }) | { reason: ReasonCode; dataDays: number; activityDays?: number };
 
 export type FitnessRow =
   | { reason: null; vo2max: number; source: "run" | "daily"; sourceDay: string; percentile: number; category: FitnessCategory; age: number }

@@ -50,10 +50,15 @@ describe("fitnessCategory", () => {
 });
 
 describe("referenceVo2max", () => {
-  it("is the 75th percentile at decade midpoints, linear between them, flat outside", () => {
-    expect(referenceVo2max(35, "male")).toBeCloseTo(49.2, 10);
-    expect(referenceVo2max(40, "male")).toBeCloseTo((49.2 + 45.0) / 2, 10);
-    expect(referenceVo2max(20, "male")).toBeCloseTo(55.2, 10);
-    expect(referenceVo2max(85, "female")).toBeCloseTo(20.8, 10);
+  it("is the median (version 19; was the 75th percentile) at decade midpoints, linear between them, flat below 25", () => {
+    expect(referenceVo2max(35, "male")).toBeCloseTo(42.4, 10);
+    expect(referenceVo2max(40, "male")).toBeCloseTo((42.4 + 37.8) / 2, 10);
+    expect(referenceVo2max(20, "male")).toBeCloseTo(48.0, 10);
+  });
+
+  it("keeps falling after 75 with the 65 → 75 slope, floored at 15 (FRIEND has no 80+ row)", () => {
+    expect(referenceVo2max(75, "female")).toBeCloseTo(18.3, 10);
+    expect(referenceVo2max(85, "female")).toBeCloseTo(18.3 + ((18.3 - 20.0) / 10) * 10, 10);
+    expect(referenceVo2max(110, "female")).toBe(15);
   });
 });

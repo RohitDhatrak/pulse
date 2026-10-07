@@ -328,7 +328,7 @@ export type HealthspanVM = {
   asOf: string;
   nextUpdateInDays: number;
   age: number;
-  result: Metric<{ pulseAge: number; deltaYears: number; pace: number; paceProvisional: boolean; vo2maxSource: "run" | "daily" | null }>;
+  result: Metric<{ pulseAge: number; deltaYears: number; pace: number; paceProvisional: boolean; vo2maxSource: "run" | "daily" | "blend" | null }>;
   insight: { title: string; body: string } | null;
   /** Pulse Age at each week end. */
   history: DayPoint[];

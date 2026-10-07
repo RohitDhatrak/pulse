@@ -1,5 +1,6 @@
 // Display heart-rate zones and time-in-zone: five zones on heart-rate reserve (Karvonen), the same 50/60/70/80/90%
-// edges as Strain's Edwards zones (strain.ts) and as WHOOP. A zone's lower bound in bpm is
+// edges as Strain's Edwards zones (strain.ts). WHOOP's zones 2–5 share these edges, but its zone 1 starts at 40%
+// (its Healthspan white paper), not 50%. A zone's lower bound in bpm is
 // resting + share × (max − resting). Time-in-zone ports noop's HrZones.kt.
 import type { HrSample } from "./types";
 
@@ -23,7 +24,7 @@ export interface HrZoneSet {
 export interface TimeInZone {
   /** Seconds per zone (seconds[0] is Zone 1). */
   seconds: number[];
-  /** Below Zone 1 (under 50% of reserve): WHOOP's "Zone 0". */
+  /** Below Zone 1 (under 50% of reserve). */
   belowZone1: number;
 }
 

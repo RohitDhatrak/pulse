@@ -1,10 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../db";
-import { dailyMetrics, dailyValues, healthRecords } from "../db/schema";
+import { dailyMetrics, dailyScores, dailyValues, healthRecords } from "../db/schema";
 import { SEED_DAYS } from "../sources/seed/scenario";
 import { copyDb, ctxFor, dayAt, seeded, USER } from "../testing";
-import { getMonitor } from "./health";
+import { getHealthspan, getMonitor, vo2maxCaption } from "./health";
 
 let db: Db;
 beforeAll(async () => {
@@ -62,5 +62,42 @@ describe("getMonitor measurements", () => {
     expect(m[3].average).toBeNull();
     const before = (await getMonitor(dayAt(160), ctxFor(db2))).measurements[2];
     expect(before.metric).toMatchObject({ value: null, reason: "no_data" });
+  });
+});
+
+describe("getHealthspan (SCORING_VERSION 19)", () => {
+  it("vo2maxCaption: daily half weight, runs only, or a blend with the run count", () => {
+    expect(vo2maxCaption("daily", 0)).toBe("Estimated: counts half");
+    expect(vo2maxCaption("run", 1)).toBe("From 1 run");
+    expect(vo2maxCaption("blend", 12)).toBe("From 12 runs and daily estimates");
+  });
+
+  it("on the seed: VO2max is a blend of the weekly runs and daily estimates; strength is logged", async () => {
+    const vm = await getHealthspan(today, ctxFor(db));
+    expect(vm.result.value).not.toBeNull();
+    const vo2 = vm.contributors.find((c) => c.key === "vo2max")!;
+    expect(vo2.caption).toMatch(/^From \d+ runs and daily estimates$/);
+    expect(vm.contributors.find((c) => c.key === "strength")!.caption).toBeUndefined();
+  });
+
+  it("strength never logged reads 'Not logged', not as a shortfall", async () => {
+    const copy = await copyDb(db);
+    const shown = (await getHealthspan(today, ctxFor(copy))).asOf;
+    const [row] = await copy.select({ h: dailyScores.healthspan }).from(dailyScores).where(and(eq(dailyScores.userId, USER), eq(dailyScores.day, shown)));
+    const h = row.h as { contributions: { key: string; years: number; unlogged?: boolean; value: number }[] };
+    const s = h.contributions.find((c) => c.key === "strength")!;
+    Object.assign(s, { unlogged: true, years: 0, value: 0 });
+    await copy.update(dailyScores).set({ healthspan: h }).where(and(eq(dailyScores.userId, USER), eq(dailyScores.day, shown)));
+    const c = (await getHealthspan(today, ctxFor(copy))).contributors.find((x) => x.key === "strength")!;
+    expect(c.caption).toBe("Not logged: log strength workouts in Fitbit to count them.");
+    expect(c.years).toBe(0);
+  });
+
+  it("in the first two weeks it is calibrating, counting down the activity days left", async () => {
+    const vm = await getHealthspan(dayAt(3), ctxFor(db));
+    const [row] = await db.select({ h: dailyScores.healthspan }).from(dailyScores).where(and(eq(dailyScores.userId, USER), eq(dailyScores.day, vm.asOf)));
+    const h = row.h as { reason: string; activityDays: number };
+    expect(h.reason).toBe("calibrating");
+    expect(vm.result).toMatchObject({ value: null, reason: "calibrating", nightsLeft: Math.max(1, 14 - h.activityDays) });
   });
 });

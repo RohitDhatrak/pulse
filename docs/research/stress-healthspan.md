@@ -113,7 +113,7 @@ flowchart TB
 
 - The percentile is interpolated between the FRIEND 2015 treadmill columns (5, 10, 25, 50, 75, 90, 95) in the person's decade row, and clamped to 5–95.
 - The category comes from the percentile: Poor < 20, Fair 20–39, Good 40–59, Excellent 60–79, Superior ≥ 80.
-- `referenceVo2max` gives Healthspan its reference: the 75th-percentile column, interpolated between decade midpoints.
+- `referenceVo2max` gives Healthspan its reference: the 75th-percentile column, interpolated between decade midpoints. *Since scoring version 19:* the median column, continued past 75 (see `docs/algorithms/healthspan.md`).
 
 ### Health Monitor (`healthMonitor.ts`)
 

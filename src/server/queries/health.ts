@@ -1,5 +1,5 @@
 // Health hub and its four detail screens (spec §7.6–7.10).
-import type { HealthspanContribution } from "@/core/algorithms/healthspan";
+import { type HealthspanContribution, healthspanConfig } from "@/core/algorithms/healthspan";
 import { minChronic } from "@/core/scoring/readiness";
 import { standardConfig } from "@/core/scoring/trainingLoad";
 import { acwrTone } from "@/lib/bands";
@@ -200,6 +200,13 @@ const HS_META: Record<string, Omit<HealthspanContributor, "metric" | "target" | 
 const HS_ORDER = ["sleepHours", "sri", "zone13", "zone45", "strength", "steps", "vo2max", "restingHr", "leanMass"];
 
 /** Healthspan `/health/healthspan` for the ISO week containing `day` (spec §7.7). Updated weekly. */
+/** VO2max's source line (version 19 blends run readings with daily estimates by count). */
+export function vo2maxCaption(source: "run" | "daily" | "blend", runs: number): string {
+  if (source === "daily") return "Estimated: counts half";
+  const n = `${runs} ${runs === 1 ? "run" : "runs"}`;
+  return source === "run" ? `From ${n}` : `From ${n} and daily estimates`;
+}
+
 export async function getHealthspan(day: string, ctx: QueryCtx): Promise<HealthspanVM> {
   const today = todayOf(ctx);
   const [weekStart, weekEnd] = weekOf(day);
@@ -212,7 +219,8 @@ export async function getHealthspan(day: string, ctx: QueryCtx): Promise<Healths
 
   let result: HealthspanVM["result"];
   if (!hs) result = none("no_data");
-  else if (hs.reason !== null) result = none("calibrating", Math.max(1, 20 - hs.dataDays));
+  // Pulse Age needs 14 days of activity data (version 19); older rows only carry dataDays.
+  else if (hs.reason !== null) result = none("calibrating", Math.max(1, hs.activityDays != null ? healthspanConfig.minActivityDays - hs.activityDays : 20 - hs.dataDays));
   else result = ok({ pulseAge: hs.pulseAge, deltaYears: hs.deltaYears, pace: hs.paceOfAging, paceProvisional: hs.paceProvisional, vo2maxSource: hs.vo2maxSource }, hs.provisional);
 
   const contributions = hs && hs.reason === null ? hs.contributions : [];
@@ -226,10 +234,10 @@ export async function getHealthspan(day: string, ctx: QueryCtx): Promise<Healths
     const measured = c && !c.estimated ? c : undefined;
     const caption =
       key === "vo2max" && measured && hs?.reason === null && hs.vo2maxSource
-        ? hs.vo2maxSource === "run"
-          ? "From runs"
-          : "Estimated: counts half"
-        : key === "leanMass" && !measured
+        ? vo2maxCaption(hs.vo2maxSource, hs.vo2maxRuns ?? 0)
+        : c?.unlogged
+          ? "Not logged: log strength workouts in Fitbit to count them."
+          : key === "leanMass" && !measured
           ? "Not measured: counted as typical for your age. Add weight and body fat in Fitbit."
           : c?.estimated
             ? "Not measured: counted as typical for your age."

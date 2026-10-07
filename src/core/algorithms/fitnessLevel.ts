@@ -49,8 +49,13 @@ export const FRIEND_TREADMILL: Record<Sex, readonly (readonly number[])[]> = {
 export const fitnessLevelConfig = {
   /** Lowest percentile of each category (*tunable*); below `fair` is poor. */
   categoryFloors: { fair: 20, good: 40, excellent: 60, superior: 80 },
-  /** Healthspan's VO2max reference (*tunable*); must be one of FRIEND_PERCENTILES. */
-  referencePercentile: 75,
+  /**
+   * Healthspan's VO2max reference (*tunable*); must be one of FRIEND_PERCENTILES. The median since scoring version
+   * 19 ("meets guidelines"; it was the 75th percentile, a fit person).
+   */
+  referencePercentile: 50,
+  /** Floor of the extended reference past 75, mL/kg/min. */
+  minVo2max: 15,
 };
 
 export type FitnessCategory = "poor" | "fair" | "good" | "excellent" | "superior";
@@ -83,10 +88,21 @@ export function fitnessLevel(vo2max: number, age: number, sex: Sex): { percentil
 
 /**
  * The reference-percentile VO2max for an age, linear between decade midpoints (25, 35 … 75) so that
- * Healthspan's Pulse Age does not jump on a decade birthday.
+ * Healthspan's Pulse Age does not jump on a decade birthday, and extended past 75 (`vo2maxAtPercentileExtended`).
  */
 export function referenceVo2max(age: number, sex: Sex): number {
-  return vo2maxAtPercentile(age, sex, fitnessLevelConfig.referencePercentile);
+  return vo2maxAtPercentileExtended(age, sex, fitnessLevelConfig.referencePercentile);
+}
+
+/**
+ * `vo2maxAtPercentile`, continued past 75 with the 65 → 75 slope and floored at `minVo2max` (scoring version 19).
+ * FRIEND has no row above 70–79, so the plain lookup froze an 85-year-old's reference at the 70s value.
+ */
+export function vo2maxAtPercentileExtended(age: number, sex: Sex, percentile: number): number {
+  const at75 = vo2maxAtPercentile(75, sex, percentile);
+  if (age <= 75) return vo2maxAtPercentile(age, sex, percentile);
+  const slope = (at75 - vo2maxAtPercentile(65, sex, percentile)) / 10;
+  return Math.max(fitnessLevelConfig.minVo2max, at75 + slope * (age - 75));
 }
 
 /** The FRIEND VO2max at one of FRIEND_PERCENTILES for an age, linear between decade midpoints (25, 35 … 75). */

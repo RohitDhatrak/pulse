@@ -250,23 +250,23 @@ export const SCORE_DOCS: ScoreDoc[] = [
     sections: [
       {
         title: "What goes in",
-        paragraphs: ["Nine habits and vitals, averaged over 6\u00a0months, each against a reference: a fit person of your age and sex."],
+        paragraphs: ["Nine habits and vitals, averaged over 6\u00a0months, each against a reference: a person of your age and sex who meets health guidelines."],
         rows: [
-          { term: "VO2 max", detail: "From runs in the last 90\u00a0days, else Fitbit’s daily estimate at half weight. Reference: your age’s 75th percentile." },
-          { term: "Resting heart rate", detail: "Fitbit’s daily value from Google. Reference 60\u00a0bpm." },
-          { term: "Steps", detail: "Reference and cap: 10,000 a day under 60, 8,000 from 60." },
-          { term: "Sleep hours", detail: "Reference 7.5\u00a0hours; 7 to 8\u00a0scores the same." },
-          { term: "Sleep consistency", detail: "Reference 86.3." },
-          { term: "Heart rate zones 1-3", detail: "Daily time at 50-80% of your heart-rate reserve. Reference 150\u00a0minutes a week." },
-          { term: "Heart rate zones 4-5", detail: "Daily time at 80% of your heart-rate reserve and above. Reference 75\u00a0minutes a week." },
-          { term: "Strength activity", detail: "Reference 40\u00a0minutes a week." },
+          { term: "VO2 max", detail: "Fitbit’s daily estimate at half weight; each run’s VO2 max pulls it toward the run value and adds weight, so many runs count almost fully. Reference: the median for your age and sex." },
+          { term: "Resting heart rate", detail: "Fitbit’s daily value from Google. Reference 60\u00a0bpm for men, 64 for women." },
+          { term: "Steps", detail: "Reference 8,000 a day, more steps count up to 10,000. From 55 to 65 both ease down by 2,000." },
+          { term: "Sleep hours", detail: "Reference 7.5\u00a0hours; 7\u00a0hours or more scores the same. Short sleep adds years; long sleep doesn’t." },
+          { term: "Sleep consistency", detail: "Reference 81, the median in a large UK study." },
+          { term: "Heart rate zones 1-3", detail: "Time at 50-80% of your heart-rate reserve, on days you wore Pulse at least 10\u00a0hours awake. Reference 100\u00a0minutes a week." },
+          { term: "Heart rate zones 4-5", detail: "Time at 80% of your heart-rate reserve and above, on the same days. Reference 15\u00a0minutes a week." },
+          { term: "Strength activity", detail: "Logged strength workouts. Reference 40\u00a0minutes a week; more adds nothing. With none logged in 6\u00a0months it doesn’t count either way." },
           { term: "Lean body mass", detail: "Fat-free mass for your height. Needs weight, body fat and height; without them it counts as typical for your age." },
         ],
       },
       {
         title: "How it is weighted",
         paragraphs: [
-          "Each input maps to a change in mortality risk from a published study. The changes are added, shrunk by 25% for overlap, and turned into years on the rule that mortality risk doubles about every 8\u00a0years. A missing input counts as a typical person of your age and sex. Steps and time in zones 1-3 both measure how active you are, so when both fall short only the larger shortfall counts. A resting heart rate of 70\u00a0bpm, all else at reference, adds about 0.75\u00a0years.",
+          "Each input maps to a change in mortality risk from a published study. The changes are added, shrunk by 25% for overlap, and turned into years on the rule that mortality risk doubles about every 8\u00a0years. Activity is scored week by week (every 7-day stretch) and averaged, so a few inactive weeks show up straight away. A missing input counts as a typical person of your age and sex. Steps and time in zones 1-3 both measure how active you are, so when both fall short only the larger shortfall counts. A resting heart rate of 70\u00a0bpm, all else at reference, adds about 0.75\u00a0years.",
           "Pace of Aging repeats this for your last 30\u00a0days: 1 + (30-day years − 6-month years) ÷ 5.",
         ],
       },
@@ -274,7 +274,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
         title: "What the bands mean",
         rows: [
           { term: "Younger than your age", detail: "Your inputs beat the reference on balance." },
-          { term: "Older than your age", detail: "They fall short. The reference is fit, so many people start here." },
+          { term: "Older than your age", detail: "They fall short of the guidelines on balance. Most people start a few years older." },
           { term: "Pace below 1.0x", detail: "Your last 30\u00a0days look younger than your 6\u00a0months." },
           { term: "Pace above 1.0x", detail: "They look older. Pace runs from −1.0x to 3.0x." },
         ],
@@ -282,7 +282,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "Time in zones is counted by Pulse from your heart rate, on the same five zones as Strain. Pulse Age needs 5 of the 9 inputs, is Provisional until 20\u00a0days have data, stays within 15\u00a0years of your age and updates weekly. Pace of Aging is provisional until your data spans 6\u00a0months. Both rest on population studies, not a clinical test of your body.",
+          "Time in zones is counted by Pulse from your heart rate, on the same five zones as Strain. Pulse Age appears after 14\u00a0days with activity data, needs 5 of the 9 inputs, is Provisional until 20\u00a0days have data, stays within 15\u00a0years of your age and updates weekly. Pace of Aging is provisional until your data spans 6\u00a0months. Both rest on population studies, not a clinical test of your body.",
         ],
       },
     ],
@@ -442,7 +442,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "Fitbit’s VO2 max is an estimate, while the table is lab-measured, so treat the percentile as approximate. The 2015 table runs 1.5-4.6\u00a0ml/kg/min higher than its 2022 update, so you may place a little low. The same table’s 75th percentile is the VO2 max reference in Pulse Age.",
+          "Fitbit’s VO2 max is an estimate, while the table is lab-measured, so treat the percentile as approximate. The 2015 table runs 1.5-4.6\u00a0ml/kg/min higher than its 2022 update, so you may place a little low. The same table’s median is the VO2 max reference in Pulse Age.",
         ],
       },
     ],

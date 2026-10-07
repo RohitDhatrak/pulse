@@ -2,7 +2,7 @@
 
 Code: `src/core/algorithms/fitnessLevel.ts`. Tests: `fitnessLevel.test.ts`.
 
-Fitness level places a VO2max value among people of the same sex and age decade, using the FRIEND registry's measured treadmill VO2max. The percentile maps to one of five categories. The same table supplies the 75th-percentile VO2max that Healthspan scores against.
+Fitness level places a VO2max value among people of the same sex and age decade, using the FRIEND registry's measured treadmill VO2max. The percentile maps to one of five categories. The same table supplies the median (50th-percentile) VO2max that Healthspan scores against (the 75th before scoring version 19).
 
 ## Formula
 
@@ -19,7 +19,7 @@ Fitness level places a VO2max value among people of the same sex and age decade,
    | Superior | ≥ 80 |
 
    The bands are half-open, so 39.9 is Fair and 40 is Good.
-4. **The Healthspan reference**, `referenceVo2max(age, sex)`, is the 75th-percentile column, linear between decade midpoints (25, 35 … 75) and flat outside them. A decade step would make Pulse Age jump by about 1.5 years on a decade birthday. Fitness level itself keeps the published decade rows. Near a decade edge, someone exactly at the Healthspan reference can therefore show a percentile a few points off 75.
+4. **The Healthspan reference**, `referenceVo2max(age, sex)`, is the 50th-percentile column (since scoring version 19; it was the 75th, see `healthspan.md`), linear between decade midpoints (25, 35 … 75), flat below 25, and past 75 continued with the 65 → 75 slope down to a floor of 15 mL/kg/min (`vo2maxAtPercentileExtended`; FRIEND has no row above 70–79). A decade step would make Pulse Age jump by about 1.5 years on a decade birthday. Fitness level itself keeps the published decade rows. Near a decade edge, someone exactly at the Healthspan reference can therefore show a percentile a few points off 50.
 
 ## Inputs
 
@@ -68,7 +68,7 @@ This is Kaminsky et al. 2015, Table 2, "Men/Women from FRIEND": 7,783 maximal tr
 1. **A man of 35 with VO2max 45.** The 30–39 row has 42.4 at the 50th and 49.2 at the 75th, so the percentile is 50 + 25 × (45 − 42.4) / (49.2 − 42.4) = **59.6**, which is Good.
 2. **A woman of 52 with VO2max 30.** The 50–59 row has 27.6 at the 75th and 32.0 at the 90th, so the percentile is 75 + 15 × 2.4 / 4.4 = **83.2**, which is Superior.
 3. **A woman of 45 with VO2max 16.** This is below the 5th column (17.0), so the percentile is **5** (clamped), which is Poor.
-4. **The Healthspan reference for a man of 38** is 49.2 + (45.0 − 49.2) × 3 / 10 = **47.9**. At exactly 35 it is 49.2.
+4. **The Healthspan reference for a man of 38** is 42.4 + (37.8 − 42.4) × 3 / 10 = **41.0**. At exactly 35 it is 42.4. For a woman of 85 it is 18.3 + (18.3 − 20.0) × 10 / 10 = **16.6**.
 
 ## Sources
 

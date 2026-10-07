@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { type Db, rows, sql } from "../db";
 import {
   type HealthMonitorRow,
+  type HealthspanRow,
   type JournalImpactRow,
   lastRun,
   needsRecompute,
@@ -12,6 +13,8 @@ import {
   type Stage1Day,
   type StrainTargetRow,
 } from ".";
+import { healthspanWornAwakeMin } from "./scores";
+import { healthspanConfig } from "@/core/algorithms/healthspan";
 import { journalImpactConfig } from "@/core/algorithms/journalImpact";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
 import { personalizedNeedHours } from "@/core/scoring/sleep";
@@ -20,6 +23,7 @@ import { load } from "./data";
 import { stage1 } from "./stage1";
 import { seedPull } from "../sources/seed/generate";
 import { copyDb, DAY_S, dayAt, dump, freshDb, NOW, OPTS, seeded, TZ, PROFILE, USER } from "../testing";
+import { addDays, localMidnight } from "../time";
 
 const COLS = new Set(["strain", "recovery", "sleep", "training_load", "strain_target", "health_monitor", "journal_impact"]);
 const json = async <T>(db: Db, col: string, day: string) => {
@@ -427,5 +431,65 @@ describe("Google's inputs first (docs/research/google-vs-pulse-metrics.md)", () 
     const sd = metric(d, "temp_sd_c") as number;
     expect(by.skinTempDev).toMatchObject({ rangeSource: "google", range: { low: -2 * sd, high: 2 * sd } });
     expect(by.resp.rangeSource).toBe("pulse");
+  });
+});
+
+describe("Pulse Age on the seed (SCORING_VERSION 19)", () => {
+  type Hs = HealthspanRow;
+  type S1 = { hrMinutesAm: number; hrMinutesPm: number };
+
+  it("no result before 14 days of activity data; the calibrating rows count them", () => {
+    const first = allDays.findIndex((d) => js<Hs>("healthspan", d).reason === null);
+    expect(first).toBe(healthspanConfig.minActivityDays - 1);
+    for (const d of allDays.slice(0, first)) {
+      const h = js<Hs>("healthspan", d);
+      expect(h).toMatchObject({ reason: "calibrating" });
+      expect((h as { activityDays: number }).activityDays).toBe(allDays.indexOf(d) + 1);
+    }
+  });
+
+  it("days worn under 10 h while awake are not activity days (the band-off days and today so far)", async () => {
+    // Awake wear = minutes with heart rate − minutes of sleep sessions inside the day, as the pipeline counts it.
+    const sessions = await rows<{ s: number; e: number }>(db, sql`select start_ts s, end_ts e from sleep_sessions where user_id = ${USER}`);
+    const awake = (d: string) => {
+      const lo = localMidnight(d, TZ);
+      const hi = localMidnight(addDays(d, 1), TZ);
+      const asleep = sessions.filter((x) => Number(x.e) > lo && Number(x.s) < hi).reduce((a, x) => a + (Math.min(Number(x.e), hi) - Math.max(Number(x.s), lo)) / 60, 0);
+      const s1 = js<S1>("strain", d);
+      return s1.hrMinutesAm + s1.hrMinutesPm - asleep;
+    };
+    const light = allDays.filter((d) => awake(d) < healthspanWornAwakeMin);
+    expect(light.length).toBeGreaterThanOrEqual(3); // the three band-off days, and today in progress
+    // Every day worn around the clock passes, however long its sleep.
+    const allDay = allDays.filter((d) => js<S1>("strain", d).hrMinutesAm + js<S1>("strain", d).hrMinutesPm >= 1400);
+    expect(allDay.length).toBeGreaterThan(170);
+    expect(allDay.filter((d) => light.includes(d))).toEqual([]);
+    for (const d of allDays) {
+      const h = js<Hs>("healthspan", d);
+      const window = allDays.filter((x) => x <= d && x > addDays(d, -180));
+      const expected = window.filter((x) => !light.includes(x)).length;
+      expect(h.reason === null ? h.activityDays : (h as { activityDays: number }).activityDays).toBe(expected);
+    }
+  });
+
+  it("after the gate the score is stable: no day-to-day move above 0.6 years, and Pace stays in [−1, 3]", () => {
+    let prev: number | null = null;
+    for (const d of allDays) {
+      const h = js<Hs>("healthspan", d);
+      if (h.reason !== null) continue;
+      if (prev != null) expect(Math.abs(h.deltaYears - prev)).toBeLessThan(0.6);
+      expect(h.paceOfAging).toBeGreaterThanOrEqual(-1);
+      expect(h.paceOfAging).toBeLessThanOrEqual(3);
+      prev = h.deltaYears;
+    }
+  });
+
+  it("the demo user (active, logs strength, a weekly run) scores younger against the guidelines reference", () => {
+    const h = js<Hs>("healthspan", allDays.at(-1)!);
+    if (h.reason !== null) throw new Error("no result");
+    expect(h.deltaYears).toBeLessThan(0);
+    expect(h.vo2maxSource).toBe("blend");
+    expect(h.vo2maxRuns).toBeGreaterThan(0);
+    expect(h.contributions.find((c) => c.key === "strength")!.unlogged).toBeUndefined();
   });
 });

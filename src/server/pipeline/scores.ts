@@ -15,7 +15,7 @@ import type { BaselineState } from "@/core/scoring/types";
 import { energyBank, energyBankConfig } from "@/core/algorithms/energyBank";
 import { fitnessLevel } from "@/core/algorithms/fitnessLevel";
 import { healthMonitor, healthMonitorConfig, type HealthMonitorDay, type VitalKey } from "@/core/algorithms/healthMonitor";
-import { healthspan, STRENGTH_TYPES, type HealthspanDay } from "@/core/algorithms/healthspan";
+import { healthspan, healthspanConfig, STRENGTH_TYPES, type HealthspanDay } from "@/core/algorithms/healthspan";
 import type { OutcomeDay } from "@/core/algorithms/journalImpact";
 import type { ReportDay } from "@/core/algorithms/reports";
 import { sleepPlan, type SleepPlan } from "@/core/algorithms/sleepPlanner";
@@ -23,7 +23,7 @@ import { sleepRegularityIndex, sriConsistency, sriDisplay } from "@/core/algorit
 import { strainTarget } from "@/core/algorithms/strainTarget";
 import { typicalSession } from "@/core/scoring/load";
 import { stress } from "@/core/algorithms/stress";
-import { type Data, r1, round, type Segment, type Session } from "./data";
+import { type Data, r1, round, type Segment, type Session, touching } from "./data";
 import type {
   BaselineSummary,
   EnergyBankRow,
@@ -506,19 +506,35 @@ function googleRanges(d: Day): Partial<Record<VitalKey, { low: number; high: num
 
 // ── Healthspan ───────────────────────────────────────────────────────────────
 
+/** Hours of awake wear a day needs before its zone and strength minutes count for Pulse Age (version 19). */
+export const healthspanWornAwakeMin = 600;
+
+/**
+ * Minutes with heart rate that day outside sleep sessions. A band worn only for sleep has a few minutes or none, so
+ * its "0 exercise" is not measured.
+ */
+export function awakeWornMin(data: Data, d: Day): number {
+  const asleep = touching(data.sessions, d.start, d.end).reduce((a, s) => a + (Math.min(s.endTs, d.end) - Math.max(s.startTs, d.start)) / 60, 0);
+  return Math.max(0, d.s1.hrMinutesAm + d.s1.hrMinutesPm - asleep);
+}
+
 export function scoreHealthspan(data: Data, f: Fold, d: Day, sleep: SleepRow, opts: PipelineOptions): HealthspanRow {
-  const { day, dm, main, worn, s1 } = d;
+  const { day, dm, main, s1 } = d;
   const strengthMin = (data.exercisesByDay.get(day) ?? [])
     .filter((e) => STRENGTH_TYPES.test(e.type))
     .reduce((a, e) => a + (e.endTs - e.startTs) / 60, 0);
+  // Zone and strength minutes are measured only on a day mostly worn while awake (version 19). Any heart rate used to
+  // do, so a night-only day read as "no exercise" and added up to 2 years.
+  const active = awakeWornMin(data, d) >= healthspanWornAwakeMin;
   f.hsRows.push({
     day,
     sleepHours: main ? main.asleepMin / 60 : null,
     sri: sleep.sri,
     // Time in Pulse's own zones (heart-rate reserve, as Strain and the zone charts count them): zones 1-3, zones 4-5.
-    zone13Min: worn ? (s1.zoneSeconds[0] + s1.zoneSeconds[1] + s1.zoneSeconds[2]) / 60 : null,
-    zone45Min: worn ? (s1.zoneSeconds[3] + s1.zoneSeconds[4]) / 60 : null,
-    strengthMin: worn ? strengthMin : null,
+    zone13Min: active ? (s1.zoneSeconds[0] + s1.zoneSeconds[1] + s1.zoneSeconds[2]) / 60 : null,
+    zone45Min: active ? (s1.zoneSeconds[3] + s1.zoneSeconds[4]) / 60 : null,
+    // A logged strength workout counts even on a lightly worn day; otherwise 0 only on an active day.
+    strengthMin: strengthMin > 0 ? strengthMin : active ? 0 : null,
     steps: dm?.steps ?? null,
     vo2maxRun: dm?.vo2maxRun ?? null,
     vo2maxDaily: dm?.vo2maxDaily ?? null,
@@ -527,9 +543,14 @@ export function scoreHealthspan(data: Data, f: Fold, d: Day, sleep: SleepRow, op
     bodyFatPct: dm?.bodyFatPct ?? null,
   });
   const hs = healthspan(f.hsRows, { age: d.age.years, sex: opts.profile.sex, heightCm: opts.profile.heightCm ?? null }, day);
-  return hs
-    ? { reason: null, age: d.age.years, ...hs }
-    : { reason: "calibrating", dataDays: f.hsRows.filter((r) => Object.entries(r).some(([k, v]) => k !== "day" && v != null)).length };
+  if (hs) return { reason: null, age: d.age.years, ...hs };
+  const from = addDays(day, -(healthspanConfig.ageWindowDays - 1));
+  const recent = f.hsRows.filter((r) => r.day >= from);
+  return {
+    reason: "calibrating",
+    dataDays: recent.filter((r) => Object.entries(r).some(([k, v]) => k !== "day" && v != null)).length,
+    activityDays: recent.filter((r) => r.zone13Min != null).length,
+  };
 }
 
 // ── Fitness level: latest run VO2max in 90 days, else the latest daily value ──
