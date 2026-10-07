@@ -40,6 +40,7 @@ flowchart TB
      - E −= k₀, the basal drain of being awake.
      - E −= k₁ × w(m), where w(m) is the Edwards zone weight, 0–5, of the minute's mean HR (`strain.zoneWeight`, by Karvonen %HRR).
      - If the minute's stress is ≥ 2, E −= k₂. If it is < 1 (calm and still), E += k₃. Medium stress and unscored minutes change nothing.
+     - Since stress scoring version 13 ([stress](stress.md)), a "high" minute must be part of 2 or more in a row and is judged against your usual still level, so calm days drain less. In simulation, a calm desk day with everyday heart-rate changes ended at 30 instead of 25 (no stress drain at all: 36); on the demo data 96 of 170 days end inside 15–40.
    - Clamp E to [0, 100].
 3. **Curve.** `curve[m]` is E at the end of minute *m*, and is `null` before wake and from `until` on. `current` is the last computed level.
 4. **Drains.** Every k₁ or k₂ deduction is attributed to an episode:

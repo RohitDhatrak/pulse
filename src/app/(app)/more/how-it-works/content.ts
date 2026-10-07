@@ -290,7 +290,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
   {
     slug: "stress",
     name: "Stress Monitor",
-    summary: "How far your heart rate sits above your calm level, from 0 to 3.",
+    summary: "How far your heart rate sits above your usual still level, from 0 to 3.",
     href: "/health/stress",
     sections: [
       {
@@ -299,30 +299,30 @@ export const SCORE_DOCS: ScoreDoc[] = [
           { term: "Minute heart rate", detail: "The average heart rate of each minute." },
           { term: "Steps", detail: "Only still minutes count: no steps in that minute or the 2 either side." },
           { term: "Workouts and sleep", detail: "Minutes inside them are left out." },
-          { term: "Your calm baseline", detail: "Your resting daytime heart rate, from earlier days." },
+          { term: "Your usual still level", detail: "The typical heart rate of your still minutes, from earlier days." },
         ],
         paragraphs: [
-          "Each day’s calm heart rate is the 10th percentile of its hourly averages between 06:00 and 22:00, using hours with at least 15 still minutes. It feeds the next day’s baseline.",
+          "Each day’s still level is the median heart rate of its still minutes between 06:00 and 22:00 (at least 60 of them). It feeds the next day’s baseline.",
         ],
       },
       {
         title: "How it is weighted",
         paragraphs: [
-          "Each still minute’s distance above your baseline is measured in your usual spread, never less than 3.76\u00a0bpm, and mapped onto 0 to 3 on an S-shaped curve. At your baseline it reads 0.3, 1.5 spreads above reads 1.5, and 3 spreads above reads 2.7. Today Pulse shows the latest scored minute; past days show the day’s average.",
+          "Each still minute’s distance above your usual still level is measured in your usual spread, never less than 3.76\u00a0bpm, and mapped onto 0 to 3 on an S-shaped curve. At your usual level it reads 0.4, 1.5 spreads above reads 1.8, and 3 spreads above reads 2.8. A single high minute counts as medium: high needs 2 minutes in a row. Today Pulse shows the latest scored minute; past days show the day’s average.",
         ],
       },
       {
         title: "What the bands mean",
         rows: [
           { term: "0-0.9", detail: "Low: calm." },
-          { term: "1.0-1.9", detail: "Medium: heart rate above your calm level." },
-          { term: "2.0-3.0", detail: "High: well above your calm level while you are still." },
+          { term: "1.0-1.9", detail: "Medium: heart rate above your usual still level." },
+          { term: "2.0-3.0", detail: "High: well above your usual still level for at least 2 minutes while you are still. Stress does this, but so can standing still, talking, a meal or caffeine." },
         ],
       },
       {
         title: "Limits",
         paragraphs: [
-          "Stress is Provisional until 4\u00a0days have set your baseline; until then it uses a fixed spread of 7.65\u00a0bpm, so 15\u00a0bpm above your calm level reads 2.0. It reads heart rate alone, so caffeine, heat, illness or recovering from exercise raise it too. It is not a measure of how you feel.",
+          "Stress is Provisional until 4\u00a0days have set your baseline; until then it uses a fixed spread of 7.65\u00a0bpm and today’s own still level, so 13\u00a0bpm above it reads 2.0. It reads heart rate alone, so standing still, talking, meals, caffeine, heat, illness or recovering from exercise raise it too. It is not a measure of how you feel.",
         ],
       },
     ],

@@ -274,6 +274,30 @@ describe("forecast strain nudge on the seed (SCORING_VERSION 12)", () => {
     expect(withTerm / n).toBeLessThanOrEqual(withoutTerm / n + 0.1);
   });
 });
+describe("stress on the seed (SCORING_VERSION 13)", () => {
+  it("stored stress minutes never hold a lone high minute, and the counts match the minutes", async () => {
+    const series = await rows<{ day: string; data: (number | null)[] }>(
+      db,
+      sql`select day, data from intraday_series where user_id = ${USER} and kind = 'stress' order by day`,
+    );
+    expect(series.length).toBeGreaterThan(150);
+    // The series is stored to 2 dp, so a minute at exactly 2.00 may be a medium minute rounded up (1.995–1.999).
+    const ambiguous = (v: number | null) => v === 2;
+    for (const { day, data } of series) {
+      for (let m = 0; m < data.length; m++) {
+        const hi = (i: number) => data[i] != null && data[i]! >= 2;
+        if (hi(m) && !ambiguous(data[m])) expect(hi(m - 1) || hi(m + 1), `${day} minute ${m}`).toBe(true);
+      }
+      const row = js<{ highMin: number } | null>("stress", day);
+      if (row && "highMin" in row) {
+        const sure = data.filter((v) => v != null && v > 2).length;
+        expect(row.highMin).toBeGreaterThanOrEqual(sure);
+        expect(row.highMin).toBeLessThanOrEqual(sure + data.filter(ambiguous).length);
+      }
+    }
+  });
+});
+
 describe("recovery gating on the seed", () => {
   it("days 1–7 calibrate with the nights left, and day 8 is the first score", () => {
     for (let i = 0; i < 7; i++) {

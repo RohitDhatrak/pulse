@@ -26,7 +26,7 @@ const INFO = {
   title: "About Stress Monitor",
   body: (
     <>
-      <p>Stress Monitor scores how activated your body is, from 0 to 3, by comparing your heart rate with your daytime resting baseline.</p>
+      <p>Stress Monitor scores how activated your body is, from 0 to 3, by comparing your heart rate with your usual still level. High means it stayed well above that for at least 2 minutes: stress does this, but so can standing still, talking, a meal or caffeine.</p>
       <ul className="space-y-2">
         {LEVELS.map((l) => (
           <li key={l.swatch} className="flex items-start gap-3">

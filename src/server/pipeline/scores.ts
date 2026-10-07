@@ -68,7 +68,8 @@ export const newFold = () => ({
   hsRows: [] as HealthspanDay[],
   outcomes: [] as OutcomeDay[],
   recoveries: [] as number[],
-  aggregates: [] as (number | null)[],
+  /** Each prior day's median still-minute HR (stress().stillMedianHr), oldest first. */
+  stillMedians: [] as (number | null)[],
   reportRows: [] as ReportDay[],
   wakeNights: [] as { day: string; wakeMin: number; efficiency: number | null }[],
   prevAcwr: null as number | null,
@@ -364,12 +365,11 @@ export const forecastOf = (f: Fold, d: Day, rec: RecoveryRow, plan: SleepPlan, t
       })
     : null;
 
-// ── Stress (baseline from earlier days' aggregates) ──────────────────────────
+// ── Stress (baseline from earlier days' median still HR) ─────────────────────
 
 export function scoreStress(f: Fold, d: Day, inputs: Inputs) {
   const { start, end } = d;
-  const baseline = foldDaytimeBaseline(f.aggregates);
-  f.aggregates.push(d.s1.dayAggregate);
+  const baseline = foldDaytimeBaseline(f.stillMedians);
   const still = inputs.stillHr.get(d.day) ?? [];
   const st = stress({
     start,
@@ -379,6 +379,7 @@ export function scoreStress(f: Fold, d: Day, inputs: Inputs) {
     excluded: [],
     baseline,
   });
+  f.stillMedians.push(st.stillMedianHr);
   const last = st.minutes.findLastIndex((v) => v != null);
   const row: StressRow = {
     provisional: st.provisional,

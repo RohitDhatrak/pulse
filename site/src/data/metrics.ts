@@ -225,7 +225,7 @@ const META: Record<string, Meta> = {
   stress: {
     slug: "stress-monitor",
     title: "Stress Monitor: a 0-3 stress score from heart rate",
-    description: "Pulse scores each still, awake minute from 0 to 3 by how far your heart rate sits above your calm daytime level. Inputs, curve and limits.",
+    description: "Pulse scores each still, awake minute from 0 to 3 by how far your heart rate sits above your usual still level. Inputs, curve and limits.",
     keywords: ["stress score from heart rate", "stress monitor without a subscription", "fitbit air stress"],
     scale: {
       min: 0,

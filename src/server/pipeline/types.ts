@@ -31,9 +31,11 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * Strain point wide, +10 % growth per 4 weeks at most, capped at your usual session when ramping or back from a break.
  * 12: the Sleep Planner's extra sleep and the Recovery forecast's strain nudge count only the Strain points today goes
  * above your typical session (one-sided; they compared with your average day, so every rest day and every
- * not-yet-trained morning nudged the forecast +12).
+ * not-yet-trained morning nudged the forecast +12). 13: Stress against your usual still level (the folded median
+ * still-minute HR, not the calmest hour), a minute at it reads 0.4, and high needs 2 minutes in a row; the Energy
+ * Bank drains less on calm days as a result.
  */
-export const SCORING_VERSION = 12;
+export const SCORING_VERSION = 13;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
