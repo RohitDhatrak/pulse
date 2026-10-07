@@ -28,7 +28,7 @@ flowchart TB
 1. **Need tonight**, in minutes:
 
    need = baseline + strain + debt − nap, floored at 0, where:
-   - **baseline** = noop's `personalizedNeedHours` × 60. That is the upper quartile of nightly sleep, floored at the population target and capped at 9.5 h.
+   - **baseline** = `personalizedNeedHours` × 60: the median of the last 28 nights' sleep, floored at 7 h asleep for adults (9 h under 18) and capped at 9.5 h; 7.5 h before 7 nights (scoring version 15; it was the upper quartile with an 8 h floor; see [sleep-need](sleep-need.md)).
    - **strain** = min(30, 0.05 h × 60 × `strainPointsAbove(todayLoad, typicalSession)`): 3 minutes per Day Strain point that today's load (TRIMP so far) goes above your **typical training session** (`typicalSession`, the median of the training days in the 28 days before today, as Strain Target uses). Both are converted to the 0–21 scale through `trimpToStrain` and `toStrainScale`. A rest day, a routine session or a day not yet past your session adds 0; a light day never lowers the need. *Before scoring version 12* it compared with the 28-day **average** Strain, rest days included (see § Why the strain term changed).
    - **debt** = 0.2 × this morning's sleep debt in minutes (`ledger(...).magnitudeMin`), so a debt is repaid over about five nights.
    - **nap** = today's minutes asleep in naps.

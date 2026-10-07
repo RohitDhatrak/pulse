@@ -286,6 +286,32 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.stress": "8131d5344e8e2307",
     "reports": "51c0dbdcab00adac",
   },
+  // 15: sleep need = the median of the last 28 nights, floored at 7 h asleep for adults (7.5 h before 7 nights). Moved:
+  // sleep, sleep_planner, recovery (its sleep term and forecast), strain_target (via Recovery), energy_bank (its start
+  // uses sleep), journal_impact (sleepPerf outcomes), reports, plus the version stamp (and strain's key).
+  15: {
+    "daily_scores.scoring_version": "fab0c4eee005f38d",
+    "daily_scores.strain": "949599a25f26cfca",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "dcf2b7a548593f76",
+    "daily_scores.sleep": "82e3b4ff7229d2b8",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "5d4d715b649e74d4",
+    "daily_scores.sleep_planner": "1e4416c535fcefe8",
+    "daily_scores.energy_bank": "83a22e54d9b7b4c6",
+    "daily_scores.stress": "fd09fd3252ff2955",
+    "daily_scores.health_monitor": "38a813fd4cae5652",
+    "daily_scores.healthspan": "5c3f5cb9714fdee6",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "65a5dfe1a5ea5093",
+    "intraday_series.energy_bank": "0c9de58502be9667",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "c0bf14266ee71abd",
+    "intraday_series.stress": "8131d5344e8e2307",
+    "reports": "13345381397f38c3",
+  },
 };
 
 // Numbers are rounded to 10 significant digits first, so a last-ulp difference in Math between Node

@@ -68,9 +68,15 @@ export const wDuration = 0.5;
 export const wEfficiency = 0.2;
 export const wRestorative = 0.2;
 export const wConsistency = 0.1;
-export const defaultSleepNeedHours = 8.0;
+/**
+ * Need before 7 nights (SCORING_VERSION 15; was 8.0): the middle of the adult 7–8 h band. It is also the default
+ * argument of rest(), ledger() and the forecast, but the pipeline always passes a personal need.
+ */
+export const defaultSleepNeedHours = 7.5;
 /** Fewer scorable nights than this → the population default need. */
 export const minNeedNights = 7;
+/** Quantile of recent nights taken as the need (SCORING_VERSION 15; was 0.75). See docs/algorithms/sleep-need.md. */
+export const needQuantile = 0.5;
 export const maxNeedHours = 9.5;
 export const restorativeTargetShare = 0.5;
 export const deepShareTarget = 0.13;
@@ -80,18 +86,25 @@ export const NEUTRAL_CONSISTENCY = 0.5;
 
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
 
-/** Population target need for an age, used as a floor. */
+/**
+ * Population floor on the need, in hours *asleep*: 7 for adults (the lower bound of the AASM / NSF 7–9 h range;
+ * SCORING_VERSION 15, was 8, which gave every healthy 7 h sleeper 73 min of permanent debt), 9 under 18.
+ */
 export function populationNeedFloorHours(age: number | null): number {
-  if (age == null || age <= 0) return 8.0;
-  return age < 18 ? 9.0 : 8.0;
+  if (age == null || age <= 0) return 7.0;
+  return age < 18 ? 9.0 : 7.0;
 }
 
-/** Upper-quartile nightly hours, floored at the population target and capped at maxNeedHours. */
+/**
+ * The median of the recent nights (needQuantile), floored at the population target and capped at maxNeedHours.
+ * The median, not the upper quartile: the 75th percentile kept anyone whose sleep varies short of their own better
+ * nights, and let a sick or catch-up week raise the next month's need.
+ */
 export function personalizedNeedHours(nightlyHours: number[], age: number | null): number {
   const floor = populationNeedFloorHours(age);
   const xs = nightlyHours.filter((h) => h > 0.0).sort((a, b) => a - b);
   if (xs.length < minNeedNights) return Math.min(Math.max(defaultSleepNeedHours, floor), maxNeedHours);
-  const pos = 0.75 * (xs.length - 1);
+  const pos = needQuantile * (xs.length - 1);
   const lo = Math.floor(pos);
   const hi = Math.min(lo + 1, xs.length - 1);
   const q = xs[lo] + (pos - lo) * (xs[hi] - xs[lo]);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { personalizedNeedHours } from "../scoring/sleep";
 import { toStrainScale, trimpToStrain } from "../scoring/strain";
 import { isWeekendDay, sleepPlan, sleepPlannerConfig, type SleepPlannerInput, type WakeNight } from "./sleepPlanner";
 
@@ -111,5 +112,22 @@ describe("sleepPlan strain extra: against your typical session (SCORING_VERSION 
   it("a day only adds sleep once it passes your usual session, so a morning plan is not inflated", () => {
     expect([2, 5, 8].map((so) => extra(so, 118))).toEqual([0, 0, 0]);
     expect(extra(240, 118)).toBeGreaterThan(0);
+  });
+});
+
+describe("a steady 7 h sleeper's plan (SCORING_VERSION 15 sleep need)", () => {
+  const sevens = Array.from({ length: 14 }, (_, i) => {
+    const day = iso(17 + i);
+    return { day, wakeMin: 420, efficiency: 0.88 };
+  });
+  it("asks for about 7.95 h in bed, bedtime about 23:03 for 07:00 (version 14: about 9.4 h, 21:38)", () => {
+    const need = personalizedNeedHours(Array(14).fill(7), 35);
+    expect(need).toBe(7);
+    const plan = sleepPlan(input({ baselineNeedHours: need, debtMin: 0, nights: sevens }));
+    expect(plan.plans[0].inBedMin / 60).toBeCloseTo(7 / 0.88, 6);
+    expect(plan.plans[0].bedtimeMin).toBeCloseTo(420 - (7 * 60) / 0.88, 6); // −57.3 min: 23:03 the evening before
+    // Version 14: need 8 h and 73 min of debt (+20 % of it): (480 + 14.6) / 0.88 ≈ 9.37 h in bed.
+    const v14 = sleepPlan(input({ baselineNeedHours: 8, debtMin: 73, nights: sevens }));
+    expect(v14.plans[0].inBedMin / 60).toBeGreaterThan(9.3);
   });
 });

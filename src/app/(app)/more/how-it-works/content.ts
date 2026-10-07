@@ -171,7 +171,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
           { term: "Sleep consistency", detail: "Your Sleep Regularity over the last 7\u00a0days." },
         ],
         paragraphs: [
-          "Your sleep need is the upper quartile of your last 28\u00a0nights, at least 8\u00a0hours (9 under 18) and at most 9.5. Until you have 7\u00a0nights, it is 8\u00a0hours.",
+          "Your sleep need is the median of your last 28\u00a0nights, at least 7\u00a0hours asleep (9 under 18) and at most 9.5. Until you have 7\u00a0nights, it is 7.5\u00a0hours.",
         ],
       },
       {
@@ -211,7 +211,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "What goes in",
         rows: [
-          { term: "Your sleep need", detail: "The upper quartile of your last 28\u00a0nights, between 8 and 9.5\u00a0hours." },
+          { term: "Your sleep need", detail: "The median of your last 28\u00a0nights, between 7 and 9.5\u00a0hours asleep (at least 9 under 18)." },
           { term: "Today’s Strain", detail: "Strain above your 28-day average adds to the need." },
           { term: "Sleep debt", detail: "What you owe from recent nights." },
           { term: "Naps", detail: "Today’s naps take time off tonight’s need." },

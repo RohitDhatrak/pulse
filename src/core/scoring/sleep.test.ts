@@ -6,7 +6,9 @@ import {
   hypnogramMetrics,
   ledger,
   maxNeedHours,
+  needQuantile,
   personalizedNeedHours,
+  populationNeedFloorHours,
   rest,
   restFromTotals,
   restorativeTargetShare,
@@ -50,7 +52,7 @@ describe("hypnogramMetrics", () => {
 describe("ChargeEffortRestScoringTest: Rest", () => {
   it("weight constants", () => {
     expect([wDuration, wEfficiency, wRestorative, wConsistency, defaultSleepNeedHours, restorativeTargetShare]).toEqual([
-      0.5, 0.2, 0.2, 0.1, 8, 0.5,
+      0.5, 0.2, 0.2, 0.1, 7.5, 0.5,
     ]);
   });
 
@@ -66,8 +68,8 @@ describe("ChargeEffortRestScoringTest: Rest", () => {
     expect(rest(8 * H, 0.92, 1.5 * H, 2 * H, null, 0.8)).toBeCloseTo(100 * 0.5 + 92 * 0.2 + 87.5 * 0.2 + 80 * 0.1, EPS);
   });
 
-  it("duration dominates a short night", () => {
-    expect(rest(4 * H, 0.95, H, H)).toBeCloseTo(50 * 0.5 + 95 * 0.2 + 100 * 0.2 + 50 * 0.1, EPS);
+  it("duration dominates a short night (noop's case, at an 8 h need)", () => {
+    expect(rest(4 * H, 0.95, H, H, 8)).toBeCloseTo(50 * 0.5 + 95 * 0.2 + 100 * 0.2 + 50 * 0.1, EPS);
   });
 
   it("a refined lower need raises duration; oversleep clamps at 100", () => {
@@ -112,15 +114,95 @@ describe("RestNeedTest", () => {
   });
 });
 
-describe("plan scenarios: need", () => {
-  it("under 7 nights is 8 h; the clamp holds at 8–9.5 h", () => {
-    expect(personalizedNeedHours([9.5, 9.5, 9.5, 9.5, 9.5, 9.5], 30)).toBe(8);
-    expect(personalizedNeedHours(Array(7).fill(6), 30)).toBe(8);
+describe("plan scenarios: need (SCORING_VERSION 15: median, adult floor 7 h, 7.5 h before 7 nights)", () => {
+  it("under 7 nights is 7.5 h (9 under 18); the clamp holds at 7–9.5 h", () => {
+    expect(personalizedNeedHours([9.5, 9.5, 9.5, 9.5, 9.5, 9.5], 30)).toBe(7.5);
+    expect(personalizedNeedHours([9.5, 9.5, 9.5], 16)).toBe(9);
+    expect(personalizedNeedHours(Array(7).fill(6), 30)).toBe(7);
     expect(personalizedNeedHours(Array(7).fill(12), 30)).toBe(maxNeedHours);
-    // 75th percentile of 7..13 (step 1) is 11.5 → capped
+    // Median of 7..13 (step 1) is 10.
     expect(personalizedNeedHours([7, 8, 9, 10, 11, 12, 13], 30)).toBe(9.5);
-    // 75th percentile of 8.0..8.6 (step 0.1) is 8.45
-    expect(personalizedNeedHours([8.0, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6], 30)).toBeCloseTo(8.45, 12);
+    expect(personalizedNeedHours([6.5, 7, 7.5, 8, 8.5, 9, 9.25], 30)).toBe(8);
+    // Median of 8.0..8.6 (step 0.1) is 8.3 (the upper quartile, version 14, was 8.45).
+    expect(personalizedNeedHours([8.0, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6], 30)).toBeCloseTo(8.3, 12);
+  });
+
+  it("the floor is 7 h asleep for adults (and an unknown age), 9 h under 18", () => {
+    expect([17, 18, 30, 70, null, 0].map(populationNeedFloorHours)).toEqual([9, 7, 7, 7, 7, 7]);
+  });
+
+  it("the median interpolates on an even count, and ignores nights of 0 or less", () => {
+    expect(personalizedNeedHours([7, 7.2, 7.4, 7.6, 7.8, 8.0, 8.2, 8.4], 30)).toBeCloseTo(7.7, 12);
+    expect(personalizedNeedHours([0, -1, 7, 7.2, 7.4, 7.6, 7.8, 8.0, 8.2, 8.4, 0], 30)).toBeCloseTo(7.7, 12);
+    expect(needQuantile).toBe(0.5);
+  });
+});
+
+describe("sleepers over 45 nights (SCORING_VERSION 15 design check)", () => {
+  /** Nights of `mean` ± `sd` hours asleep (deterministic), with need, score and debt as the pipeline computes them. */
+  const simulate = (mean: number, sd: number, override: (d: number) => number | null = () => null, needOf = personalizedNeedHours) => {
+    let x = 3;
+    const rnd = () => ((x = (x * 1103515245 + 12345) % 2147483648), x / 2147483648);
+    const g = () => Math.sqrt(-2 * Math.log(Math.max(rnd(), 1e-12))) * Math.cos(2 * Math.PI * rnd());
+    const hours: number[] = [];
+    const series: [string, number][] = [];
+    return Array.from({ length: 45 }, (_, d) => {
+      const h = override(d) ?? Math.max(4, mean + sd * g());
+      const need = needOf(hours.slice(-28), 35);
+      const score = rest(h * H, 0.88, 0.15 * h * H, 0.22 * h * H, need, 0.9)!;
+      series.push([new Date(Date.UTC(2026, 8, 1 + d)).toISOString().slice(0, 10), h * 60]);
+      const debt = ledger(series, need).magnitudeMin;
+      hours.push(h);
+      return { need, score, debt, durationScore: Math.min(100, (h / need) * 100) };
+    });
+  };
+  const late = (xs: { debt: number }[]) => xs.slice(30).reduce((a, n) => a + n.debt, 0) / 15;
+  /** Version 14's rule: the upper quartile, floored at 8 h (8 h before 7 nights). */
+  const v14Need = (xs: number[]) => {
+    const s = xs.filter((h) => h > 0).sort((a, b) => a - b);
+    if (s.length < 7) return 8;
+    const pos = 0.75 * (s.length - 1);
+    const lo = Math.floor(pos);
+    return Math.min(Math.max(s[lo] + (pos - lo) * (s[Math.min(lo + 1, s.length - 1)] - s[lo]), 8), 9.5);
+  };
+
+  it("a steady 7 h sleeper: need 7, no debt, full duration score (version 14: 73 min of debt every day)", () => {
+    const nights = simulate(7, 0).slice(7);
+    for (const n of nights) {
+      expect(n.need).toBe(7);
+      expect(n.debt).toBe(0);
+      expect(n.durationScore).toBe(100);
+    }
+    expect(late(simulate(7, 0, () => null, v14Need))).toBeCloseTo(73.3, 0);
+  });
+
+  it("healthy 7, 7.5 and 8 h sleepers who vary ±0.5 h carry at most 15 min of debt", () => {
+    for (const h of [7, 7.5, 8]) expect(late(simulate(h, 0.5)), `${h} h`).toBeLessThanOrEqual(15);
+    // Version 14 (and the fix list's floor 7 with the upper quartile) left a varied 8 h sleeper in debt.
+    expect(late(simulate(8, 0.5, () => null, v14Need))).toBeGreaterThan(15);
+  });
+
+  it("a 6.5 h sleeper, below the recommended 7–9 h, still shows debt", () => {
+    expect(late(simulate(6.5, 0.5))).toBeGreaterThanOrEqual(25);
+  });
+
+  it("five nights 1.5 h short still build real debt", () => {
+    const nights = simulate(7.5, 0.3, (d) => (d >= 35 && d < 40 ? 6 : null));
+    expect(nights[39].debt).toBeGreaterThanOrEqual(90);
+  });
+
+  it("a sick week of long nights barely raises next month's need (the upper quartile raised it more)", () => {
+    const sick = (d: number) => (d >= 20 && d < 25 ? 9.5 : null);
+    const lift = (needOf: typeof personalizedNeedHours) => simulate(7.5, 0.3, sick, needOf)[30].need - simulate(7.5, 0.3, () => null, needOf)[30].need;
+    const upperQuartile = (xs: number[], age: number | null) => {
+      const s = xs.filter((h) => h > 0).sort((a, b) => a - b);
+      if (s.length < 7) return 7.5;
+      const pos = 0.75 * (s.length - 1);
+      const lo = Math.floor(pos);
+      return Math.min(Math.max(s[lo] + (pos - lo) * (s[Math.min(lo + 1, s.length - 1)] - s[lo]), populationNeedFloorHours(age)), 9.5);
+    };
+    expect(lift(personalizedNeedHours)).toBeLessThanOrEqual(0.3);
+    expect(lift(upperQuartile)).toBeGreaterThan(lift(personalizedNeedHours));
   });
 });
 
@@ -155,13 +237,14 @@ describe("SleepDebtTest", () => {
     expect(l.nights.at(-1)!.day).toBe("2026-06-16");
   });
 
-  it("empty ledger and default 8 h need", () => {
+  it("empty ledger; the default need is 7.5 h (noop's 8 h case passed explicitly)", () => {
     expect(ledger([])).toMatchObject({ nightCount: 0, nights: [] });
     expect(ledger([]).balanceMin).toBeCloseTo(0, EPS);
     expect(ledger([["2026-06-01", null]]).nightCount).toBe(0);
     const l = ledger([["2026-06-01", 420]]);
     expect(l.needMin).toBe(defaultSleepNeedHours * 60);
-    expect(l.balanceMin).toBeCloseTo(-33, EPS);
+    expect(l.balanceMin).toBeCloseTo(-0.55 * 30, EPS); // 450 − 420 = 30 short
+    expect(ledger([["2026-06-01", 420]], 8).balanceMin).toBeCloseTo(-33, EPS); // noop: 0.55 × 60
   });
 
   it("nap minutes add repayment credit", () => {

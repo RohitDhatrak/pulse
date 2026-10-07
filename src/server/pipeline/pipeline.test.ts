@@ -13,6 +13,7 @@ import {
   type StrainTargetRow,
 } from ".";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
+import { personalizedNeedHours } from "@/core/scoring/sleep";
 import { trimpToStrain } from "@/core/scoring/strain";
 import { load } from "./data";
 import { stage1 } from "./stage1";
@@ -294,6 +295,19 @@ describe("stress on the seed (SCORING_VERSION 13)", () => {
         expect(row.highMin).toBeGreaterThanOrEqual(sure);
         expect(row.highMin).toBeLessThanOrEqual(sure + data.filter(ambiguous).length);
       }
+    }
+  });
+});
+
+describe("sleep need on the seed (SCORING_VERSION 15)", () => {
+  it("is the median of the prior 28 main nights, never below 7 h for an adult (7.5 h before 7 nights)", () => {
+    const prior: number[] = [];
+    for (const day of allDays) {
+      const row = js<{ needHours: number; main: { asleepMin: number } | null }>("sleep", day);
+      expect(row.needHours).toBeGreaterThanOrEqual(7);
+      expect(row.needHours).toBeCloseTo(personalizedNeedHours(prior.slice(-28), 36), 9);
+      if (prior.length < 7) expect(row.needHours).toBe(7.5);
+      if (row.main) prior.push(row.main.asleepMin / 60);
     }
   });
 });

@@ -1,7 +1,8 @@
 // The Postgres pipeline scores the demo database exactly as the snapshot in __parity__ records. It first proved the
 // port reproduced the SQLite build (8e93863); re-recorded 2026-10-04 when the seed moved to day-index keys (the
 // demo's inputs changed, not the scorers). Re-recorded for SCORING_VERSION 9 (early-baseline spread and z shrink):
-// only recovery moved; strain and sleep are byte-identical to the previous snapshot.
+// only recovery moved; strain and sleep are byte-identical to the previous snapshot. Re-recorded for SCORING_VERSION 15
+// (sleep need: median, adult floor 7 h): sleep and recovery moved by design; strain is byte-identical.
 import { expect, it } from "vitest";
 import { rows, sql } from "../db";
 import { seeded, USER } from "../testing";

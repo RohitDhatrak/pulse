@@ -102,7 +102,7 @@ export const SLEEP_INFO: InfoContent = {
     <>
       <p>
         Sleep Performance compares the sleep you got with the sleep you needed, adjusted for consistency, efficiency and restorative sleep. Your
-        need is your personal baseline: the upper quartile of your last 28&nbsp;nights, between 8 and 9.5&nbsp;hours. Strain, sleep debt and naps change
+        need is your personal baseline: the median of your last 28&nbsp;nights, between 7 and 9.5&nbsp;hours asleep. Strain, sleep debt and naps change
         tonight’s need in the sleep planner, not this score.
       </p>
       <p>

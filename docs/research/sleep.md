@@ -16,7 +16,7 @@ This is a research note. It changes no code. Each proposal below needs a `scorin
 
 4. **The efficiency term barely moves, and our continuity measures are not the ones Google and the NSF use.** Efficiency is scored linearly (0.88 → 88). Wearable efficiency almost always falls between 85 and 95%, so the term spans about 2 points of the final score. The NSF anchors are SE ≥ 85% for good and ≤ 74% for not good. They also include WASO (≤ 20 min good, ≥ 51 min not good) and the number of awakenings longer than 5 minutes (≤ 1 good, ≥ 4 not good). Google's 2026 score uses close analogues: "Interruptions" (WASO) and "Full awakenings" (wakes of 5 minutes or more). **Fix:** rescale efficiency on the NSF anchors (65% → 0, 75% → 40, 85% → 80, 95% → 100). Add a full-awakenings term (wakes ≥ 5 min inside the sleep period), which `hypnogramMetrics` can already produce.
 
-5. **The need floor is too high for older adults, and the in-sleep resting HR uses a fragile statistic.** The adult need floor is 8.0 h for every age. The NSF range for adults 65 and over is 7 to 8 h (Hirshkowitz 2015), and older adults' measured sleep capacity is 7.4 h (Klerman & Dijk 2008). **Fix:** use a floor of 7.5 h from age 65. The resting HR is the *minimum* 5-minute bin mean of the whole night. A minimum is biased downward, and more so on longer nights because there are more bins to choose from. It is also the statistic most exposed to optical dropout artefacts, and our only artefact gate is 25 bpm. Industry methods use longer or averaged windows: Garmin takes the lowest 30-minute average, Oura reports both its lowest 10-minute segment and the night's average, and the reference app uses an average weighted toward the last slow-wave sleep (Dial 2025). **Fix:** use the lowest rolling 30-minute mean (or the 10th percentile of 5-minute bins), with a relative plausibility gate. Recovery's 2 bpm spread floor was tuned on the current statistic, so retune it in the same change.
+5. **The need floor is too high for older adults, and the in-sleep resting HR uses a fragile statistic.** (✅ changed in scoring version 15: the need is now the median of 28 nights, floored at 7 h asleep for adults, 7.5 h before 7 nights; see `docs/algorithms/sleep-need.md`). The adult need floor is 8.0 h for every age. The NSF range for adults 65 and over is 7 to 8 h (Hirshkowitz 2015), and older adults' measured sleep capacity is 7.4 h (Klerman & Dijk 2008). **Fix:** use a floor of 7.5 h from age 65. The resting HR is the *minimum* 5-minute bin mean of the whole night. A minimum is biased downward, and more so on longer nights because there are more bins to choose from. It is also the statistic most exposed to optical dropout artefacts, and our only artefact gate is 25 bpm. Industry methods use longer or averaged windows: Garmin takes the lowest 30-minute average, Oura reports both its lowest 10-minute segment and the night's average, and the reference app uses an average weighted toward the last slow-wave sleep (Dial 2025). **Fix:** use the lowest rolling 30-minute mean (or the 10th percentile of 5-minute bins), with a relative plausibility gate. Recovery's 2 bpm spread floor was tuned on the current statistic, so retune it in the same change.
 
 Some divergence from Google is expected by design: our consistency (SRI) term, our personalised need, and the stage term (until finding 2 is applied). The divergences that would point to a bug are covered in "What Google does" and in the validation plan.
 
@@ -37,7 +37,7 @@ flowchart TB
   HYP --> NIGHT[Night: asleepMin, efficiency, deepMin, remMin]
   SUM --> NIGHT
   NIGHT --> HIST[Trailing 28 main-sleep nights]
-  HIST --> NEED["personalizedNeedHours: upper quartile, floor 8 h (9 h under 18), cap 9.5 h; 8 h with fewer than 7 nights"]
+  HIST --> NEED["personalizedNeedHours: median, floor 7 h (9 h under 18), cap 9.5 h; 7.5 h with fewer than 7 nights (v15)"]
   S --> SRI["sleepRegularityIndex: 7 noon-to-noon days, minute grid, naps count as sleep, uncovered days skipped"]
   SRI --> CONS["consistency = max(0, SRI) / 100"]
   NIGHT --> REST
@@ -65,7 +65,7 @@ flowchart TB
 - *Consistency* = max(0, SRI) ÷ 100 × 100. Weight 0.1. When it is missing, 50 is used, and the weights are not renormalised.
 - The result is rounded to 2 dp. It is null only when there is no sleep time.
 
-**Need (`personalizedNeedHours`).** This is the upper quartile (linear interpolation) of the main-sleep hours over the 28 nights before the scored night. It is floored at 8 h for adults (9 h under 18) and capped at 9.5 h. With fewer than 7 nights, it is 8 h (or the age floor). The performance score uses this need as it stands. Unlike the reference app, it adds nothing for strain or debt.
+**Need (`personalizedNeedHours`).** *Since scoring version 15:* the median (linear interpolation) of the main-sleep hours over the 28 nights before the scored night, floored at 7 h for adults (9 h under 18), 7.5 h with fewer than 7 nights. *Before:* the upper quartile, floored at 8 h for adults (9 h under 18) and capped at 9.5 h. With fewer than 7 nights, it is 8 h (or the age floor). The performance score uses this need as it stands. Unlike the reference app, it adds nothing for strain or debt.
 
 **Debt (`ledger`).** The credited sleep for a night is the main sleep plus the previous day's naps. Nights without a usable main sleep are skipped, not counted as zero. Over the last 14 usable nights, starting from zero: debt ← 0.55 × max(0, need + debt − slept), and a result under 10 min is set to 0. Surplus sleep repays debt one-for-one before the 0.55 factor is applied. Under a constant shortfall *s*, the debt settles at 0.55·s ÷ 0.45 = 1.22·s.
 
@@ -101,8 +101,10 @@ Verdicts: **Supported** means the evidence backs the formula and constant. **Pla
 | Component | Ours | Evidence | Verdict | Proposal | Sources |
 |---|---|---|---|---|---|
 | Adult floor 8.0 h | Every age ≥ 18 | AASM/SRS: adults need ≥ 7 h; > 9 h may suit young adults or people recovering debt. NSF: 7 to 9 h for adults 18 to 64, 7 to 8 h for 65+. Kitamura 2016: young men's optimal sleep was 8.4 h, about 1 h more than their habitual 7.4 h. Klerman & Dijk 2008: measured sleep capacity 8.9 h young vs 7.4 h older. | Supported for 18–64; contradicted for 65+ | 18–64: 8.0 h. 65+: 7.5 h. | Watson 2015; Hirshkowitz 2015; Kitamura 2016; Klerman & Dijk 2008 |
+| ↳ **Decision (v15)** | | The review above recommended keeping 8.0 h for 18–64 on Kitamura 2016. Simulation showed it leaves every healthy 7–7.5 h sleeper in permanent debt (7 h: 73 min) and plans 9+ h in bed. | — | **Adopted instead: 7.0 h for all adults**, the AASM / NSF lower bound (owner's decision, 2026-10-07). Kitamura's argument was weighed and not adopted; a user who needs more shows it through the median. | `docs/algorithms/sleep-need.md` |
 | Under-18 floor 9.0 h | | NSF teens 14 to 17: 8 to 10 h. | Supported (midpoint) | Keep. | Hirshkowitz 2015 |
 | Upper quartile of 28 nights | Personal need | Habitual sleep under-states need by about 1 h, and the rebound on unconstrained nights tracks the hidden debt (Kitamura 2016). The upper quartile picks up exactly those longer, unconstrained nights. It is also self-referential: a run of long sick nights raises the need. | Plausible but arbitrary | Keep. Exclude nights flagged by the illness monitor if that is easy. | Kitamura 2016 |
+| ↳ **Decision (v15)** | | With ordinary ±0.5 h variation the upper quartile keeps everyone ~17 min short of their own better nights (an 8 h sleeper planned 9.5 h in bed), and a sick week raises next month's need. | — | **Changed to the median.** Healthy varied sleepers now carry ~3 min; short weeks still show (100–139 min). | `docs/algorithms/sleep-need.md` |
 | Cap 9.5 h | | AASM/SRS: the health effect of regularly sleeping > 9 h is uncertain. | Plausible | Keep. | Watson 2015 |
 | No sex adjustment | | Google says its targets are tailored to age, gender and time attempting to sleep. Boulos 2019 finds sex effects mainly in REM latency and breathing indices, not TST. | Expected divergence | None. | Google Health Help; Boulos 2019 |
 
@@ -151,7 +153,7 @@ Verdicts: **Supported** means the evidence backs the formula and constant. **Pla
 | Staged → solid, unstaged → building | | Stage-based terms are the least reliable (above). | Supported | Keep. | Chinoy 2021 |
 | Coverage < 95% → building | | Holes in the hypnogram bias TST and the stage shares. | Plausible | Keep. | n/a |
 | SE ≥ 0.85 with deep + REM < 10% → building | | Catches nights where an off-wrist device was scored as light sleep. | Plausible | Keep. | n/a |
-| Need still at the default | Not considered | With fewer than 7 nights, the duration term uses 8 h, not a personal need. | Gap | Also *building* while the need is the population default. | n/a |
+| Need still at the default | Not considered | With fewer than 7 nights, the duration term uses the default (7.5 h since v15, was 8 h), not a personal need. | Gap | Also *building* while the need is the population default. | n/a |
 
 ### Proposed composite (all changes together)
 

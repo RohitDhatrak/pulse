@@ -37,7 +37,7 @@ describe("getSleep", () => {
   it("calibrates the need and the planner in the first week", async () => {
     const vm = await getSleep(dayAt(3), ctxFor(db));
     expect(vm.hoursVsNeed.value?.calibrating).toBe(true);
-    expect(vm.hoursVsNeed.value?.needMin).toBe(480);
+    expect(vm.hoursVsNeed.value?.needMin).toBe(450); // 7.5 h before 7 nights (SCORING_VERSION 15; was 8 h)
     expect(vm.planner).toMatchObject({ value: null, reason: "calibrating", nightsLeft: 3 });
   });
 

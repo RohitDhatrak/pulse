@@ -34,9 +34,11 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * not-yet-trained morning nudged the forecast +12). 13: Stress against your usual still level (the folded median
  * still-minute HR, not the calmest hour), a minute at it reads 0.4, and high needs 2 minutes in a row; the Energy
  * Bank drains less on calm days as a result. 14: Pulse Age scores a missing input as a typical person of your age and
- * sex (it scaled the others up by 9 / n), and counts steps and zones 1–3 once, the larger penalty.
+ * sex (it scaled the others up by 9 / n), and counts steps and zones 1–3 once, the larger penalty. 15: sleep need is
+ * the median of the last 28 nights (was the upper quartile), floored at 7 h asleep for adults (was 8), 7.5 h before
+ * 7 nights (was 8): a healthy 7 h sleeper no longer carries 73 min of permanent debt.
  */
-export const SCORING_VERSION = 14;
+export const SCORING_VERSION = 15;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
