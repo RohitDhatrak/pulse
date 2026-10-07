@@ -86,7 +86,13 @@ export function fitnessLevel(vo2max: number, age: number, sex: Sex): { percentil
  * Healthspan's Pulse Age does not jump on a decade birthday.
  */
 export function referenceVo2max(age: number, sex: Sex): number {
-  const col = FRIEND_PERCENTILES.indexOf(fitnessLevelConfig.referencePercentile);
+  return vo2maxAtPercentile(age, sex, fitnessLevelConfig.referencePercentile);
+}
+
+/** The FRIEND VO2max at one of FRIEND_PERCENTILES for an age, linear between decade midpoints (25, 35 … 75). */
+export function vo2maxAtPercentile(age: number, sex: Sex, percentile: number): number {
+  const col = FRIEND_PERCENTILES.indexOf(percentile);
+  if (col < 0) throw new Error(`no FRIEND column for percentile ${percentile}`);
   return piecewiseLinear(
     FRIEND_TREADMILL[sex].map((row, i) => [25 + 10 * i, row[col]] as const),
     age,

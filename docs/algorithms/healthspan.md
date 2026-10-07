@@ -18,7 +18,10 @@ flowchart TB
   S30 --> C30[Same, for 30 days]
   R[Reference profile at today's age] --> C6
   R --> C30
-  C6 --> A6[Δage 6mo = Σ ln HR × 0.75 × 9/n ÷ ln2/8]
+  T[Typical profile: stands in for a missing input] --> C6
+  T --> C30
+  C6 --> OV[Steps and zones 1–3: if both are penalties, only the larger counts]
+  OV --> A6[Δage 6mo = Σ ln HR × 0.75 ÷ ln2/8]
   C30 --> A30[Δage 30d, same way]
   A6 --> WA[Pulse Age = age + clamp Δage 6mo to ±15]
   A6 --> P[Pace = clamp 1 + Δ30d − Δ6mo over 5, to −1..3]
@@ -27,16 +30,18 @@ flowchart TB
 
 ## Formula
 
-For each input *i* that has data in the window:
+For each of the 9 inputs *i*:
 
+- xᵢ is the window's value, or, **when the input has no data, the typical profile's value** (*scoring version 14*; the contribution is marked `estimated`).
 - ln HRᵢ = wᵢ · (fᵢ(xᵢ) − fᵢ(refᵢ)), where fᵢ is the piecewise-linear curve below. It is linear between knots and flat beyond the end knots.
-- wᵢ = 1, except VO2max from `daily-vo2-max`, where w = 0.5.
+- wᵢ = 1, except a measured VO2max from `daily-vo2-max`, where w = 0.5. A typical VO2max standing in for a missing one has w = 1.
 - For steps, xᵢ is first capped at the age plateau, so steps above it earn nothing.
+- **Steps and zones 1–3 count once** (*version 14*): when both are penalties (ln HR > 0), the smaller is set to 0 and marked `overlapped`. Both measure how active you are.
 
-Then, with *n* inputs present out of 9:
+Then:
 
-- Δage = (Σ ln HRᵢ) × 0.75 × (9 / n) ÷ (ln 2 / 8)
-- each input's contribution in years = ln HRᵢ × 0.75 × (9 / n) ÷ (ln 2 / 8). The contributions sum to the unclamped Δage.
+- Δage = (Σ ln HRᵢ) × 0.75 ÷ (ln 2 / 8). Nothing is scaled up for missing inputs (version 13 multiplied by 9 / n).
+- each input's contribution in years = ln HRᵢ × 0.75 ÷ (ln 2 / 8). The contributions sum to the unclamped Δage.
 - Pulse Age = age + clamp(Δage₆ₘₒ, −15, +15).
 - Pace of Aging = clamp(1 + (Δage₃₀d − Δage₆ₘₒ) / 5, −1, 3).
 
@@ -58,7 +63,7 @@ Both Δage values use the reference at today's age, so flat inputs give exactly 
 | Resting HR | `restingHr` | bpm | mean | `daily_metrics.rhr_bpm` (Google's daily value, not `sessionRestingHR`) |
 | Lean mass | `weightKg`, `bodyFatPct` | kg, % | mean FFMI over days with both = weight × (1 − fat/100) / height² | `daily_metrics.weight_kg`, `body_fat_pct`; height from the profile |
 
-The profile has `age` (years on `asOf`, and fractions are fine), `sex`, and `heightCm`. Without a height, the lean-mass term drops. The config has no height variable yet.
+The profile has `age` (years on `asOf`, and fractions are fine), `sex`, and `heightCm`. Without a height, the lean-mass term counts as typical (0 years). The config has no height variable yet.
 
 **VO2max source rule.** If any `vo2maxRun` exists in the 90 days to `asOf`, the term uses the window mean of `vo2maxRun` at weight 1. Otherwise it uses the mean of `vo2maxDaily` at weight 0.5 (*tunable*). Google's daily VO2max is probably estimated mainly from resting HR, which is already its own term, so full weight would count resting HR twice. The result reports which source was used.
 
@@ -118,7 +123,8 @@ All of these live in `healthspanConfig`, except the curves, which live in `curve
 | `ageWindowDays` | 180 | spec ("6 months") |
 | `paceWindowDays` | 30 | spec |
 | `minDays` | 20 | spec: provisional below this many days with any input |
-| `minTerms` | 5 | *tunable*: no result below 5 of 9 inputs, since 9/n renormalization would multiply 1–4 terms by 2.25–9 |
+| `minTerms` | 5 | *tunable*: no result below 5 of 9 measured inputs, since more than half of Pulse Age would then be the typical profile |
+| `typical.*` | VO2max FRIEND 50th percentile, resting HR 65, 6,800 steps, 7.0 h, SRI 81.0 | see § Typical profile |
 | `stepsPlateau` | 10,000 / 8,000 | cited: Paluch 2022 |
 | `reference.*` | see the table above | *tunable* targets |
 
@@ -127,9 +133,67 @@ All of these live in `healthspanConfig`, except the curves, which live in `curve
 - **Provisional.** The result is provisional when fewer than 20 days in the 6-month window have any input.
 - **Pace provisional.** Pace of Aging is provisional until the first day with data is at least 180 days before `asOf`. Before 30 days of data, both windows hold the same days, so Pace is 1.0.
 - **No result.** The function returns null when the 6-month window has fewer than `minTerms` inputs, or when `asOf` is not a valid date.
-- **Missing inputs** drop, and the rest renormalize by 9 / n.
-- **The 30-day window** starts from the 6-month means and overwrites each input that has data in the last 30 days. A sparse input such as a monthly weigh-in therefore keeps its 6-month value instead of dropping out. Both windows hold the same inputs, so their renormalization matches.
+- **Missing inputs** count as the typical profile and are marked `estimated` (the UI shows "Not measured: counted as typical for your age"). Nothing else is scaled.
+- **The 30-day window** starts from the 6-month means and overwrites each input that has data in the last 30 days. A sparse input such as a monthly weigh-in therefore keeps its 6-month value instead of dropping out. Both windows hold the same inputs, so they are scored alike.
 - **Window bounds.** Days after `asOf`, and days 180 or more days before it, are ignored.
+
+## Typical profile (scoring version 14)
+
+A missing input counts as a typical person of your age and sex, using the median from the same sources as the
+curves. It is never the reference, which describes a *fit* person.
+
+| Input | Typical value | Years against the reference (man, 40) | Source |
+|---|---|---|---|
+| VO2max | FRIEND 50th percentile for age and sex (`vo2maxAtPercentile`), full weight | +2.4 | Kaminsky 2015 |
+| Resting HR | 65 bpm (*tunable*) | +0.4 | a typical adult value; Zhang's curve |
+| Steps | 6,800 (*tunable*) | +1.3 | between Paluch's Q2 and Q3 medians (5,801 and 7,842) |
+| Sleep | 7.0 h | 0 | inside Cappuccio's 7–8 h band |
+| SRI | 81.0 | +0.4 | Windred 2024's median |
+| Lean mass | Schutz median (= the reference) | 0 | Schutz 2002 |
+| Zones 1–3, zones 4–5, strength | the reference | 0 | only missing when the band was never worn: a worn day records 0 minutes |
+
+## Why missing inputs and activity changed (scoring version 14)
+
+These were tested with the real `healthspan()` on simulated 40-year-old men (1,000–2,000 per population; the
+population spreads are assumptions until real data exists). The measure is the error against the same person's
+full-data Pulse Age, as bias ± mean |error| in years.
+
+**Missing inputs.** Version 13 scaled the present terms by 9 / n, which assumes missing inputs look like the present
+ones.
+
+| Missing (population) | 9 / n (version 13) | Missing = 0 (the fix list) | **Typical value (version 14)** |
+|---|---|---|---|
+| Lean mass, average | +1.3 ± 1.5 | +0.3 ± 1.1 | **+0.2 ± 1.1** |
+| Lean mass, less fit | +2.0 ± 2.0 | — | **+0.1 ± 0.9** |
+| Lean mass, fitter | +1.0 ± 1.3 | — | **+0.3 ± 0.9** |
+| + VO2max, average | −0.5 ± 2.0 | −2.3 ± 2.9 | +0.1 ± 2.0 |
+| 5 of 9, average | +1.1 ± 2.9 | −3.4 ± 3.7 | −0.6 ± 2.2 |
+| 5 of 9, less fit | +1.0 ± 3.1 | — | −3.2 ± 3.5 |
+
+- **Lean mass missing is the common case**, with no smart scale or no height: the typical value removes almost all
+  the bias.
+- **"Missing = 0"** treats you as the *fit* reference, so it reads 2–3.4 years young once 2+ inputs are missing.
+- **With 2+ inputs missing, no method is good** (about ±2–3.5 years). A less-fit person scores younger than they are,
+  because the typical values are better than theirs. That is the case for showing a range (fix #25).
+- **A typical VO2max at the daily half weight** biased the result 1–1.5 years young, so it counts at full weight.
+- **"No strength logged" is not missing.** A worn day records 0 strength minutes, so it is a measured 0 and is
+  unchanged.
+
+**Activity counted twice.**
+- Steps and zones 1–3 both measure how active you are. An inactive person (3,000 steps, no zone time) got
+  +6.1 + 7.9 = **+14.1 years** from activity.
+- Counting the larger gives **+7.9**: the single strongest study's effect (Ekelund 2019, HR 2.5 for the least
+  active).
+- The fix list's "cap zones 1–3 at +4" gave +10.1 and still counted the same behaviour twice.
+- The typical user barely moves (population median Δage 8.9 → 8.6).
+
+**"Light activity counts as moderate" was stale.** That was true of Google's named zones before scoring version 7.
+Pulse's zones 1–3 are 50–80 % of heart-rate reserve, which is moderate to vigorous by ACSM's definitions (moderate
+40–59 %). Half-weighting zone 1 would have made the term less accurate. If anything, zones 1–3 miss moderate minutes
+at 40–50 % HRR, such as a fit person's brisk walk.
+
+**The reference is fit**, so a typical 40-year-old in these simulations scores about +8.6 years (fitter +5.5, less
+fit +13.5). The UI says "compared with a fit person of your age and sex".
 
 ## Worked examples
 
@@ -137,7 +201,7 @@ All examples are for a man aged 35, 1.80 m, so the VO2max reference is 49.2. Eac
 
 **1. The reference profile.** Every input is at the reference: 7.5 h sleep, SRI 86.3, 150 / 75 / 40 min a week, 10,000 steps, VO2max 49.2 (run), resting HR 60, and 76.5 kg at 20 % fat (FFMI 18.9). Every contribution is 0, so Pulse Age is 35.0 and Pace is 1.0.
 
-**2. Resting HR 70.** This is +1 × ln 1.09 = 0.0862 of ln HR, giving +0.0862 × 0.75 ÷ 0.0866 = **+0.75 years**. Without a height, the lean-mass term drops and the same 70 bpm gives 0.75 × 9/8 = **+0.84 years**.
+**2. Resting HR 70.** This is +1 × ln 1.09 = 0.0862 of ln HR, giving +0.0862 × 0.75 ÷ 0.0866 = **+0.75 years**. Without a height, lean mass counts as typical (the Schutz median, 0 years), so it stays **+0.75 years** (version 13 gave 0.75 × 9/8 = +0.84). A test.
 
 **3. VO2max 56.2 (2 METs above the reference).** This is 2 × ln 0.87 = −0.279, giving **−2.41 years** from `run-vo2-max`. The same value from `daily-vo2-max` gives **−1.21 years**.
 
@@ -149,16 +213,16 @@ All examples are for a man aged 35, 1.80 m, so the VO2max reference is 49.2. Eac
 | Zones 4–5 | 30 | 75 | +0.73 |
 | SRI | 78 | 86.3 | +0.72 |
 | Steps | 8,500 | 10,000 | +0.67 |
-| Zones 1–3 | 120 | 150 | +0.39 |
+| Zones 1–3 | 120 | 150 | 0 (+0.39, overlapped: steps is the larger shortfall) |
 | Strength | 60 | 40 | +0.32 |
 | Resting HR | 62 | 60 | +0.15 |
 | Sleep | 6.8 | 7.5 | +0.10 |
 | Lean mass | 20.25 | 18.9 | −0.72 |
-| **Δage** | | | **+4.16**, so Pulse Age is 39.2 |
+| **Δage** | | | **+3.77**, so Pulse Age is 38.8 (version 13: +4.16) |
 
-Without a height, the eight remaining terms renormalize by 9/8 and give Δage +5.48.
+Without a height, lean mass (−0.72) counts as typical (0), giving **+4.48** (version 13 scaled the eight remaining terms by 9/8 to +5.48). A test.
 
-**5. Pace.** Take example 4, but in the last 30 days resting HR is 58 and zones 4–5 reach 75 min/week. The 6-month Δage becomes +3.98, the 30-day value is lower, and Pace is **0.83**: aging more slowly than the 6-month baseline. A resting-HR drop from 60 to 50 bpm in the last 30 days, with all else at the reference, gives Pace 0.876.
+**5. Pace.** Take example 4, but in the last 30 days resting HR is 58 and zones 4–5 reach 75 min/week. The 6-month Δage becomes +3.59 (version 13: +3.98), the 30-day value is lower, and Pace is **0.83**: aging more slowly than the 6-month baseline. A resting-HR drop from 60 to 50 bpm in the last 30 days, with all else at the reference, gives Pace 0.876.
 
 ## Sources
 

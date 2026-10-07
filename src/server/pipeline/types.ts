@@ -33,9 +33,10 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * above your typical session (one-sided; they compared with your average day, so every rest day and every
  * not-yet-trained morning nudged the forecast +12). 13: Stress against your usual still level (the folded median
  * still-minute HR, not the calmest hour), a minute at it reads 0.4, and high needs 2 minutes in a row; the Energy
- * Bank drains less on calm days as a result.
+ * Bank drains less on calm days as a result. 14: Pulse Age scores a missing input as a typical person of your age and
+ * sex (it scaled the others up by 9 / n), and counts steps and zones 1–3 once, the larger penalty.
  */
-export const SCORING_VERSION = 13;
+export const SCORING_VERSION = 14;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */

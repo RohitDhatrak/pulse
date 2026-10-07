@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { isoEpochDay } from "../scoring/baselines";
-import { piecewiseLinear } from "./fitnessLevel";
+import { piecewiseLinear, vo2maxAtPercentile } from "./fitnessLevel";
 import {
   curves,
   healthspan,
   healthspanConfig,
   referenceProfile,
+  typicalProfile,
   type HealthspanDay,
   type HealthspanInput,
   type HealthspanProfile,
@@ -16,8 +17,8 @@ const today = isoEpochDay(asOf)!;
 const iso = (epochDay: number) => new Date(epochDay * 86_400_000).toISOString().slice(0, 10);
 const profile: HealthspanProfile = { age: 35, sex: "male", heightCm: 180 };
 const ref = referenceProfile(35, "male");
-/** ln HR → years: shrink × renormalization ÷ (ln 2 / 8). All nine terms present unless stated. */
-const years = (lnHr: number, present = 9) => (lnHr * 0.75 * (9 / present)) / (Math.LN2 / 8);
+/** ln HR → years: the 0.75 shrink ÷ (ln 2 / 8). (Since version 14 nothing is scaled up for missing terms.) */
+const years = (lnHr: number) => (lnHr * 0.75) / (Math.LN2 / 8);
 
 /** A day exactly at the reference profile: FFMI 18.9 at 1.80 m and 20 % body fat. */
 const refDay = (): Omit<HealthspanDay, "day"> => ({
@@ -58,11 +59,13 @@ describe("Pulse Age", () => {
     expect(r.deltaYears).toBeCloseTo(0.75, 2);
   });
 
-  it("missing lean mass drops the term and renormalizes the other eight", () => {
+  it("missing lean mass counts as typical (Schutz median = the reference: 0 years); nothing is scaled up", () => {
     const r = run(series(180, () => ({ restingHr: 70 })), { ...profile, heightCm: null });
-    expect(r.contributions.map((c) => c.key)).not.toContain("leanMass");
-    expect(r.contributions).toHaveLength(8);
-    expect(r.deltaYears).toBeCloseTo(years(Math.log(1.09), 8), 10);
+    const lean = r.contributions.find((c) => c.key === "leanMass")!;
+    expect(lean).toMatchObject({ estimated: true, value: ref.leanMass, years: 0 });
+    expect(r.contributions).toHaveLength(9);
+    // Version 13 scaled the other eight by 9/8: +0.84 years instead of +0.75.
+    expect(r.deltaYears).toBeCloseTo(years(Math.log(1.09)), 10);
     // Body fat without weight on any day drops it too.
     const r2 = run(series(180, () => ({ restingHr: 70, weightKg: null })));
     expect(r2.deltaYears).toBeCloseTo(r.deltaYears, 10);
@@ -129,10 +132,15 @@ describe("VO2max source rule", () => {
     expect(r.deltaYears).toBeCloseTo(0, 10);
   });
 
-  it("no VO2max at all drops the term", () => {
+  it("no VO2max at all counts as the FRIEND 50th percentile, at full weight (it stands in for the true value)", () => {
     const r = run(series(180, () => ({ vo2maxRun: null })));
     expect(r.vo2maxSource).toBeNull();
-    expect(r.contributions).toHaveLength(8);
+    const v = r.contributions.find((c) => c.key === "vo2max")!;
+    expect(v.estimated).toBe(true);
+    expect(v.value).toBeCloseTo(vo2maxAtPercentile(35, "male", 50), 10);
+    const ln = piecewiseLinear(curves.vo2max, v.value) - piecewiseLinear(curves.vo2max, ref.vo2max);
+    expect(v.years).toBeCloseTo(years(ln), 10);
+    expect(r.deltaYears).toBeCloseTo(v.years, 10);
   });
 });
 
@@ -224,5 +232,116 @@ describe("dose-response curves", () => {
   it("steps beyond the age plateau earn nothing", () => {
     expect(run(series(180, () => ({ steps: 15_000 }))).deltaYears).toBeCloseTo(0, 10);
     expect(referenceProfile(65, "female").steps).toBe(healthspanConfig.stepsPlateau.from60);
+  });
+});
+
+describe("missing inputs count as a typical person (SCORING_VERSION 14)", () => {
+  it("typical profile: FRIEND 50th VO2max, 65 bpm, 6,800 steps, 7 h, SRI 81, and the reference elsewhere", () => {
+    for (const [age, sex] of [[35, "male"], [52, "female"], [71, "male"]] as const) {
+      const t = typicalProfile(age, sex);
+      const r = referenceProfile(age, sex);
+      expect(t.vo2max).toBeCloseTo(vo2maxAtPercentile(age, sex, 50), 10);
+      expect(t.vo2max).toBeLessThan(r.vo2max);
+      expect([t.restingHr, t.steps, t.sleepHours, t.sri]).toEqual([65, 6800, 7, 81]);
+      expect([t.zone13, t.zone45, t.strength, t.leanMass]).toEqual([r.zone13, r.zone45, r.strength, r.leanMass]);
+    }
+    // Interpolated between decade midpoints, like the reference: no jump on a birthday.
+    expect(Math.abs(typicalProfile(39.99, "male").vo2max - typicalProfile(40.01, "male").vo2max)).toBeLessThan(0.01);
+  });
+
+  it("each missing input adds exactly its typical value's years, and is marked estimated", () => {
+    const t = typicalProfile(35, "male");
+    const r = run(series(180, () => ({ sri: null, sleepHours: null, vo2maxRun: null })), { ...profile, heightCm: null });
+    const est = r.contributions.filter((c) => c.estimated).map((c) => c.key).sort();
+    expect(est).toEqual(["leanMass", "sleepHours", "sri", "vo2max"]);
+    const sri = r.contributions.find((c) => c.key === "sri")!;
+    expect(sri.value).toBe(81);
+    expect(sri.years).toBeCloseTo(years(piecewiseLinear(curves.sri, 81) - piecewiseLinear(curves.sri, ref.sri)), 10);
+    expect(r.contributions.find((c) => c.key === "sleepHours")!.years).toBeCloseTo(0, 10); // 7 h is in Cappuccio's band
+    const vo2 = years(piecewiseLinear(curves.vo2max, t.vo2max) - piecewiseLinear(curves.vo2max, ref.vo2max));
+    expect(r.deltaYears).toBeCloseTo(sri.years + vo2, 10);
+  });
+
+  it(`still needs ${healthspanConfig.minTerms} measured inputs`, () => {
+    // No height drops lean mass too, so four more missing leaves 4 measured; three more leaves 5.
+    const four = series(180, () => ({ sri: null, sleepHours: null, vo2maxRun: null, steps: null }));
+    expect(healthspan(four, { ...profile, heightCm: null }, asOf)).toBeNull();
+    const five = series(180, () => ({ sri: null, sleepHours: null, vo2maxRun: null }));
+    expect(healthspan(five, { ...profile, heightCm: null }, asOf)).not.toBeNull();
+  });
+
+  it("the doc's example 4 (a typical week): +3.77 with height, +4.48 without (version 13: +4.16 and +5.48)", () => {
+    // VO2max 44 (run), RHR 62, 8,500 steps, 6.8 h, SRI 78, 120 / 30 / 60 min a week, 80 kg at 18 % fat.
+    const week = (): Partial<HealthspanDay> => ({
+      vo2maxRun: 44, restingHr: 62, steps: 8500, sleepHours: 6.8, sri: 78,
+      zone13Min: 120 / 7, zone45Min: 30 / 7, strengthMin: 60 / 7, weightKg: 80, bodyFatPct: 18,
+    });
+    const r = run(series(180, week));
+    const byKey = Object.fromEntries(r.contributions.map((c) => [c.key, c.years]));
+    // Steps (+0.67) and zones 1–3 (+0.39) both penalise the same activity: only steps counts now.
+    expect(byKey.steps).toBeCloseTo(0.67, 2);
+    expect(byKey.zone13).toBe(0);
+    expect(r.contributions.find((c) => c.key === "zone13")!.overlapped).toBe(true);
+    expect(r.deltaYears).toBeCloseTo(3.77, 2);
+    // Without height lean mass (−0.72) counts as typical (0): +4.48, not 9/8 × the rest = +5.48.
+    expect(run(series(180, week), { ...profile, heightCm: null }).deltaYears).toBeCloseTo(4.48, 2);
+  });
+});
+
+describe("steps and zones 1–3 count once (SCORING_VERSION 14)", () => {
+  const toY = (key: HealthspanInput, x: number) => years(piecewiseLinear(curves[key], x) - piecewiseLinear(curves[key], ref[key]));
+
+  it("an inactive person (3,000 steps, no zone time) gets the larger penalty only: +7.9, not +14.1", () => {
+    const r = run(series(180, () => ({ steps: 3000, zone13Min: 0 })));
+    const steps = r.contributions.find((c) => c.key === "steps")!;
+    const zones = r.contributions.find((c) => c.key === "zone13")!;
+    expect(zones.years).toBeCloseTo(toY("zone13", 0), 10);
+    expect(zones.years).toBeCloseTo(7.93, 2);
+    expect(steps).toMatchObject({ years: 0, overlapped: true });
+    expect(r.deltaYears).toBeCloseTo(7.93, 2);
+    expect(toY("steps", 3000) + toY("zone13", 0)).toBeCloseTo(14.06, 1); // version 13
+  });
+
+  it("when steps is the larger penalty, zones is the one dropped", () => {
+    // 100 min/week is a small zones penalty; 3,000 steps a large one.
+    const r = run(series(180, () => ({ steps: 3000, zone13Min: 100 / 7 })));
+    expect(toY("zone13", 100)).toBeGreaterThan(0);
+    expect(r.contributions.find((c) => c.key === "steps")!.years).toBeCloseTo(toY("steps", 3000), 10);
+    expect(r.contributions.find((c) => c.key === "zone13")).toMatchObject({ years: 0, overlapped: true });
+  });
+
+  it("a bonus is never dropped: only two penalties overlap", () => {
+    const r = run(series(180, () => ({ steps: 3000, zone13Min: 200 / 7 })));
+    expect(r.contributions.find((c) => c.key === "zone13")!.years).toBeLessThan(0);
+    expect(r.contributions.find((c) => c.key === "steps")!.years).toBeCloseTo(toY("steps", 3000), 10);
+    expect(r.contributions.some((c) => c.overlapped)).toBe(false);
+  });
+
+  it("other terms are untouched by the rule", () => {
+    const r = run(series(180, () => ({ steps: 3000, zone13Min: 0, restingHr: 70 })));
+    expect(r.contributions.find((c) => c.key === "restingHr")!.years).toBeCloseTo(years(Math.log(1.09)), 10);
+  });
+});
+
+describe("population check: a missing lean mass (no smart scale)", () => {
+  it("errs by at most 1.2 years on average and is nearly unbiased (version 13: about +1.3 ± 1.5)", () => {
+    let x = 9;
+    const rnd = () => ((x = (x * 1103515245 + 12345) % 2147483648), x / 2147483648);
+    const g = () => Math.sqrt(-2 * Math.log(Math.max(rnd(), 1e-12))) * Math.cos(2 * Math.PI * rnd());
+    const errs: number[] = [];
+    for (let i = 0; i < 300; i++) {
+      const p = {
+        vo2maxRun: 40 + 7 * g(), restingHr: 62 + 7 * g(), steps: Math.max(1500, 7500 + 2800 * g()), sleepHours: 6.9 + 0.7 * g(),
+        sri: 78 + 8 * g(), zone13Min: Math.max(0, 120 + 90 * g()) / 7, zone45Min: Math.max(0, 25 + 40 * g()) / 7,
+        strengthMin: rnd() < 0.6 ? 0 : Math.max(0, 60 + 30 * g()) / 7, weightKg: 82 + 12 * g(), bodyFatPct: Math.min(40, Math.max(8, 22 + 6 * g())),
+      };
+      const full = healthspan(series(180, () => p), { age: 40, sex: "male", heightCm: 180 }, asOf)!;
+      const noScale = healthspan(series(180, () => p), { age: 40, sex: "male", heightCm: null }, asOf)!;
+      const raw = (r: typeof full) => r.contributions.reduce((a, c) => a + c.years, 0); // unclamped
+      errs.push(raw(noScale) - raw(full));
+    }
+    const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    expect(Math.abs(mean(errs))).toBeLessThanOrEqual(0.5);
+    expect(mean(errs.map(Math.abs))).toBeLessThanOrEqual(1.2);
   });
 });

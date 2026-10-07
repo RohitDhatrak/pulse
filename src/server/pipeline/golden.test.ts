@@ -261,6 +261,31 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.stress": "8131d5344e8e2307",
     "reports": "51c0dbdcab00adac",
   },
+  // 14: Pulse Age counts a missing input as a typical person (no 9/n scaling) and steps and zones 1–3 once, the larger
+  // penalty. Moved: healthspan, plus the version stamp (and strain's key).
+  14: {
+    "daily_scores.scoring_version": "d9daea29ed5fa736",
+    "daily_scores.strain": "b4584d0d5eb6b402",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "cfac343b38091918",
+    "daily_scores.sleep": "ccb090c5c5766471",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "b95583b5932e682d",
+    "daily_scores.sleep_planner": "af4c19bd722155e6",
+    "daily_scores.energy_bank": "84c3d066a778cf57",
+    "daily_scores.stress": "fd09fd3252ff2955",
+    "daily_scores.health_monitor": "38a813fd4cae5652",
+    "daily_scores.healthspan": "5c3f5cb9714fdee6",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "4fca8ad358140f31",
+    "intraday_series.energy_bank": "ac9bf5e400af004f",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "c0bf14266ee71abd",
+    "intraday_series.stress": "8131d5344e8e2307",
+    "reports": "51c0dbdcab00adac",
+  },
 };
 
 // Numbers are rounded to 10 significant digits first, so a last-ulp difference in Math between Node

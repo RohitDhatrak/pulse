@@ -2,8 +2,10 @@
 // hazard ratio through a piecewise-linear dose-response curve pinned from a cited paper. The terms are
 // taken against a reference profile, summed and shrunk for overlap, then turned into years with the
 // Gompertz doubling time. The method follows noop's VitalityEngine.kt; the curves and the gates are ours.
+// Since SCORING_VERSION 14: a missing input counts as a typical person of your age and sex (it used to scale the
+// others up by 9 / n), and steps and zones 1–3, which measure the same activity, count once: the larger penalty.
 import { isoEpochDay } from "../scoring/baselines";
-import { piecewiseLinear, referenceVo2max, type Knots, type Sex } from "./fitnessLevel";
+import { piecewiseLinear, referenceVo2max, vo2maxAtPercentile, type Knots, type Sex } from "./fitnessLevel";
 
 /** One day's inputs. A null or absent field means no data that day. */
 /** Google exercise types that count as strength minutes (pipeline) and the strength icon (queries). */
@@ -95,7 +97,7 @@ export const healthspanConfig = {
   paceWindowDays: 30,
   /** Fewer days with any input → provisional. */
   minDays: 20,
-  /** Fewer terms → no result, since renormalizing would multiply a few terms too far (*tunable*). */
+  /** Fewer measured terms → no result: too much of Pulse Age would be the typical profile (*tunable*). */
   minTerms: 5,
   /** Paluch 2022: the step count where benefit plateaus, used as cap and reference (< 60: 8–10k; ≥ 60: 6–8k). */
   stepsPlateau: { under60: 10_000, from60: 8_000 },
@@ -108,6 +110,17 @@ export const healthspanConfig = {
     zone45: 75,
     strength: 40,
     leanMass: { male: 18.9, female: 15.4 },
+  },
+  /**
+   * A typical person, used only for a missing input (sources in the doc). Zones and strength are the reference:
+   * they are only missing when the band was never worn, since a worn day records 0 minutes.
+   */
+  typical: {
+    vo2maxPercentile: 50,
+    restingHr: 65,
+    steps: 6_800,
+    sleepHours: 7.0,
+    sri: 81.0,
   },
 };
 
@@ -128,13 +141,34 @@ export function referenceProfile(age: number, sex: Sex): Record<HealthspanInput,
   };
 }
 
+/** The profile a missing input is scored as: a typical person of this age and sex. */
+export function typicalProfile(age: number, sex: Sex): Record<HealthspanInput, number> {
+  const t = healthspanConfig.typical;
+  const ref = referenceProfile(age, sex);
+  return {
+    vo2max: vo2maxAtPercentile(age, sex, t.vo2maxPercentile),
+    restingHr: t.restingHr,
+    steps: t.steps,
+    sleepHours: t.sleepHours,
+    sri: t.sri,
+    zone13: ref.zone13,
+    zone45: ref.zone45,
+    strength: ref.strength,
+    leanMass: ref.leanMass, // Schutz 2002's median is the reference already
+  };
+}
+
 export interface HealthspanContribution {
   key: HealthspanInput;
   /** The window's value, in the curve's units (weekly minutes for zones and strength, FFMI for lean mass). */
   value: number;
   reference: number;
-  /** Signed years added to Pulse Age (renormalized and shrunk; they sum to the unclamped Δage). */
+  /** Signed years added to Pulse Age (shrunk; they sum to the unclamped Δage). */
   years: number;
+  /** No data in the window: `value` is the typical profile's. */
+  estimated?: true;
+  /** Steps or zones 1–3 whose penalty is not counted, because the other one, the larger, already counts it. */
+  overlapped?: true;
 }
 
 export interface HealthspanResult {
@@ -183,20 +217,34 @@ function summarize(days: HealthspanDay[], heightCm: number | null | undefined, r
   return Object.fromEntries(Object.entries(s).filter(([, v]) => v != null));
 }
 
-/** Unclamped Δage and its per-input years, or null below minTerms. Missing terms renormalize the rest. */
-function deltaAge(s: Summary, ref: Record<HealthspanInput, number>, vo2Weight: number) {
+/**
+ * Unclamped Δage and its per-input years, or null below minTerms measured inputs. A missing input counts as the
+ * typical profile; steps and zones 1–3 count once (the larger penalty).
+ */
+function deltaAge(s: Summary, ref: Record<HealthspanInput, number>, typical: Record<HealthspanInput, number>, vo2Weight: number) {
   const cfg = healthspanConfig;
   const all = Object.keys(curves) as HealthspanInput[];
-  const present = all.filter((k) => s[k] != null);
-  if (present.length < cfg.minTerms) return null;
-  const toYears = (cfg.overlapShrink * (all.length / present.length)) / (Math.LN2 / cfg.doublingYears);
-  const contributions = present.map((key): HealthspanContribution => {
-    const value = s[key]!;
+  if (all.filter((k) => s[k] != null).length < cfg.minTerms) return null;
+  const toYears = cfg.overlapShrink / (Math.LN2 / cfg.doublingYears);
+  const contributions = all.map((key): HealthspanContribution => {
+    const estimated = s[key] == null;
+    const value = estimated ? typical[key] : s[key]!;
     // Steps beyond the age plateau earn nothing more (Paluch 2022).
     const x = key === "steps" ? Math.min(value, ref.steps) : value;
     const lnHazard = piecewiseLinear(curves[key], x) - piecewiseLinear(curves[key], ref[key]);
-    return { key, value, reference: ref[key], years: lnHazard * (key === "vo2max" ? vo2Weight : 1) * toYears };
+    // A typical VO2max stands in for the person's unknown true value, so it counts at full weight (at the daily
+    // estimate's half weight it biased Pulse Age 1–1.5 years young against full data; see the doc).
+    const weight = key === "vo2max" && !estimated ? vo2Weight : 1;
+    return { key, value, reference: ref[key], years: lnHazard * weight * toYears, ...(estimated && { estimated: true as const }) };
   });
+  // Steps and zones 1–3 both measure how active you are: when both are penalties, only the larger counts.
+  const steps = contributions.find((c) => c.key === "steps")!;
+  const zones = contributions.find((c) => c.key === "zone13")!;
+  if (steps.years > 0 && zones.years > 0) {
+    const smaller = steps.years < zones.years ? steps : zones;
+    smaller.years = 0;
+    smaller.overlapped = true;
+  }
   return { years: contributions.reduce((a, c) => a + c.years, 0), contributions };
 }
 
@@ -221,12 +269,13 @@ export function healthspan(days: HealthspanDay[], profile: HealthspanProfile, as
   const sixMonths = within(cfg.ageWindowDays);
   const run = within(cfg.runVo2maxLookbackDays).some((d) => d.vo2maxRun != null);
   const ref = referenceProfile(profile.age, profile.sex);
+  const typical = typicalProfile(profile.age, profile.sex);
   const long = summarize(sixMonths, profile.heightCm, run);
-  // A term with no data lately keeps its 6-month value, so both windows renormalize alike.
+  // A term with no data lately keeps its 6-month value, so both windows are scored alike.
   const short = { ...long, ...summarize(within(cfg.paceWindowDays), profile.heightCm, run) };
   const vo2Weight = run ? 1 : cfg.dailyVo2maxWeight;
-  const a = deltaAge(long, ref, vo2Weight);
-  const b = deltaAge(short, ref, vo2Weight);
+  const a = deltaAge(long, ref, typical, vo2Weight);
+  const b = deltaAge(short, ref, typical, vo2Weight);
   if (!a || !b) return null;
 
   const deltaYears = clamp(a.years, -cfg.clampYears, cfg.clampYears);

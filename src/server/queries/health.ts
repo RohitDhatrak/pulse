@@ -221,20 +221,29 @@ export async function getHealthspan(day: string, ctx: QueryCtx): Promise<Healths
     const c = contributions.find((x) => x.key === key);
     const display = (v: number) => (key === "sri" ? Math.max(0, v) : key === "leanMass" && h2 ? v * h2 : v);
     const target = c ? display(c.reference) : 0;
+    // Since scoring version 14 a missing input counts as a typical person of your age (`estimated`), and steps and
+    // zones 1–3 count once, the larger shortfall (`overlapped`).
+    const measured = c && !c.estimated ? c : undefined;
     const caption =
-      key === "vo2max" && hs?.reason === null && hs.vo2maxSource
+      key === "vo2max" && measured && hs?.reason === null && hs.vo2maxSource
         ? hs.vo2maxSource === "run"
           ? "From runs"
           : "Estimated: counts half"
-        : key === "leanMass" && !c
-          ? "No lean body mass: add weight and body fat in Fitbit. Left out of Pulse Age."
-          : undefined;
-    const domain: [number, number] = key === "leanMass" && c ? [target * 0.75, target * 1.25] : meta.domain;
+        : key === "leanMass" && !measured
+          ? "Not measured: counted as typical for your age. Add weight and body fat in Fitbit."
+          : c?.estimated
+            ? "Not measured: counted as typical for your age."
+            : c?.overlapped
+              ? key === "steps"
+                ? "Counted once with heart rate zones 1-3, the larger shortfall."
+                : "Counted once with steps, the larger shortfall."
+              : undefined;
+    const domain: [number, number] = key === "leanMass" && measured ? [target * 0.75, target * 1.25] : meta.domain;
     return {
       key,
       ...meta,
       domain,
-      metric: c ? ok(display(c.value), result.provisional) : none("no_data"),
+      metric: measured ? ok(display(measured.value), result.provisional) : none("no_data"),
       target,
       years: c ? c.years : null,
       ...(caption && { caption }),

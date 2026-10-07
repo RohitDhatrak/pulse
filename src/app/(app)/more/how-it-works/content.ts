@@ -260,13 +260,13 @@ export const SCORE_DOCS: ScoreDoc[] = [
           { term: "Heart rate zones 1-3", detail: "Daily time at 50-80% of your heart-rate reserve. Reference 150\u00a0minutes a week." },
           { term: "Heart rate zones 4-5", detail: "Daily time at 80% of your heart-rate reserve and above. Reference 75\u00a0minutes a week." },
           { term: "Strength activity", detail: "Reference 40\u00a0minutes a week." },
-          { term: "Lean body mass", detail: "Fat-free mass for your height. Needs weight, body fat and height." },
+          { term: "Lean body mass", detail: "Fat-free mass for your height. Needs weight, body fat and height; without them it counts as typical for your age." },
         ],
       },
       {
         title: "How it is weighted",
         paragraphs: [
-          "Each input maps to a change in mortality risk from a published study. The changes are added, shrunk by 25% for overlap, scaled up when inputs are missing, and turned into years on the rule that mortality risk doubles about every 8\u00a0years. A resting heart rate of 70\u00a0bpm, all else at reference, adds about 0.75\u00a0years.",
+          "Each input maps to a change in mortality risk from a published study. The changes are added, shrunk by 25% for overlap, and turned into years on the rule that mortality risk doubles about every 8\u00a0years. A missing input counts as a typical person of your age and sex. Steps and time in zones 1-3 both measure how active you are, so when both fall short only the larger shortfall counts. A resting heart rate of 70\u00a0bpm, all else at reference, adds about 0.75\u00a0years.",
           "Pace of Aging repeats this for your last 30\u00a0days: 1 + (30-day years − 6-month years) ÷ 5.",
         ],
       },
