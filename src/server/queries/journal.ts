@@ -1,9 +1,9 @@
-import type { ImpactMetric, TagImpact } from "@/core/algorithms/journalImpact";
+import { type ImpactMetric, strengthOf, type TagImpact } from "@/core/algorithms/journalImpact";
 import type { JournalImpactRow } from "../pipeline";
 import { addDays } from "../time";
 import { and, count, desc, eq, gte, isNotNull, lte } from "drizzle-orm";
 import { dailyScores, journalEntries, journalTags } from "../db/schema";
-import { finite, loadDays, meanSd, type QueryCtx, todayOf } from "./common";
+import { type QueryCtx, todayOf } from "./common";
 import type { BehavioursVM, ImpactMetricKey, JournalInsightsVM, JournalTag, JournalVM } from "./types";
 
 const GROUP: Record<string, JournalTag["group"]> = {
@@ -75,13 +75,7 @@ export async function getJournal(day: string, ctx: QueryCtx): Promise<JournalVM>
   const mine = byDay.get(day) ?? [];
   const yesOf = (es: typeof entries) => es.filter((e) => e.value > 0).map((e) => ({ tag: e.tag, label: label.get(e.tag) ?? e.tag }));
 
-  const strongest = impact?.impacts.find((t) => t.effects.recovery.label === "positive" || t.effects.recovery.label === "negative");
-  const teaser = strongest
-    ? {
-        ready: true,
-        text: `Your strongest effect so far: ${(label.get(strongest.tag) ?? strongest.tag).toLowerCase()} ${strongest.effects.recovery.delta! < 0 ? "lowers" : "raises"} next-day Recovery by ${Math.abs(Math.round(strongest.effects.recovery.delta!))}%.`,
-      }
-    : { ready: false, text: "Insights appear after 5 days with and 5 without a behaviour." };
+  const teaser = teaserOf(impact?.impacts ?? [], label);
 
   const history: JournalVM["history"] = [];
   for (let d = today; d >= addDays(today, -29); d = addDays(d, -1)) {
@@ -101,6 +95,27 @@ export async function getJournal(day: string, ctx: QueryCtx): Promise<JournalVM>
   };
 }
 
+/**
+ * The Journal's insight line. Only a clear effect (one that survives the false-discovery correction) is quoted, in
+ * Recovery points; without one it says how many behaviours show a possible effect so far.
+ */
+export function teaserOf(impacts: TagImpact[], label: Map<string, string>): JournalVM["teaser"] {
+  // `impacts` is ranked by |Δ recovery|, so the first clear one is the largest.
+  const clearest = impacts.find((t) => strengthOf(t.effects.recovery.label) === "clear");
+  if (clearest) {
+    const d = clearest.effects.recovery.delta!;
+    const name = (label.get(clearest.tag) ?? clearest.tag).toLowerCase();
+    const points = Math.abs(Math.round(d));
+    return { ready: true, text: `Your clearest effect so far: ${name} ${d < 0 ? "lowers" : "raises"} next-day Recovery by about ${points} ${points === 1 ? "point" : "points"}.` };
+  }
+  const possible = impacts.filter((t) => strengthOf(t.effects.recovery.label) === "possible").length;
+  if (possible) {
+    return { ready: true, text: `No clear effects yet. Keep logging: ${possible} ${possible === 1 ? "behaviour shows" : "behaviours show"} a possible effect.` };
+  }
+  if (impacts.some((t) => t.status === "ok")) return { ready: true, text: "No clear effects yet. Keep logging to see what your habits do." };
+  return { ready: false, text: "Insights appear after 5 days with and 5 without a behaviour." };
+}
+
 const METRIC: Record<ImpactMetricKey, ImpactMetric> = { recovery: "recovery", hrv: "hrvZ", sleep: "sleepPerf" };
 
 /** Journal Insights `/journal/insights?m=` (spec §7.12): effects on next-day Recovery, HRV (SD) or sleep. */
@@ -109,19 +124,8 @@ export async function getJournalInsights(metric: ImpactMetricKey = "recovery", c
   const unit = metric === "hrv" ? "SD" : "%";
   const impact = await latestImpact(ctx);
   if (!impact) return { metric, unit, items: [], needsMore: [] };
-  const from = addDays(impact.asOf, -90);
-  const [tags, entries, rows] = await Promise.all([tagsOf(ctx), entriesBetween(ctx, from, addDays(impact.asOf, -1)), loadDays(ctx, addDays(from, 1), impact.asOf)]);
+  const tags = await tagsOf(ctx);
   const label = new Map(tags.map((t) => [t.tag, t.label]));
-  const outcome = (day: string) => {
-    const r = rows.get(day);
-    return key === "recovery" ? r?.recovery?.value : key === "hrvZ" ? r?.recovery?.hrvZ : r?.sleep?.performance;
-  };
-  const arms = (tag: string) => {
-    const yes: (number | null | undefined)[] = [];
-    const no: (number | null | undefined)[] = [];
-    for (const e of entries) if (e.tag === tag) (e.value > 0 ? yes : no).push(outcome(addDays(e.day, 1)));
-    return { avgWith: meanSd(yes.filter(finite)).mean, avgWithout: meanSd(no.filter(finite)).mean };
-  };
 
   const items: JournalInsightsVM["items"] = [];
   const needsMore: JournalInsightsVM["needsMore"] = [];
@@ -132,15 +136,19 @@ export async function getJournalInsights(metric: ImpactMetricKey = "recovery", c
       needsMore.push({ key: t.tag, label: name, yes: e.nYes, no: e.nNo });
       continue;
     }
+    const strength = strengthOf(e.label);
     items.push({
       key: t.tag,
       label: name,
       delta: e.delta,
-      effect: e.label === "positive" ? "positive" : e.label === "negative" ? "negative" : "none",
+      effect: strength ? (e.delta > 0 ? "positive" : "negative") : "none",
+      tentative: strength === "possible",
       yes: e.nYes,
       no: e.nNo,
       ci: [e.ciLow!, e.ciHigh!],
-      ...arms(t.tag),
+      // The stored averages, so they always match the stored Δ (a rescore since can't make them disagree).
+      avgWith: e.meanYes ?? null,
+      avgWithout: e.meanNo ?? null,
     });
   }
   items.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.key.localeCompare(b.key));

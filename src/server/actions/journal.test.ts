@@ -127,8 +127,53 @@ describe("loadCheckIn", () => {
     expect(await loadCheckIn("nope")).toMatchObject({ ok: false });
     // Too far back: the sheet's day strip would run from that day to today.
     expect(await loadCheckIn("2010-01-01")).toMatchObject({ ok: false });
+    expect(r).toMatchObject({ ok: true, data: { day: "2026-10-01" } });
     h.user = null;
     expect(await loadCheckIn("2026-10-01")).toMatchObject({ ok: false });
+  });
+
+  // A morning check-in is about last night: with no `?d=` (day null) the server picks the evening in the user's zone.
+  describe("with no day, it picks the evening", () => {
+    const at = (iso: string) => vi.setSystemTime(new Date(iso));
+    afterAll(() => at("2026-10-02T20:00:00Z"));
+    const dayOf = async () => {
+      const r = await loadCheckIn(null);
+      if (!r.ok) throw new Error(r.error);
+      return r.data.day;
+    };
+
+    it("before noon local time with no check-in yesterday: yesterday", async () => {
+      at("2026-10-03T02:30:00Z"); // 08:00 Oct 3 in Kolkata
+      expect(await dayOf()).toBe("2026-10-02");
+    });
+
+    it("before noon with yesterday already checked in: today", async () => {
+      await saveJournalEntry({ day: "2026-10-02", tag: "alcohol", value: false });
+      at("2026-10-03T02:30:00Z");
+      expect(await dayOf()).toBe("2026-10-03");
+    });
+
+    it("from noon local time: today, even with yesterday empty", async () => {
+      at("2026-10-03T06:29:00Z"); // 11:59 → still yesterday
+      expect(await dayOf()).toBe("2026-10-02");
+      at("2026-10-03T06:30:00Z"); // 12:00 → today
+      expect(await dayOf()).toBe("2026-10-03");
+    });
+
+    it("uses the user's time zone, not UTC: 01:30 local is morning even though it is 20:00 UTC", async () => {
+      at("2026-10-02T20:00:00Z"); // 01:30 Oct 3 in Kolkata
+      expect(await dayOf()).toBe("2026-10-02");
+    });
+
+    it("returns the chosen day's answers with it", async () => {
+      await saveJournalEntry({ day: "2026-10-02", tag: "sauna", value: true });
+      at("2026-10-03T13:00:00Z"); // 18:30 → today, empty
+      const r = await loadCheckIn(null);
+      expect(r.ok && r.data).toMatchObject({ day: "2026-10-03", checkIn: { done: false, entries: {} } });
+      // An explicit day still wins at any hour.
+      at("2026-10-03T02:30:00Z");
+      expect(await loadCheckIn("2026-10-03")).toMatchObject({ ok: true, data: { day: "2026-10-03" } });
+    });
   });
 });
 

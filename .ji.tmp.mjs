@@ -1,0 +1,10 @@
+import fs from "node:fs";
+import { PGlite } from "@electric-sql/pglite";
+const pg = new PGlite({ loadDataDir: new Blob([fs.readFileSync(process.argv[2])]) });
+const r = await pg.query("select day::text as day, journal_impact as j from daily_scores where user_id=1 and journal_impact is not null order by day desc limit 1");
+const j = r.rows[0]; console.log("as of", j.day);
+const list = Array.isArray(j.j) ? j.j : (j.j.tags ?? j.j.impacts ?? j.j);
+for (const t of list) console.log(" ", t.tag.padEnd(14), `yes ${t.nYes} no ${t.nNo}`, ["recovery", "hrvZ", "sleepPerf"].map(m => { const e = t.effects[m]; return `${m} ${e.delta == null ? "—" : e.delta.toFixed(2)} [${e.ciLow?.toFixed(2) ?? ""}, ${e.ciHigh?.toFixed(2) ?? ""}] ${e.label}`; }).join(" | "));
+const e = await pg.query("select tag, count(*) filter (where value > 0) yes, count(*) filter (where value = 0) no from journal_entries where user_id=1 group by tag order by tag");
+console.log(JSON.stringify(e.rows));
+process.exit(0);

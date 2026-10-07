@@ -68,7 +68,7 @@ export const TOOL_DOCS: Record<string, ToolDoc> = {
     params: { id: { type: "string", description: "Workout id returned by get_activities. Never invent an id." } },
   },
   get_journal_impacts: {
-    description: "Check personal habit associations with next-day recovery, HRV or sleep. Returns with/without averages, observed difference, sample sizes, confidence intervals and effect classification. Includes behaviours needing more data. Associations do not prove cause; weak or sparse evidence cannot support a confident explanation. Does not report which habits happened yesterday.",
+    description: "Check personal habit associations with next-day recovery, HRV or sleep. Returns with/without averages, observed difference, sample sizes, 90% intervals, effect direction and strength: clear survives a correction for the many behaviours compared; possible may be chance and must not be presented as a finding, only as something to keep logging. Includes behaviours needing more data. Associations do not prove cause; weak or sparse evidence cannot support a confident explanation. Does not report which habits happened yesterday.",
     params: { outcome: { type: "one of: recovery, hrv, sleep; default recovery", description: "Outcome to compare. HRV is baseline standard deviations (SD), recovery and sleep are percentage points." } },
   },
   get_health: {

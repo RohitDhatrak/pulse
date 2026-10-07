@@ -491,20 +491,21 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "What goes in",
         rows: [
-          { term: "Journal check-ins", detail: "Each behaviour you answered yes or no, over the last 90\u00a0days." },
+          { term: "Journal check-ins", detail: "Each behaviour you answered yes or no for an evening, over the last 90\u00a0days. Before noon, a check-in opens on last night if you haven\u2019t logged it." },
           { term: "Next-day scores", detail: "The next morning’s Recovery and HRV, and that night’s Sleep Performance." },
         ],
       },
       {
         title: "How it is weighted",
         paragraphs: [
-          "For each behaviour, Pulse compares the days you answered yes with the days you answered no: the difference in average next-day score. HRV shows as the change in standard deviations from your baseline. To see how sure that difference is, Pulse resamples your days 1,000 times and keeps the middle 90% of the results.",
+          "For each behaviour, Pulse compares the days you answered yes with the days you answered no: the difference in average next-day score. HRV shows as the change in standard deviations from your baseline. A 90% range around that difference (a Welch t-interval) shows how sure it is. Because many behaviours are compared at once, a difference only counts as clear if it also passes a false-discovery check (Benjamini\u2013Hochberg) across your behaviours. Days next to an illness are left out of every other behaviour.",
         ],
       },
       {
         title: "What the bands mean",
         rows: [
-          { term: "Positive or negative", detail: "That whole 90% range sits above or below zero: a clear effect." },
+          { term: "Clear effect", detail: "The 90% range sits above or below zero, and it holds up after allowing for how many behaviours were compared." },
+          { term: "Possible effect", detail: "The 90% range excludes zero, but it doesn\u2019t pass the check across behaviours, so it may be chance. Shown lighter; keep logging." },
           { term: "No clear effect", detail: "The range crosses zero." },
           { term: "Needs more data", detail: "Fewer than 5 yes days or 5 no days." },
         ],
@@ -512,7 +513,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "This is an association, not proof of cause. It does not adjust for other behaviours or training, so a tag you tend to log on hard days can look harmful. About 1 in 10 behaviours with no real effect will still show a clear one by chance. Days without an answer are left out.",
+          "This is an association, not proof of cause. It does not adjust for other behaviours or training, so a tag you tend to log on hard days can look harmful. About 1 in 10 behaviours with no real effect shows a possible effect by chance, and fewer than 1 in 50 a clear one. Effects that show up tend to look larger than they really are. Days without an answer are left out.",
         ],
       },
     ],

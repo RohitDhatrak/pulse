@@ -9,7 +9,7 @@ import { TAG_GROUPS, tagIcon } from "@/lib/journal"
 import { DAY, formatDay } from "@/lib/format"
 import { haptic } from "@/lib/haptics"
 import { enqueue } from "@/lib/offline-queue"
-import { parseDay } from "@/lib/url"
+import { addDays, parseDay } from "@/lib/url"
 import { addCustomTag, loadCheckIn, saveJournalEntry } from "@/server/actions/journal"
 import type { JournalVM } from "@/server/queries/types"
 import { StatusChip } from "@/components/metrics/primitives"
@@ -78,7 +78,7 @@ export function CheckIn({ dayLabel, checkIn }: CheckInProps) {
       ) : (
         <div className="flex flex-1 flex-col gap-4">
           <p className="max-w-[65ch] text-[15px] leading-[22px] text-pretty text-foreground-secondary">
-            Log what you did today. Pulse compares it with tomorrow’s Recovery.
+            Log what you did this evening. Pulse compares it with the next morning’s Recovery.
           </p>
           <Button aria-haspopup="dialog" data-sheet="checkin" size="touch" className="mt-auto w-full" onClick={start}>
             Check in
@@ -91,20 +91,29 @@ export function CheckIn({ dayLabel, checkIn }: CheckInProps) {
 
 type Loaded = { day: string } & Pick<JournalVM, "tags" | "checkIn">
 
+/** The Yesterday / Today switch's value for `day`, or null for an older day (no switch). */
+export function eveningOf(day: string, today: string): "yesterday" | "today" | null {
+  return day === today ? "today" : day === addDays(today, -1) ? "yesterday" : null
+}
+
 /**
  * The check-in sheet (spec §7.11), mounted once in the app layout: `?checkin=1` opens it over whatever screen is
- * showing, for that screen's day (`?d=`), and closing it (X, swipe, Save, Back) leaves that screen as it was
- * (spec §11 UX2). The behaviours and answers load when it opens.
+ * showing, and closing it (X, swipe, Save, Back) leaves that screen as it was (spec §11 UX2). The behaviours and
+ * answers load when it opens. A check-in is about an evening: with a `?d=` it is that day's; without one the server
+ * picks (yesterday evening before noon when yesterday has no check-in, else today), and a Yesterday / Today switch
+ * changes it.
  */
 export function CheckInSheet() {
   const { today } = useShellCalendar()
   const { userId } = useShellStatus()
   const params = useSearchParams()
   const wants = params.get("checkin") === "1"
-  const { d: day } = parseDay(params.get("d") ?? undefined, today)
+  const explicit = params.get("d")
+  const { d: day } = parseDay(explicit ?? undefined, today)
   const [open, setOpen] = React.useState(false)
   const [data, setData] = React.useState<Loaded | null>(null)
-  const [request, setRequest] = React.useState<{ day: string; n: number } | null>(null)
+  // `day` null: let the server choose (no `?d=`).
+  const [request, setRequest] = React.useState<{ day: string | null; n: number } | null>(null)
   const [loadError, setLoadError] = React.useState(false)
   const [values, setValues] = React.useState<Values>({})
   const [saving, setSaving] = React.useState(false)
@@ -120,7 +129,18 @@ export function CheckInSheet() {
   const tags = data?.tags ?? []
   const saved = data?.checkIn.entries ?? {}
   const dirty = Object.keys(values).some((t) => values[t] !== saved[t])
-  const dayLabel = formatDay(data?.day ?? day, DAY.short)
+  // Unknown until the server has chosen the day (no `?d=`): no label rather than a guess.
+  const shownDay = data?.day ?? (explicit ? day : null)
+  const dayLabel = shownDay ? formatDay(shownDay, DAY.short) : ""
+  const evening = data ? eveningOf(data.day, today) : null
+  const switchTo = (to: string) => {
+    if (!to || !data || to === evening) return
+    setData(null)
+    setValues({})
+    setLoadError(false)
+    setSaveError(false)
+    setRequest((r) => ({ day: to === "today" ? today : addDays(today, -1), n: (r?.n ?? 0) + 1 }))
+  }
 
   // Closing the sheet asks before discarding (Discard changes?); a reload or leaving the page asks the browser's way.
   React.useEffect(() => {
@@ -137,7 +157,7 @@ export function CheckInSheet() {
       .then((r) => {
         if (!live) return
         if (!r.ok) return setLoadError(true)
-        setData({ day: request.day, ...r.data })
+        setData(r.data)
         setValues({ ...r.data.checkIn.entries })
       })
       .catch(() => live && setLoadError(true))
@@ -158,7 +178,7 @@ export function CheckInSheet() {
       setAddError(null)
       setLabel("")
       setOpen(true)
-      setRequest((r) => ({ day, n: (r?.n ?? 0) + 1 }))
+      setRequest((r) => ({ day: explicit ? day : null, n: (r?.n ?? 0) + 1 }))
     } else if (!wants && open && !confirm) {
       if (dirty && !saving) setConfirm(true)
       else setOpen(false)
@@ -246,7 +266,7 @@ export function CheckInSheet() {
         open={open}
         onOpenChange={close}
         title="Check in"
-        description={dayLabel}
+        description={dayLabel && `Evening of ${dayLabel}`}
         size="tall"
         fallbackFocus={fallback}
         footer={
@@ -277,6 +297,28 @@ export function CheckInSheet() {
               <LoaderCircle aria-hidden className="size-5 animate-spin text-muted-foreground motion-reduce:animate-none" strokeWidth={2} />
             </div>
           ))}
+        {evening && (
+          // Morning check-ins are usually about last night: say which evening, and let it be switched before answering.
+          <ToggleGroup
+            type="single"
+            value={evening}
+            onValueChange={switchTo}
+            disabled={dirty}
+            spacing={0}
+            aria-label="Which evening"
+            className="mt-2 w-full gap-0.5 rounded-lg bg-muted p-0.5"
+          >
+            {(["yesterday", "today"] as const).map((v) => (
+              <ToggleGroupItem
+                key={v}
+                value={v}
+                className="h-10 flex-1 rounded-md! px-3 text-[13px] font-bold tracking-[0.1em] text-muted-foreground uppercase transition-[background-color,color] duration-150 ease-standard hover:bg-transparent hover:text-foreground data-[state=on]:bg-secondary data-[state=on]:text-foreground"
+              >
+                {v === "today" ? "Today" : "Yesterday"}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        )}
         {data && TAG_GROUPS.map((g) => {
           const items = tags.filter((t) => t.group === g.key)
           if (!items.length && g.key !== "custom") return null

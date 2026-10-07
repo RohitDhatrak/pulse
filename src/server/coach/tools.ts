@@ -166,7 +166,7 @@ export function coachTools(ctx: QueryCtx, t: Texts = defaultTexts) {
         return {
           outcome,
           unit: j.unit,
-          effects: j.items.map((i) => ({ key: i.key, behaviour: i.label, effect: i.effect, confidenceInterval: i.ci ?? null, delta: round(i.delta, 1), withAvg: i.avgWith, withoutAvg: i.avgWithout, yesDays: i.yes, noDays: i.no })),
+          effects: j.items.map((i) => ({ key: i.key, behaviour: i.label, effect: i.effect, strength: i.effect === "none" ? null : i.tentative ? ("possible" as const) : ("clear" as const), confidenceInterval: i.ci ?? null, delta: round(i.delta, 1), withAvg: i.avgWith, withoutAvg: i.avgWithout, yesDays: i.yes, noDays: i.no })),
           needsMoreData: j.needsMore.map((n) => ({ behaviour: n.label, yesDays: n.yes, noDays: n.no })),
         };
       },

@@ -75,3 +75,13 @@ it("habit results retain sample sizes, uncertainty and insufficient-data counts"
   for (const effect of result.effects) expect(effect).toMatchObject({ yesDays: expect.any(Number), noDays: expect.any(Number), confidenceInterval: expect.any(Array), effect: expect.any(String) });
   for (const item of result.needsMoreData) expect(item).toMatchObject({ yesDays: expect.any(Number), noDays: expect.any(Number) });
 });
+
+it("habit results say how strong each effect is: clear, possible (may be chance) or none", async () => {
+  type Out = { effects: { key: string; effect: string; strength: string | null }[] };
+  const sleep = (await coachTools(ctxFor(db)).get_journal_impacts.execute!({ outcome: "sleep" }, opts)) as Out;
+  for (const e of sleep.effects) expect(e.effect === "none" ? e.strength === null : ["clear", "possible"].includes(e.strength!)).toBe(true);
+  // On the seed, alcohol's sleep effect is only possible; its Recovery effect is clear.
+  expect(sleep.effects.find((e) => e.key === "alcohol")).toMatchObject({ effect: "negative", strength: "possible" });
+  const recovery = (await coachTools(ctxFor(db)).get_journal_impacts.execute!({ outcome: "recovery" }, opts)) as Out;
+  expect(recovery.effects.find((e) => e.key === "alcohol")).toMatchObject({ effect: "negative", strength: "clear" });
+});

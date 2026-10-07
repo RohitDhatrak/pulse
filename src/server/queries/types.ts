@@ -63,6 +63,8 @@ export type DriverItem = {
   label: string;
   delta: number;
   effect?: "positive" | "negative" | "none";
+  /** Journal impact: a possible effect only (its 90% interval excludes 0 but it doesn't survive the FDR correction). */
+  tentative?: boolean;
   yes?: number;
   no?: number;
   ci?: [number, number];

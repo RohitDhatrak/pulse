@@ -362,6 +362,33 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.stress": "8131d5344e8e2307",
     "reports": "8b8aeb4d038d2c1d",
   },
+  // 18: journal impact: a Welch t interval (was a percentile bootstrap), clear labels only for effects that survive
+  // Benjamini–Hochberg (q 0.1) per metric, "possible_*" otherwise, and days next to an illness left out of the other
+  // behaviours. Moved: journal_impact and the reports' habit effects, plus the version stamp (and strain's key).
+  // Every score (recovery, sleep, strain values, …) is unchanged.
+  18: {
+    "daily_scores.scoring_version": "c4a73691987f16d1",
+    "daily_scores.strain": "ae1c93d686cbfcbb",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "da6e0572ab604901",
+    "daily_scores.sleep": "82e3b4ff7229d2b8",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "a70cc076e96b17e2",
+    "daily_scores.sleep_planner": "1e4416c535fcefe8",
+    "daily_scores.energy_bank": "315fd04ffe7a42b9",
+    "daily_scores.stress": "fd09fd3252ff2955",
+    "daily_scores.health_monitor": "a4baa71279549a09",
+    "daily_scores.healthspan": "5c3f5cb9714fdee6",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "fba2b406ac2befd1",
+    "intraday_series.energy_bank": "d65cff79206354d4",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "c0bf14266ee71abd",
+    "intraday_series.stress": "8131d5344e8e2307",
+    "reports": "d4b20308c61bdbea",
+  },
 };
 
 // Numbers are rounded to 10 significant digits first, so a last-ulp difference in Math between Node

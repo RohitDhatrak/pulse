@@ -5,7 +5,7 @@ import type { Db } from "../db";
 import { dailyScores, intradayDirty, intradaySeries, journalEntries, reports, sleepSegments } from "../db/schema";
 import { addDays } from "../time";
 import { hrvCfg, respCfg, restingHRCfg, skinTempCfg, update } from "@/core/scoring/baselines";
-import { journalImpact, type JournalDay, type TagImpact } from "@/core/algorithms/journalImpact";
+import { journalImpact, journalImpactConfig, type JournalDay, type TagImpact } from "@/core/algorithms/journalImpact";
 import { buildReport, periodBounds, reportPeriods } from "@/core/algorithms/reports";
 import { BATCH_DAYS, type Data, groupBy, type Segment, sha, upsertSeries } from "./data";
 import {
@@ -128,7 +128,8 @@ export async function stage2(db: Db, data: Data, opts: PipelineOptions) {
     const from = addDays(day, -90);
     const inWindow = entries.filter((e) => e.day >= from && e.day < day);
     const outWindow = f.outcomes.filter((o) => o.day > from && o.day <= day);
-    const key = sha(JSON.stringify([inWindow, outWindow]));
+    // The method version is part of the key, so a new method recomputes results whose inputs did not change.
+    const key = sha(JSON.stringify([journalImpactConfig.version, inWindow, outWindow]));
     const prior = storedImpact.get(day);
     const impacts = prior?.key === key ? prior.impacts : journalImpact(inWindow, outWindow, day);
     impactsAsOf.set(day, impacts);

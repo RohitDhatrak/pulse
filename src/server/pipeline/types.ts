@@ -39,8 +39,11 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * 7 nights (was 8): a healthy 7 h sleeper no longer carries 73 min of permanent debt. 16: the Health Monitor's own
  * ranges are ± 2.5σ (was 2); Google's ranges and the SpO2 95 % floor are unchanged. 17: Recovery's sleep term is
  * centred on your own average sleep performance over the prior 28 nights (0.85 until 7 exist), not a fixed 0.85.
+ * 18: journal impact uses a Welch t interval (was a percentile bootstrap, which flagged 12.5 % of null effects at
+ * 90 %), labels an effect clear only when it survives Benjamini–Hochberg (q 0.1) across that metric's behaviours and
+ * "possible" otherwise, and leaves days next to an illness out of the other behaviours' comparisons.
  */
-export const SCORING_VERSION = 17;
+export const SCORING_VERSION = 18;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */

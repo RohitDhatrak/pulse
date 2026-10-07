@@ -26,6 +26,17 @@ The Google Health API gives us raw signals only (heart rate, steps, sleep sessio
 4. **Journal impact will report spurious effects.** It runs about 27 tests (9 tags × 3 metrics) at 90 % confidence, with no multiple-comparison control. It resamples days as if they were independent, although recovery is autocorrelated and behaviours cluster on weekends. A percentile bootstrap with 5 days per arm is known to give intervals that are too narrow. About 2.7 false "effects" are expected per analysis even when nothing is real. With 5 days per arm, only effects of about 24 recovery points or more can be detected reliably.
 
    **Proposal:** use a Welch t-interval with an autocorrelation-adjusted effective n, apply Benjamini–Hochberg FDR across tags × metrics, require 10 days per arm before labelling, and remove day-of-week means from outcomes first.
+
+   **Status (scoring version 18, see `docs/algorithms/journal-impact.md`):** each part was simulated before adopting it.
+   - **Adopted:**
+     - the Welch t-interval (10.3 % of no-effect tests labelled, against 12.5 % for the bootstrap);
+     - Benjamini–Hochberg at q = 0.1, *per metric* rather than across all 27 tests (pooled, a real −10 became clear in
+       only 19 % of runs). Survivors are "clear", other interval-excluding results "possible";
+     - leaving days next to an illness out of the other tags.
+   - **Not adopted:**
+     - the effective-n correction: at most 12.3 % labelled with a lag-1 correlation of 0.4–0.9 and clustered tags;
+     - 10 days per arm: no fewer false labels, much less power for rare habits;
+     - day-of-week removal: it absorbs real effects of weekend habits.
 5. **Fitness level labels are one band more flattering than the standard ones, and the daily VO2max path is circular.**
    - Our "Good" (40th–59th percentile) is "Average" in the ACSM/Cooper convention, and our "Superior" (≥ 80th) is their "Excellent".
    - Fitbit's no-run VO2max is computed from resting HR, age, sex and weight. Ranking it against age and sex norms mostly re-reports resting HR and BMI.
@@ -70,8 +81,8 @@ flowchart TB
   subgraph Journal[Journal impact]
     TAGS[Tag yes or no on day D, last 90 days] --> PAIR[Pair with outcomes on D + 1]
     PAIR --> GATE{5+ yes and 5+ no?}
-    GATE -->|yes| BOOT["Δ = mean yes − mean no; 1,000-resample percentile bootstrap, 90 % CI"]
-    BOOT --> LAB[positive or negative if the CI excludes 0]
+    GATE -->|yes| BOOT["Δ = mean yes − mean no; Welch t 90 % interval and p (v18; was a percentile bootstrap)"]
+    BOOT --> LAB["clear if it survives BH q 0.1 per metric; possible if only the interval excludes 0"]
   end
 ```
 
@@ -118,6 +129,7 @@ flowchart TB
 - Each arm needs at least 5 days.
 - The effect is Δ = mean(yes) − mean(no), with a seeded 1,000-resample i.i.d. percentile bootstrap and a 90 % CI.
 - An effect is labelled positive or negative when its CI excludes 0. Tags are ranked by |Δ recovery|.
+- *Since scoring version 18:* a Welch t-interval. Labels are clear (Benjamini–Hochberg q 0.1 per metric) or possible, and days next to an illness are left out of other tags (see the status note above).
 
 ## Per-component evidence review
 

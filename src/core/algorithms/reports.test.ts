@@ -88,6 +88,9 @@ describe("buildReport", () => {
       ({ tag, effects: { recovery: { delta, label } } }) as unknown as TagImpact;
     const impacts = [impact("a", -3, "negative"), impact("b", 9, "no_clear_effect"), impact("c", 5, "positive"), impact("d", -12, "negative"), impact("e", 4, "positive")];
     expect(buildReport("2026-W40", rows, impacts).topImpacts.map((t) => t.tag)).toEqual(["d", "c", "e"]);
+    // A possible effect (SCORING_VERSION 18) never reaches the report, however large.
+    const withPossible = [...impacts, impact("f", -30, "possible_negative"), impact("g", 25, "possible_positive")];
+    expect(buildReport("2026-W40", rows, withPossible).topImpacts.map((t) => t.tag)).toEqual(["d", "c", "e"]);
   });
 
   it("an empty period has nulls and zero counts", () => {

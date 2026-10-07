@@ -74,7 +74,7 @@ export function Evidence({ name, output }: { name: string; output: unknown }) {
       <p className="text-[12px] leading-4 text-muted-foreground">Differences in next-day averages, not proof of cause.</p>
       {d.effects.slice(0, 3).map((v) => <div key={v.behaviour}>
         <KeyStatRow variant="row" label={v.behaviour} metric={metric({ value: v.delta })} unit={d.unit} format="signed1" direction="none" caption={`${v.yesDays} days with, ${v.noDays} without`} />
-        {v.confidenceInterval && <p className="pb-2 text-[12px] leading-4 text-muted-foreground">90% interval: {v.confidenceInterval.map((n) => n.toFixed(1)).join(" to ")} {d.unit}{v.effect === "none" ? ". No clear association." : "."}</p>}
+        {v.confidenceInterval && <p className="pb-2 text-[12px] leading-4 text-muted-foreground">90% interval: {v.confidenceInterval.map((n) => n.toFixed(1)).join(" to ")} {d.unit}{v.effect === "none" ? ". No clear association." : v.strength === "possible" ? ". Possible association." : "."}</p>}
       </div>)}
       {!d.effects.length && <p className="mt-2 text-[13px] text-muted-foreground">Not enough check-ins to compare habits yet.</p>}
     </Card><BasedOn href="/journal/insights">Behaviour insights</BasedOn></div>

@@ -2272,11 +2272,14 @@ Shell: `PageShell dateSwitcher={{ mode: "day" }} actions={Insights button}` . Th
 | # | Section | Component | Copy | Empty / reason |
 |---|---|---|---|---|
 | 1 | Week strip | DayStrip `indicator="journal"` | n/a | n/a |
-| 2 | Check-in card | SectionShell `card` "Check-in" with the date as aside caption | not done: body "Log what you did today. Pulse compares it with tomorrow's Recovery." + `Button size="touch"` default "Check in" (full width on phone via the card's flex column). Done: chip "Checked in" (optimal, `Check`), the yes behaviours as tags (`Badge variant="secondary"`, sentence case, `h-7 rounded-full px-3 text-[13px] font-semibold`), `Button variant="secondary" size="touch"` "Edit" | future dates never reach here (URL rule) |
-| 3 | Insights teaser | InsightCard | "Your strongest effect so far: alcohol lowers next-day HRV by 12%." action "See all insights" → `/journal/insights`; before enough data: "Insights appear after 5 days with and 5 without a behaviour." | n/a |
+| 2 | Check-in card | SectionShell `card` "Check-in" with the date as aside caption | not done: body "Log what you did this evening. Pulse compares it with the next morning's Recovery." + `Button size="touch"` default "Check in" (full width on phone via the card's flex column). Done: chip "Checked in" (optimal, `Check`), the yes behaviours as tags (`Badge variant="secondary"`, sentence case, `h-7 rounded-full px-3 text-[13px] font-semibold`), `Button variant="secondary" size="touch"` "Edit" | future dates never reach here (URL rule) |
+| 3 | Insights teaser | InsightCard | Only a *clear* Recovery effect (journal-impact.md), the largest, in points: "Your clearest effect so far: alcohol lowers next-day Recovery by about 22 points." action "See all insights" → `/journal/insights`. Only possible effects: "No clear effects yet. Keep logging: 2 behaviours show a possible effect." Analysed, none: "No clear effects yet. Keep logging to see what your habits do." Before enough data: "Insights appear after 5 days with and 5 without a behaviour." | n/a |
 | 4 | History | SectionShell `section` "History" + Card with rows (`divide-y`): date (stat-label) left, up to 3 behaviour tags + "+2" right, `ChevronRight`; tap → `?d=` that day | rows for the last 30 days that have entries | "No check-ins yet. Your first one takes under a minute." + "Check in" |
 
-**Check-in sheet** (ResponsiveSheet `size="tall"`): title "Check in", description = the date ("Mon, Sep 28").
+**Check-in sheet** (ResponsiveSheet `size="tall"`): title "Check in", description "Evening of Mon, Sep 28".
+
+- Which evening (scoring version 18; journal-impact.md): opened with a `?d=`, the sheet is that day's. Opened without one, the server picks: before 12:00 local time with no check-in yesterday, yesterday evening; otherwise today. A morning check-in is almost always about last night, and saving it under today paired it with the wrong night's Recovery.
+- When the day is yesterday or today, a full-width `ToggleGroup` "Which evening" with "Yesterday" / "Today" sits above the groups (TrendChart toggle style); switching loads that day's answers. It is disabled while there are unsaved answers. Older days have no switch.
 
 - Groups (card-title role headings, `mt-6` above each): "Evening": Alcohol, Late caffeine, Late meal, Screen in bed. "Recovery": Meditation, Stretching, Sauna. "Context": Travel, Illness. "Your behaviours": custom tags.
 - Row: `flex min-h-14 items-center gap-3 border-b border-border`; icon 20 px muted; label body role (`text-foreground`); control `ToggleGroup type="single" variant="outline"` with items "No" and "Yes" (`h-11 min-w-14 rounded-lg text-[13px] font-bold uppercase tracking-[0.06em]`, on-state: No `bg-secondary text-foreground`, Yes `bg-foreground text-primary-foreground`). Unset = neither pressed (the behaviour is not logged). Each row's group has `aria-label="{Behaviour}"`.
@@ -2294,11 +2297,11 @@ Phone, 390:
 │ 20  21  22  23  24  25  26  27  28  29  30 │
 │ (✓) (✓) (✓) ( ) (✓) (✓) ( ) ...           │
 │ ┌ CHECK-IN                  Mon, Sep 28 ─┐ │
-│ │Log what you did today. Pulse compares  │ │
-│ │it with tomorrow's Recovery.            │ │
+│ │Log what you did this evening. Pulse    │ │
+│ │compares it with the next morning's …   │ │
 │ │[            CHECK IN               ]   │ │
 │ └────────────────────────────────────────┘ │
-│ ╭ Your strongest effect so far: alcohol…╮ │
+│ ╭ Your clearest effect so far: alcohol… ╮ │
 │ ╰ SEE ALL INSIGHTS →                    ╯ │
 │ History                                    │
 │ ┌────────────────────────────────────────┐ │
@@ -2311,7 +2314,8 @@ Phone, 390:
 ┌────────────────────────────────────────────┐
 │                  ───                       │ handle
 │ Check in                                   │
-│ Mon, Sep 28                                │
+│ Evening of Mon, Sep 28                     │
+│ [  YESTERDAY  |   TODAY   ]                │
 │ EVENING                                    │
 │ (wine) Alcohol              [NO] [YES]     │
 │ (cup) Late caffeine         [NO] [YES]     │
@@ -2364,11 +2368,11 @@ Shell: `DetailShell title="Journal insights"` (parent `/journal`). Reference: [j
 |---|---|---|---|
 | hero | intro block, left-aligned: "Recovery impact analysis" (section-title role), body "How each behaviour changed your next-day {metric} over the last 90 days. Tap a behaviour for details.", caption "Updated daily" | metric word follows the toggle: "Recovery", "HRV", "sleep performance" | n/a |
 | summary | `ToggleGroup type="single"` (same style as TrendChart's) items "Recovery", "HRV", "Sleep"; kept in `?m=recovery|hrv|sleep` via `router.replace` | n/a | n/a |
-| primary | DriverList `impact` with header "Hurts / % impact / Helps" (HRV: "Impact (SD)") | rows per §5.4 | DriverList impact empty copy + "Check in" → `/journal` (opens the sheet with `?checkin=1`) |
+| primary | DriverList `impact` with header "Hurts / % impact / Helps" (HRV: "Impact (SD)") | rows per §5.4. A *possible* effect (`tentative`) draws its bar at 40% (`bg-optimal/40`, `bg-warning/40`), its caption starts "Possible effect.", and its spoken sentence says "may have raised / lowered … , a possible effect"; a clear one is toned as before; none is grey | DriverList impact empty copy + "Check in" → `/journal` (opens the sheet with `?checkin=1`) |
 | secondary 1 | SectionShell `card` "Needs more data" + rows: behaviour label (stat-label), caption "3 of 5 days with, 40 of 5 without" and a `Progress` of the smaller side's count to 5 | n/a | hidden when every behaviour qualifies |
-| footer | caption | "Effects are differences in averages, not proof of cause. Change one habit at a time to see what it really does." | n/a |
+| footer | caption | "Effects are differences in averages, not proof of cause. A clear effect holds up after allowing for the many behaviours compared; a possible one may be chance, so keep logging. Change one habit at a time to see what it really does." (`IMPACT_FOOTER`) | n/a |
 
-Impact detail (tap a row): ResponsiveSheet title = behaviour; body: effect value (`font-numeric text-4xl font-bold`, toned) + metric line "next-day Recovery", rows "Days with: 14", "Days without: 52", "90% confidence: −19% to −5%", "Average with: 58%", "Average without: 70%"; caption as footer above.
+Impact detail (tap a row): ResponsiveSheet title = behaviour; body: effect value (`font-numeric text-4xl font-bold`, toned only when clear; a possible effect stays `text-foreground-secondary`) + metric line "next-day Recovery", rows "Strength: Clear" (or "Possible, keep logging" / "No clear effect"), "Days with: 14", "Days without: 52", "90% range: −19% to −5%", "Average with: 58%", "Average without: 70%" (the stored means, so they always match the effect); caption as footer above.
 
 Phone, 390:
 

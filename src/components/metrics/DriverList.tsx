@@ -14,6 +14,11 @@ export type DriverItem = {
   delta: number
   /** "none": no clear effect (CI crosses zero). Defaults to the sign of `delta`. */
   effect?: "positive" | "negative" | "none"
+  /**
+   * Impact variant: a possible effect only (its own 90% interval excludes 0, but it doesn't survive the
+   * false-discovery correction across behaviours). Drawn lighter and worded "may have".
+   */
+  tentative?: boolean
   /** Impact variant: days with and without the behaviour, and the 90% CI. */
   yes?: number
   no?: number
@@ -44,7 +49,10 @@ function sentence(i: DriverItem, variant: DriverListProps["variant"], unit: Driv
   const k = unit === "SD" ? "decimal1" : "int"
   const ci = i.ci ? `, 90 percent confidence ${formatValue(k, Math.min(Math.abs(i.ci[0]), Math.abs(i.ci[1])))} to ${formatValue(k, Math.max(Math.abs(i.ci[0]), Math.abs(i.ci[1])))}` : ""
   const n = i.yes !== undefined && i.no !== undefined ? `, from ${i.yes} days with and ${i.no} without` : ""
-  const verb = e === "none" ? `had no clear effect on next-day ${outcome}` : `${e === "positive" ? "raised" : "lowered"} next-day ${outcome} by ${size}`
+  const verb =
+    e === "none"
+      ? `had no clear effect on next-day ${outcome}`
+      : `${i.tentative ? "may have " : ""}${e === "positive" ? "raised" : "lowered"} next-day ${outcome} by ${size}${i.tentative ? ", a possible effect" : ""}`
   return `${i.label} ${verb}${ci}${n}`
 }
 
@@ -108,7 +116,11 @@ function Item({ i, max, p }: { i: DriverItem; max: number; p: DriverListProps })
               className={cn(
                 "absolute inset-y-0 rounded-sm",
                 i.delta > 0 ? "left-1/2" : "right-1/2",
-                e === "positive" ? "bg-optimal" : e === "negative" ? "bg-warning" : "bg-muted-foreground"
+                e === "positive"
+                  ? i.tentative ? "bg-optimal/40" : "bg-optimal"
+                  : e === "negative"
+                    ? i.tentative ? "bg-warning/40" : "bg-warning"
+                    : "bg-muted-foreground"
               )}
               style={{ width }}
             />
@@ -119,6 +131,7 @@ function Item({ i, max, p }: { i: DriverItem; max: number; p: DriverListProps })
         </span>
         {p.variant === "impact" && i.yes !== undefined && i.no !== undefined && (
           <span className="block text-xs leading-4 font-medium text-muted-foreground tabular-nums">
+            {i.tentative && "Possible effect. "}
             {i.yes} days with, {i.no} without.
             {i.ci && ` 90% CI ${fmt(i.ci[0], p.unit).replace(/^\+/, "")} to ${fmt(i.ci[1], p.unit).replace(/^\+/, "")}`}
           </span>

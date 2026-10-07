@@ -12,6 +12,7 @@ import {
   type Stage1Day,
   type StrainTargetRow,
 } from ".";
+import { journalImpactConfig } from "@/core/algorithms/journalImpact";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
 import { personalizedNeedHours } from "@/core/scoring/sleep";
 import { trimpToStrain } from "@/core/scoring/strain";
@@ -188,6 +189,46 @@ describe("needsRecompute", () => {
     const after = await dump(logged, "daily_scores", "1, 2");
     await recompute(logged, OPTS);
     expect(await dump(logged, "daily_scores", "1, 2")).toBe(after);
+  });
+
+  it("journal impact is memoised on its inputs and the method version: a new method recomputes unchanged inputs", async () => {
+    const copy = await copyDb(db);
+    const day = dayAt(179);
+    // Replace the stored result with a marker, keep its key, and make stage 2 run (a dirty day before it).
+    const mark = async () => {
+      await copy.execute(sql`update daily_scores set journal_impact = jsonb_set(journal_impact, '{impacts}', '[]') where user_id = ${USER} and day = ${day}`);
+      await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(170)}) on conflict do nothing`);
+    };
+    const stored = async () => (await json<JournalImpactRow>(copy, "journal_impact", day)).impacts.length;
+    await mark();
+    await recompute(copy, OPTS);
+    expect(await stored()).toBe(0); // same inputs, same version: the stored result is reused
+    const keep = journalImpactConfig.version;
+    journalImpactConfig.version = keep + 1;
+    try {
+      await mark();
+      await recompute(copy, OPTS);
+      expect(await stored()).toBeGreaterThan(0); // a new version: recomputed although the inputs did not change
+    } finally {
+      journalImpactConfig.version = keep;
+    }
+  });
+
+  it("journal impact on the seed (SCORING_VERSION 18): alcohol is clear, the late-meal false positive is gone", async () => {
+    const fx = Object.fromEntries((await json<JournalImpactRow>(db, "journal_impact", dayAt(179))).impacts.map((t) => [t.tag, t.effects]));
+    // Alcohol: the generator lowers HRV ×0.88 and raises resting HR 3 bpm the next morning.
+    expect(fx.alcohol.recovery.label).toBe("negative");
+    expect(fx.alcohol.recovery.delta!).toBeLessThan(-15);
+    expect(fx.alcohol.hrvZ.label).toBe("negative");
+    // Late meals have no built-in effect; the 90% bootstrap labelled their sleep +1.15 "positive".
+    for (const m of ["recovery", "hrvZ", "sleepPerf"] as const) expect(["no_clear_effect", "possible_positive", "possible_negative"]).toContain(fx.late_meal[m].label);
+    // Every stored effect carries its means and p, and Δ = mean(yes) − mean(no).
+    for (const e of Object.values(fx).flatMap((x) => Object.values(x))) {
+      if (e.label === "not_enough_data") continue;
+      expect(e.delta!).toBeCloseTo(e.meanYes! - e.meanNo!, 9);
+      expect(e.p!).toBeGreaterThanOrEqual(0);
+      expect(e.p!).toBeLessThanOrEqual(1);
+    }
   });
 });
 

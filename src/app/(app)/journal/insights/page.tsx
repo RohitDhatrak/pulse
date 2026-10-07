@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils"
+import { IMPACT_FOOTER } from "@/lib/journal"
 import { CARD_MATERIAL } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { userCtx } from "@/server/queries/common"
@@ -46,7 +47,7 @@ export default async function JournalInsightsPage({ searchParams }: PageProps<"/
           {/* Phone and tablet: after the list, as before. Laptop shows it in the hero column instead. */}
           {vm.needsMore.length > 0 && <Unlock id="unlock" needsMore={vm.needsMore} word={WORD[metric]} className="xl:hidden" />}
           <p className="text-xs leading-4 font-medium text-pretty text-muted-foreground">
-            Effects are differences in averages, not proof of cause. Change one habit at a time to see what it really does.
+            {IMPACT_FOOTER}
           </p>
         </>
       }

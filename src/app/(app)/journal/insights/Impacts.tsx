@@ -4,6 +4,7 @@ import * as React from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { formatValue } from "@/lib/format"
+import { IMPACT_FOOTER } from "@/lib/journal"
 import { withParam } from "@/lib/url"
 import { useSheetParam } from "@/hooks/use-sheet-param"
 import type { ImpactMetricKey, JournalInsightsVM } from "@/server/queries/types"
@@ -17,7 +18,6 @@ const METRICS: { key: ImpactMetricKey; label: string; word: string }[] = [
   { key: "sleep", label: "Sleep", word: "sleep performance" },
 ]
 const metricWord = (m: ImpactMetricKey) => METRICS.find((x) => x.key === m)!.word
-const FOOTER = "Effects are differences in averages, not proof of cause. Change one habit at a time to see what it really does."
 
 /** Recovery / HRV / Sleep, kept in `?m=` with router.replace (spec §7.12). */
 export function MetricToggle({ metric }: { metric: ImpactMetricKey }) {
@@ -56,7 +56,9 @@ export function ImpactList({ vm }: { vm: JournalInsightsVM }) {
   const sd = vm.unit === "SD"
   const fx = (v: number, signed = true) => (sd ? `${formatValue(signed ? "signed1" : "decimal1", v)} SD` : `${formatValue(signed ? "signedInt" : "int", v)}%`)
   const avg = (v: number | null) => (v === null ? "--" : sd ? `${formatValue("signed1", v)} SD` : `${formatValue("int", v)}%`)
-  const tone = item?.effect === "positive" ? "text-optimal" : item?.effect === "negative" ? "text-warning" : "text-foreground-secondary"
+  // A possible effect stays neutral: only a clear one is toned as helping or hurting.
+  const tone = item?.tentative ? "text-foreground-secondary" : item?.effect === "positive" ? "text-optimal" : item?.effect === "negative" ? "text-warning" : "text-foreground-secondary"
+  const strength = !item || item.effect === "none" ? "No clear effect" : item.tentative ? "Possible, keep logging" : "Clear"
 
   return (
     <>
@@ -80,9 +82,10 @@ export function ImpactList({ vm }: { vm: JournalInsightsVM }) {
             </div>
             <dl className="divide-y divide-border text-[15px] leading-[22px]">
               {[
+                ["Strength", strength],
                 ["Days with", String(item.yes ?? "--")],
                 ["Days without", String(item.no ?? "--")],
-                ["90% confidence", item.ci ? `${fx(item.ci[0], false)} to ${fx(item.ci[1], false)}` : "--"],
+                ["90% range", item.ci ? `${fx(item.ci[0], false)} to ${fx(item.ci[1], false)}` : "--"],
                 ["Average with", avg(item.avgWith)],
                 ["Average without", avg(item.avgWithout)],
               ].map(([k, v]) => (
@@ -92,7 +95,7 @@ export function ImpactList({ vm }: { vm: JournalInsightsVM }) {
                 </div>
               ))}
             </dl>
-            <p className="text-xs leading-4 font-medium text-pretty text-muted-foreground">{FOOTER}</p>
+            <p className="text-xs leading-4 font-medium text-pretty text-muted-foreground">{IMPACT_FOOTER}</p>
           </div>
         )}
       </ResponsiveSheet>

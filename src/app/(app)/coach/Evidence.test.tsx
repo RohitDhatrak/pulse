@@ -16,6 +16,15 @@ it("keeps weak habit evidence visible without claiming causation", () => {
   expect(screen.getByText(/not proof of cause/)).toBeVisible()
 });
 
+it("labels a possible habit effect as possible, and a clear one plainly", () => {
+  render(<Evidence name="get_journal_impacts" output={{ outcome: "sleep", unit: "%", effects: [
+    { behaviour: "Alcohol", delta: -2.7, yesDays: 20, noDays: 56, confidenceInterval: [-4.7, -0.8], effect: "negative", strength: "possible" },
+    { behaviour: "Illness", delta: -24, yesDays: 6, noDays: 77, confidenceInterval: [-39.4, -8.9], effect: "negative", strength: "clear" },
+  ] }} />)
+  expect(screen.getByText(/-4.7 to -0.8.*Possible association\./)).toBeVisible()
+  expect(screen.getByText(/-39.4 to -8.9 %\.$/)).toBeVisible()
+});
+
 it("an unavailable sleep metric stays missing and never displays a fabricated bedtime", () => {
   const missing = { value: null, reason: "awaiting_sleep_sync", provisional: false }
   render(<Evidence name="get_sleep" output={{ day: "2026-10-02", timeZone: "Asia/Kolkata", asleepMinutes: missing, summary: [], details: [], planner: missing }} />)

@@ -10,9 +10,10 @@ import { addTag, MAX_TAGS, reorderTags, setTagHidden, tagKey } from "../journalT
 import { userCtx } from "../queries/common";
 import { getJournal } from "../queries/journal";
 import { userTimeZone } from "../profile";
-import { localDay } from "../time";
+import { addDays, localDay, localMinutes } from "../time";
 import type { JournalVM } from "../queries/types";
 import { requestSync } from "../worker";
+import { checkInDay } from "@/lib/journal";
 import { inDayRange } from "@/lib/url";
 
 export type ActionResult<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
@@ -60,18 +61,32 @@ export async function saveJournalEntry(input: z.input<typeof Entry>): Promise<Ac
 
 /**
  * Read-only: the check-in sheet's behaviours and a day's answers. The sheet opens over any screen (`?checkin=1`,
- * spec §11 UX2), so it fetches what the Journal page would have passed it.
+ * spec §11 UX2), so it fetches what the Journal page would have passed it. With `day` null (no `?d=`), the day is
+ * chosen here, in the user's time zone: yesterday evening before noon if yesterday has no check-in, else today
+ * (`checkInDay`).
  */
-export async function loadCheckIn(day: string): Promise<ActionResult<Pick<JournalVM, "tags" | "checkIn">>> {
+export async function loadCheckIn(day: string | null): Promise<ActionResult<{ day: string } & Pick<JournalVM, "tags" | "checkIn">>> {
   const user = await currentUser();
   if (!user) return SIGNED_OUT;
-  const r = z.iso.date().safeParse(day);
-  if (!r.success) return { ok: false, error: "Invalid day" };
   const ctx = await userCtx(user.userId);
-  if (!inDayRange(r.data, localDay(ctx.now, ctx.timeZone))) return { ok: false, error: "Invalid day" };
+  const today = localDay(ctx.now, ctx.timeZone);
+  let resolved: string;
+  if (day === null) {
+    const yesterday = addDays(today, -1);
+    const [done] = await ctx.db
+      .select({ tag: journalEntries.tag })
+      .from(journalEntries)
+      .where(and(eq(journalEntries.userId, user.userId), eq(journalEntries.day, yesterday)))
+      .limit(1);
+    resolved = checkInDay({ requested: null, today, yesterday, localHour: Math.floor(localMinutes(ctx.now, ctx.timeZone) / 60), yesterdayDone: !!done });
+  } else {
+    const r = z.iso.date().safeParse(day);
+    if (!r.success || !inDayRange(r.data, today)) return { ok: false, error: "Invalid day" };
+    resolved = r.data;
+  }
   // ponytail: getJournal also builds the strip, history and teaser the sheet drops; a lean query if it ever shows.
-  const { tags, checkIn } = await getJournal(r.data, ctx);
-  return { ok: true, data: { tags, checkIn } };
+  const { tags, checkIn } = await getJournal(resolved, ctx);
+  return { ok: true, data: { day: resolved, tags, checkIn } };
 }
 
 const CustomTag = z.object({ label: z.string().trim().min(1).max(40) });
