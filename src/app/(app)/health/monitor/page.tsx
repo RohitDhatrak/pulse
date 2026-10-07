@@ -21,7 +21,7 @@ const INFO = {
   title: "About Health Monitor",
   body: (
     <p>
-      Health Monitor compares last night’s vitals with your personal normal range: Google’s own range where it gives one, else your baseline plus or minus two standard deviations. Blood
+      Health Monitor compares last night’s vitals with your personal normal range: Google’s own range where it gives one, else your baseline plus or minus two and a half standard deviations. Blood
       oxygen also flags anything below 95%. A change in several vitals at once can be an early sign of illness. Pulse is not a medical device; if you
       feel unwell, talk to a doctor.
     </p>

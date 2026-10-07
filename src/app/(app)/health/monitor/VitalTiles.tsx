@@ -23,7 +23,7 @@ const FORMAT: Record<VitalKey, FormatKey> = { resp: "decimal1", spo2: "int", res
  * Tablet once ran a 3 + 2 six-column grid whose two stretched tiles were half empty.
  */
 const GRID = "grid grid-cols-2 gap-3 *:last:col-span-2 xl:grid-cols-5 xl:gap-4 xl:*:last:col-span-1"
-const NOTE = "Resting heart rate, HRV and skin temperature use Google’s personal ranges when it has them; otherwise your range is your baseline ± 2 SD over 60 nights."
+const NOTE = "Resting heart rate, HRV and skin temperature use Google’s personal ranges when it has them; otherwise your range is your baseline ± 2.5 SD from earlier nights."
 
 /** The five vital tiles, each opening its vital sheet (journey 6), plus the ranges note cell. */
 export function VitalTiles({ vitals }: { vitals: Vital[] }) {

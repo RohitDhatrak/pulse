@@ -1,13 +1,21 @@
 // Own algorithm (docs/algorithms/health-monitor.md): last night's five vitals against personal ranges
-// (Google's where the caller has them, else baseline mean ± 2σ from the Winsorized EWMA baselines; SpO2 also
+// (Google's where the caller has them, else baseline mean ± 2.5σ from the Winsorized EWMA baselines; SpO2 also
 // floored at 95 %), plus noop's illness signal as the combined flag.
 import { foldHistory, hrvCfg, isUsable, respCfg, restingHRCfg, skinTempCfg, zSigma } from "../scoring/baselines";
 import { illnessFromDays, type IllnessContext, type IllnessDay, type IllnessResult } from "../scoring/illness";
 import type { MetricCfg } from "../scoring/types";
 
 export const healthMonitorConfig = {
-  /** Range half-width in σ (spec). */
-  rangeSigmas: 2,
+  /**
+   * Range half-width in σ for Pulse's own ranges (SCORING_VERSION 16; was 2): healthy nights flagged about 1 in 32
+   * instead of 1 in 10, full illness still caught. Google's ranges are used as given. See health-monitor.md § Why.
+   */
+  rangeSigmas: 2.5,
+  /**
+   * Skin temperature with Google's baseline: ± this many of Google's 30-night SD (`temp_sd_c`), built in the pipeline.
+   * Kept at 2 with Google's other ranges, which version 16 leaves as they are until real data shows their width.
+   */
+  googleTempSdMultiple: 2,
   /** SpO2 below this is low whatever the personal range (spec). */
   spo2FloorPct: 95,
   /** SpO2 baseline (*tunable*): plausible 70–100 %, floor spread 0.5 points. */

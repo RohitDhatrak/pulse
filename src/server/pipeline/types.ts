@@ -36,9 +36,10 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * Bank drains less on calm days as a result. 14: Pulse Age scores a missing input as a typical person of your age and
  * sex (it scaled the others up by 9 / n), and counts steps and zones 1–3 once, the larger penalty. 15: sleep need is
  * the median of the last 28 nights (was the upper quartile), floored at 7 h asleep for adults (was 8), 7.5 h before
- * 7 nights (was 8): a healthy 7 h sleeper no longer carries 73 min of permanent debt.
+ * 7 nights (was 8): a healthy 7 h sleeper no longer carries 73 min of permanent debt. 16: the Health Monitor's own
+ * ranges are ± 2.5σ (was 2); Google's ranges and the SpO2 95 % floor are unchanged.
  */
-export const SCORING_VERSION = 15;
+export const SCORING_VERSION = 16;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */

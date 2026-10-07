@@ -394,7 +394,7 @@ const EXTRA_DOCS: (ScoreDoc & Meta)[] = [
         title: "How it is weighted",
         rows: [
           { term: "Recovery", detail: "55% of the score, the largest single input." },
-          { term: "Health Monitor", detail: "Checked against your normal range: your baseline ± 2 of your usual night-to-night swings." },
+          { term: "Health Monitor", detail: "Checked against your normal range: Google's personal range where it gives one, else your baseline ± 2.5 of your usual night-to-night swings." },
           { term: "Illness signal", detail: "A drop against your 30 nights before counts towards the combined illness pattern." },
           { term: "Behaviour insights", detail: "Shown as the change in standard deviations from your baseline after a logged behaviour." },
         ],

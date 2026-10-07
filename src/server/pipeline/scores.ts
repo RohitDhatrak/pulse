@@ -493,7 +493,7 @@ function googleRanges(d: Day): Partial<Record<VitalKey, { low: number; high: num
   if (m?.rhrRangeLow != null && m.rhrRangeHigh != null) out.restingHr = { low: m.rhrRangeLow, high: m.rhrRangeHigh };
   if (m?.hrvRangeLow != null && m.hrvRangeHigh != null) out.hrv = { low: m.hrvRangeLow, high: m.hrvRangeHigh };
   if (m?.tempBaselineC != null && m.tempSdC != null && m.tempSdC > 0) {
-    const half = healthMonitorConfig.rangeSigmas * m.tempSdC;
+    const half = healthMonitorConfig.googleTempSdMultiple * m.tempSdC;
     out.skinTempDev = { low: -half, high: half };
   }
   return out;

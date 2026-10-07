@@ -389,7 +389,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "How it is weighted",
         paragraphs: [
-          "Resting heart rate and HRV use Google’s personal ranges when Google gives them, and skin temperature uses ± 2 of Google’s 30-night standard deviation around its baseline. Otherwise, and always for respiratory rate and SpO2, a normal range is your baseline ± 2 of your usual night-to-night swings, built from earlier nights only. Pulse’s narrowest ranges are about ±5\u00a0bpm, ±12.5\u00a0ms, ±1.25\u00a0rpm, ±1.25\u00a0points of SpO2 and ±0.75\u00a0°C. SpO2 is one-sided: below 95% is always low, and a high value is never flagged.",
+          "Resting heart rate and HRV use Google’s personal ranges when Google gives them, and skin temperature uses ± 2 of Google’s 30-night standard deviation around its baseline. Otherwise, and always for respiratory rate and SpO2, a normal range is your baseline ± 2.5 of your usual night-to-night swings, built from earlier nights only. Pulse’s narrowest ranges are about ±6.3\u00a0bpm, ±15.7\u00a0ms, ±1.6\u00a0rpm, ±1.6\u00a0points of SpO2 and ±0.94\u00a0°C. SpO2 is one-sided: below 95% is always low, and a high value is never flagged.",
           "The illness signal compares resting heart rate, HRV, skin temperature and respiratory rate with your 30\u00a0nights before. A vital fires at 2 standard deviations in the unwell direction and adds 22\u00a0points per extra deviation, up to 40. With at least 2 vitals firing, 25\u00a0points is mild and 50 is raised. If you logged alcohol, sauna or travel the day before, Pulse takes that as the likely cause instead.",
         ],
       },
