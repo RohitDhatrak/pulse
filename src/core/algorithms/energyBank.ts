@@ -1,11 +1,12 @@
-// Own algorithm (docs/algorithms/energy-bank.md): a 0–100 reserve that starts at wake from Recovery and
-// sleep performance, drains per minute with time awake, Edwards-weighted HR load and high stress, and
-// recharges in calm still minutes and naps.
+// Own algorithm (docs/algorithms/energy-bank.md): a 0–100 reserve that starts at wake from Recovery's body signals
+// and sleep performance, drains per minute with time awake, Edwards-weighted HR load and high stress, and
+// recharges in calm still minutes and naps. Since SCORING_VERSION 20 the start uses Recovery without its own sleep
+// term, so last night's sleep counts once (it counted 0.69 per point instead of 0.4).
 import { zoneWeight } from "../scoring/strain";
 import { stressConfig, type Interval } from "./stress";
 
 export const energyBankConfig = {
-  /** Start-of-day weights on Recovery and sleep performance (spec). */
+  /** Start-of-day weights (spec): Recovery from its body signals only, and sleep performance. */
   wRecovery: 0.6,
   wSleep: 0.4,
   /** Basal drain per awake minute (*tunable*; not in the plan's spec, see the doc). */
@@ -33,8 +34,11 @@ export interface EnergyBankInput {
   wake: number;
   /** Last moment to compute, unix seconds: tonight's bedtime once known, else now, else the day's end. */
   until: number;
-  /** 0–100. */
-  recovery: number;
+  /**
+   * 0–100: Recovery from its body signals only (HRV, resting HR, breathing, skin temperature), its own sleep term
+   * left out (`recovery()` with no `sleepPerf`), so last night's sleep counts once, through `sleepPerformance`.
+   */
+  recoveryWithoutSleep: number;
   /** 0–100. */
   sleepPerformance: number;
   /** Edwards zone weight per minute (minuteLoad). */
@@ -70,13 +74,19 @@ export interface EnergyBankResult {
 
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
 
+/** The level at wake: 0.6 × Recovery's body signals + 0.4 × sleep performance, within 0–100. */
+export function energyStart(recoveryWithoutSleep: number, sleepPerformance: number): number {
+  const c = energyBankConfig;
+  return clamp(c.wRecovery * recoveryWithoutSleep + c.wSleep * sleepPerformance, 0, 100);
+}
+
 export function energyBank(input: EnergyBankInput): EnergyBankResult {
   const c = energyBankConfig;
   const { start, load, stress } = input;
   const n = Math.max(load.length, stress.length);
   const minuteOf = (ts: number) => clamp(Math.floor((ts - start) / 60), 0, n);
   const inAny = <T extends Interval>(ts: number, xs: T[] = []) => xs.find((x) => ts < x.end && ts + 60 > x.start);
-  const startLevel = clamp(c.wRecovery * input.recovery + c.wSleep * input.sleepPerformance, 0, 100);
+  const startLevel = energyStart(input.recoveryWithoutSleep, input.sleepPerformance);
 
   const curve: (number | null)[] = new Array(n).fill(null);
   const open = new Map<string, Drain>();

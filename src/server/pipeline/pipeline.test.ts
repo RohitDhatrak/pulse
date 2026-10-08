@@ -14,7 +14,9 @@ import {
   type StrainTargetRow,
 } from ".";
 import { healthspanWornAwakeMin } from "./scores";
+import { energyStart } from "@/core/algorithms/energyBank";
 import { healthspanConfig } from "@/core/algorithms/healthspan";
+import { logisticK, logisticScore, logisticZ0, sleepPerfScale, wHRV, wResp, wRHR, wSkinTemp, wSleep } from "@/core/scoring/recovery";
 import { journalImpactConfig } from "@/core/algorithms/journalImpact";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
 import { personalizedNeedHours } from "@/core/scoring/sleep";
@@ -491,5 +493,63 @@ describe("Pulse Age on the seed (SCORING_VERSION 19)", () => {
     expect(h.vo2maxSource).toBe("blend");
     expect(h.vo2maxRuns).toBeGreaterThan(0);
     expect(h.contributions.find((c) => c.key === "strength")!.unlogged).toBeUndefined();
+  });
+});
+
+describe("the Energy Bank counts last night's sleep once (SCORING_VERSION 20)", () => {
+  type EB = { value: number | null; startLevel?: number };
+  const W: Record<string, number> = { hrv: wHRV, rhr: wRHR, resp: wResp, sleep: wSleep, skinTemp: wSkinTemp };
+
+  it("recovery.withoutSleep is the same Recovery with its sleep term removed", () => {
+    let checked = 0;
+    for (const d of allDays) {
+      const r = js<RecoveryRow>("recovery", d);
+      if (r.value == null) {
+        expect(r.withoutSleep ?? null).toBeNull();
+        continue;
+      }
+      expect(r.withoutSleep).not.toBeNull();
+      if (!r.terms.includes("sleep")) {
+        expect(r.withoutSleep).toBe(r.value);
+        continue;
+      }
+      // Rebuild: the shown score's composite z, minus the sleep term, renormalised over the remaining weights.
+      const total = r.terms.reduce((a, t) => a + W[t], 0);
+      const z = logisticZ0 - Math.log(100 / r.value - 1) / logisticK;
+      const zSleep = (r.inputs.sleepPerf! - r.inputs.sleepCentre!) / sleepPerfScale;
+      const expected = logisticScore((z * total - zSleep * wSleep) / (total - wSleep));
+      if (r.value > 0.5 && r.value < 99.5) {
+        expect(r.withoutSleep!).toBeCloseTo(expected, 6);
+        checked++;
+      }
+      // The composite is a weighted average: the shown score sits above the body-only one exactly when the sleep term
+      // beat the other terms' average (not merely when sleep beat your usual night).
+      const zBody = (z * total - zSleep * wSleep) / (total - wSleep);
+      const gap = r.value - r.withoutSleep!;
+      if (Math.abs(zSleep - zBody) > 1e-6 && r.value > 0.5 && r.value < 99.5) expect(Math.sign(gap)).toBe(Math.sign(zSleep - zBody));
+    }
+    expect(checked).toBeGreaterThan(120);
+  });
+
+  it("every day starts at energyStart(withoutSleep, sleep performance)", () => {
+    let n = 0;
+    for (const d of allDays) {
+      const eb = js<EB>("energy_bank", d);
+      if (eb.value == null) continue;
+      const r = js<RecoveryRow>("recovery", d);
+      const s = js<SleepRow>("sleep", d);
+      expect(eb.startLevel!).toBeCloseTo(energyStart(r.withoutSleep!, s.performance ?? s.main!.efficiency * 100), 9);
+      n++;
+    }
+    expect(n).toBeGreaterThan(150);
+  });
+
+  it("the scale is unchanged: typical days still end in 15–40, and few run out", () => {
+    const ebs = allDays.map((d) => js<EB>("energy_bank", d)).filter((e) => e.value != null);
+    const starts = ebs.map((e) => e.startLevel!);
+    const mean = starts.reduce((a, b) => a + b, 0) / starts.length;
+    expect(Math.abs(mean - 70.9)).toBeLessThan(1.5); // version 19's mean start on the seed
+    expect(ebs.filter((e) => e.value! >= 15 && e.value! <= 40).length).toBeGreaterThanOrEqual(85);
+    expect(ebs.filter((e) => e.value! <= 0.01).length).toBeLessThanOrEqual(12);
   });
 });

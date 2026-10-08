@@ -48,8 +48,10 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * zone and strength minutes only on days worn ≥ 10 h awake; strength unknown until a workout is logged; no long-sleep
  * or high-strength penalty; per-sex lean mass; SRI below 65 and the VO2max reference past 75 extended; steps ramp
  * between 55 and 65 (see docs/handoff/pulse-age-issues.md).
+ * 20: the Energy Bank starts at 0.6 × Recovery without its sleep term + 0.4 × sleep performance, so last night's
+ * sleep counts once (it counted 0.69 per point, 42 % of it through Recovery). Recovery itself is unchanged.
  */
-export const SCORING_VERSION = 19;
+export const SCORING_VERSION = 20;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
@@ -98,6 +100,11 @@ export type Stage1Activity = {
 
 export type RecoveryRow = {
   value: number | null;
+  /**
+   * The same Recovery from its body signals only (its sleep term left out), for the Energy Bank's start, which adds
+   * sleep performance itself (SCORING_VERSION 20). Null when `value` is; equal to it on a night without sleep data.
+   */
+  withoutSleep?: number | null;
   reason: ReasonCode | null;
   nightsLeft?: number;
   provisional: boolean;

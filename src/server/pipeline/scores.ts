@@ -231,6 +231,7 @@ export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
   let reason: ReasonCode | null = null;
   let nightsLeft: number | undefined;
   let value: number | null = null;
+  let withoutSleep: number | null = null;
   let drivers: ChargeDriver[] = [];
   if (!mainSession) reason = "band_not_worn";
   else if (!mainSession.processed) reason = "awaiting_sleep_sync";
@@ -244,6 +245,12 @@ export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
       nightsLeft = Math.max(1, minBaselineNights - (hrvB?.nValid ?? 0));
     } else {
       value = g.recovery;
+      // The same Recovery from its body signals only, for the Energy Bank's start (version 20): it adds sleep
+      // performance itself, so sleep counts once. Missing terms renormalise, as they do for any night.
+      withoutSleep =
+        sleepPerf == null
+          ? value
+          : gatedRecovery({ hrv, rhr, resp, hrvBaseline: hrvB!, rhrBaseline: rhrUsable, respBaseline: respUsable, sleepPerf: null, skinTempDev }).recovery;
       drivers = chargeDrivers({ hrv, rhr, resp, hrvBaseline: hrvB!, rhrBaseline: rhrUsable, respBaseline: respUsable, sleepPerf, sleepCentre, skinTempDev });
     }
   }
@@ -263,6 +270,7 @@ export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
   if (value != null) f.recoveries.push(value);
   return {
     value,
+    withoutSleep,
     reason,
     ...(nightsLeft !== undefined && { nightsLeft }),
     provisional: value != null && !isTrusted(hrvB!),
@@ -424,7 +432,7 @@ export function scoreEnergyBank(
   stressMinutes: (number | null)[],
 ): { row: EnergyBankRow; curve: (number | null)[] | null } {
   const { day, start, end, main, s1 } = d;
-  if (rec.value == null || !main) return { row: { value: null, reason: rec.reason ?? "no_data", provisional: false }, curve: null };
+  if (rec.value == null || rec.withoutSleep == null || !main) return { row: { value: null, reason: rec.reason ?? "no_data", provisional: false }, curve: null };
   const tonight = data.mainOf.get(addDays(day, 1));
   const until = tonight && tonight.startTs < end ? tonight.startTs : s1.lastHrTs != null ? Math.min(end, s1.lastHrTs + 60) : end;
   const napIntervals = d.naps.filter((n) => n.start >= main.end).map((n) => ({ start: n.start, end: n.end }));
@@ -432,7 +440,8 @@ export function scoreEnergyBank(
     start,
     wake: main.end,
     until,
-    recovery: rec.value,
+    // Sleep counts once: Recovery's body signals plus sleep performance (version 20).
+    recoveryWithoutSleep: rec.withoutSleep,
     sleepPerformance: sleep.performance ?? main.efficiency * 100,
     load: inputs.loadSeries.get(day) ?? [],
     stress: stressMinutes,

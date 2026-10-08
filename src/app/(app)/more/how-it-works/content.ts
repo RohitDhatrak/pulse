@@ -336,7 +336,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "What goes in",
         rows: [
-          { term: "Recovery and Sleep Performance", detail: "Set the starting level when you wake." },
+          { term: "Recovery’s body signals and Sleep Performance", detail: "Set the starting level when you wake. The body signals are heart rate variability, resting heart rate, breathing and temperature." },
           { term: "Heart-rate load", detail: "Each minute’s heart-rate points, as in Strain." },
           { term: "Stress", detail: "High-stress minutes drain; calm, still minutes recharge." },
           { term: "Naps", detail: "Recharge." },
@@ -344,7 +344,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       },
       {
         title: "How it is weighted",
-        paragraphs: ["At wake you start at 60% of Recovery plus 40% of Sleep Performance: Recovery 70% and sleep 80% start you at 74%. Then, minute by minute until bedtime:"],
+        paragraphs: ["At wake you start at 60% of your Recovery from its body signals plus 40% of Sleep Performance: body signals 70% and sleep 80% start you at 74%. Recovery’s own sleep part is left out here, so a bad night counts once, not twice. Then, minute by minute until bedtime:"],
         rows: [
           { term: "Awake", detail: "−0.04 a minute, about 38 over 16\u00a0hours." },
           { term: "Heart-rate load", detail: "−0.08 a minute for each heart-rate point, 1 to 5. An hour at 70-79% of your reserve costs 14.4." },

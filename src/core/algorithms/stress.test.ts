@@ -247,7 +247,7 @@ describe("simulated desk days (SCORING_VERSION 13 design check)", () => {
         start: s0,
         wake: s0 + at(7) * 60,
         until: s0 + at(23) * 60,
-        recovery: 60,
+        recoveryWithoutSleep: 60,
         sleepPerformance: 85,
         load: minuteLoad(days[30 + i].minuteHr, 56, 185),
         stress: x.minutes,

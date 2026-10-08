@@ -70,6 +70,17 @@ small dips into large z-scores:
 - Bands went from 19 / 89 / 62 to 23 / 93 / 54 (red / yellow / green) out of 170 days.
 - Sleep and Strain are byte-identical (parity).
 
+## Recovery without its sleep term (scoring version 20)
+
+**What it is.** The pipeline also stores `recovery.withoutSleep`: the same score with the sleep term left out and the
+other terms renormalised (`recovery()` with no `sleepPerf`).
+- It is not shown.
+- The Energy Bank starts from it, plus 0.4 × sleep performance, so last night's sleep counts once there. See
+  `energy-bank.md` § "Why version 20".
+
+**It is a weighted average, not "Recovery minus sleep".** When the sleep term sits below the body terms' average, the
+value without it is *higher*.
+
 ## Constants
 
 | Constant | Value | Kind |
