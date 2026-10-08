@@ -389,7 +389,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "How it is weighted",
         paragraphs: [
-          "Resting heart rate and HRV use Google’s personal ranges when Google gives them, and skin temperature uses ± 2 of Google’s 30-night standard deviation around its baseline. Otherwise, and always for respiratory rate and SpO2, a normal range is your baseline ± 2.5 of your usual night-to-night swings, built from earlier nights only. Pulse’s narrowest ranges are about ±6.3\u00a0bpm, ±15.7\u00a0ms, ±1.6\u00a0rpm, ±1.6\u00a0points of SpO2 and ±0.94\u00a0°C. SpO2 is one-sided: below 95% is always low, and a high value is never flagged.",
+          "Resting heart rate and HRV use Google’s personal ranges when Google gives them, and skin temperature uses ± 2 of Google’s 30-night standard deviation around its baseline. Otherwise, and always for respiratory rate and SpO2, a normal range is your baseline ± 2.5 of your usual night-to-night swings, built from earlier nights only. Pulse’s narrowest ranges are about ±6.3\u00a0bpm, ±15.7\u00a0ms, ±1.6\u00a0rpm, ±1.6\u00a0points of SpO2 and ±0.94\u00a0°C. SpO2 is one-sided and compared with your own normal: 2\u00a0points below it, or below 92%, is low, and a high value is never flagged. Overnight averages run a little lower than daytime readings, so many healthy people sit at 94-96% at night. Home only mentions SpO2 when it is below 92% or 3\u00a0points below your normal.",
           "The illness signal compares resting heart rate, HRV, skin temperature and respiratory rate with your 30\u00a0nights before. A vital fires at 2 standard deviations in the unwell direction and adds 22\u00a0points per extra deviation, up to 40. With at least 2 vitals firing, 25\u00a0points is mild and 50 is raised. If you logged alcohol, sauna or travel the day before, Pulse takes that as the likely cause instead.",
         ],
       },
@@ -398,7 +398,8 @@ export const SCORE_DOCS: ScoreDoc[] = [
         rows: [
           { term: "Within range", detail: "Inside your normal range." },
           { term: "Elevated or Low", detail: "Outside it; the chip names the bound you crossed." },
-          { term: "Below 95%", detail: "SpO2 under 95%, whatever your range." },
+          { term: "Below your usual", detail: "SpO2 at least 2 points under your own normal." },
+          { term: "Below 92%", detail: "SpO2 under 92%, whatever your normal." },
           { term: "Illness signal", detail: "Several vitals moved together, a pattern often seen early in illness." },
         ],
       },

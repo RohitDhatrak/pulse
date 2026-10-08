@@ -594,3 +594,16 @@ describe("Stress on the seed (SCORING_VERSION 21)", () => {
     for (let i = 118; i <= 131; i++) expect(Math.abs(ref(i) - before)).toBeLessThan(1);
   });
 });
+
+describe("SpO2 on the seed (SCORING_VERSION 22)", () => {
+  it("ordinary nights are not flagged; the illness peak still is", () => {
+    const spo2 = (d: string) => js<HealthMonitorRow>("health_monitor", d);
+    const statusOf = (d: string) => {
+      const h = spo2(d);
+      return h.reason === null ? h.vitals.find((v) => v.key === "spo2")!.status : null;
+    };
+    const outside = allDays.filter((d, i) => (i < 118 || i > 125) && statusOf(d) === "low");
+    expect(outside.length).toBeLessThanOrEqual(2);
+    expect([119, 120, 121, 122].some((i) => statusOf(dayAt(i)) === "low")).toBe(true);
+  });
+});

@@ -53,8 +53,10 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * 21: Stress leaves out exertion (≥ 40 % of heart-rate reserve) and the 30 minutes after it or a logged workout;
  * each minute's reference follows a slow rise over the previous 5 hours (heat, caffeine, illness); and a day more than
  * 2σ above the daytime baseline is not folded into it. The Energy Bank reads the corrected stress.
+ * 22: the Health Monitor's SpO2 is low at 2 points below your own normal (or its 2.5σ range, if narrower) or below a 92 %
+ * safety floor, not below a fixed 95 % (which flagged most ordinary nights for people whose normal is 94–96 %).
  */
-export const SCORING_VERSION = 21;
+export const SCORING_VERSION = 22;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */

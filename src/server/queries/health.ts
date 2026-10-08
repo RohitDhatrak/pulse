@@ -1,4 +1,5 @@
 // Health hub and its four detail screens (spec §7.6–7.10).
+import { healthMonitorConfig } from "@/core/algorithms/healthMonitor";
 import { type HealthspanContribution, healthspanConfig } from "@/core/algorithms/healthspan";
 import { minChronic } from "@/core/scoring/readiness";
 import { standardConfig } from "@/core/scoring/trainingLoad";
@@ -326,8 +327,11 @@ export async function getMonitor(day: string, ctx: QueryCtx, preloaded?: Map<str
       // Ranges always show one decimal, so a whole-number reading never looks equal to its bound.
       const lo = num(range.low, 1, v.signed);
       const hi = num(range.high, 1, v.signed);
-      if (v.key === "spo2" && status === "low" && value < 95) chip = { tone: "warning", text: "Below 95%" };
-      else if (status === "in_range") chip = { tone: "optimal", text: v.key === "spo2" ? `Within ${lo} - 100` : `Within ${lo} - ${hi}` };
+      // SpO2 (version 22): below the safety floor, or below your own normal.
+      if (v.key === "spo2" && status === "low") {
+        const floor = healthMonitorConfig.spo2SafetyFloorPct;
+        chip = { tone: "warning", text: value < floor ? `Below ${floor}%` : reading?.usual != null ? `Below your usual (${num(reading.usual, 1)}%)` : `Below ${lo}%` };
+      } else if (status === "in_range") chip = { tone: "optimal", text: v.key === "spo2" ? `Within ${lo} - 100` : `Within ${lo} - ${hi}` };
       else if (status === "high") chip = { tone: "warning", text: `Elevated, above ${hi}` };
       else if (status === "low") chip = { tone: "warning", text: `Low, below ${lo}` };
     }

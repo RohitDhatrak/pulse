@@ -243,6 +243,38 @@ describe("getHome", () => {
   });
 });
 
+describe("SpO2 on Home and the Health Monitor (SCORING_VERSION 22)", () => {
+  it("2.5 points below your usual is low on the Monitor but stays off Home; 3.5 below, or below 92 %, reaches Home", async () => {
+    const copy = await copyDb(db);
+    type Hm = { vitals: { key: string; usual?: number; status: string }[] };
+    const usualOn = async (i: number) =>
+      (await rows<{ h: Hm }>(copy, sql`select health_monitor h from daily_scores where user_id = ${USER} and day = ${dayAt(i)}`))[0].h.vitals.find((v) => v.key === "spo2")!.usual!;
+    const set = async (i: number, v: number) => {
+      await copy.update(dailyMetrics).set({ spo2Pct: v }).where(and(eq(dailyMetrics.userId, USER), eq(dailyMetrics.day, dayAt(i))));
+      await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(i)}) on conflict do nothing`);
+    };
+    const u140 = await usualOn(140);
+    const u145 = await usualOn(145);
+    await set(140, Math.round((u140 - 2.5) * 10) / 10);
+    await set(145, Math.round((u145 - 3.5) * 10) / 10);
+    await set(150, 91.5);
+    await recompute(copy, OPTS);
+    const spo2Vital = async (i: number) => (await getMonitor(dayAt(i), ctxFor(copy))).vitals.find((v) => v.key === "spo2")!;
+    const home = async (i: number) => (await getHome(dayAt(i), ctxFor(copy))).monitorAlert;
+
+    // −2.5: listed low on the Monitor with "below your usual", not on Home.
+    expect((await spo2Vital(140)).chip?.text).toMatch(/^Below your usual \(9\d\.\d%\)$/);
+    expect((await home(140))?.names ?? []).not.toContain("Blood oxygen");
+    // −3.5: on Home too.
+    expect((await spo2Vital(145)).chip?.tone).toBe("warning");
+    expect((await home(145))?.names).toContain("Blood oxygen");
+    // Below the 92 % safety floor: "Below 92%", and on Home.
+    expect((await spo2Vital(150)).chip?.text).toBe("Below 92%");
+    expect((await home(150))?.names).toContain("Blood oxygen");
+  });
+
+});
+
 describe("every screen query", () => {
   it("returns NaN-free view models with reasons for a spread of days", async () => {
     const ctx = ctxFor(db);

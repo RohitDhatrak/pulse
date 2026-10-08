@@ -1,3 +1,4 @@
+import { spo2NeedsHome } from "@/core/algorithms/healthMonitor";
 import { BODY_METRICS, DASHBOARD_DEFAULT, DASHBOARD_LABEL, DASHBOARD_METRICS, type DashboardKey, isDashboardKey, PHONE_DEFAULT, PHONE_STATS } from "@/lib/dashboard";
 import { EXTRA_METRICS, type ExtraKey, type ExtraMetric } from "@/lib/extraMetrics";
 import { hmm } from "@/lib/format";
@@ -180,7 +181,9 @@ export const illnessRaised = (hm: DayRow["healthMonitor"]) =>
 function monitorAlert(row: DayRow | undefined): HomeVM["monitorAlert"] {
   const hm = row?.healthMonitor;
   if (!hm || hm.reason !== null) return null;
-  const flagged = hm.vitals.filter((v) => v.status === "high" || v.status === "low");
+  // SpO2 reaches Home only below the 92 % safety floor or 3+ points below your normal (version 22); a smaller dip still
+  // shows on the Health Monitor.
+  const flagged = hm.vitals.filter((v) => (v.status === "high" || v.status === "low") && (v.key !== "spo2" || spo2NeedsHome(v)));
   const illness = illnessRaised(hm);
   if (!illness && !flagged.length) return null;
   return { kind: illness ? "illness" : "flagged", count: flagged.length, names: flagged.map((v) => VITAL_LABEL[v.key]) };

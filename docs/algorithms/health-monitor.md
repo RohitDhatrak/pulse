@@ -2,7 +2,7 @@
 
 Code: `src/core/algorithms/healthMonitor.ts`. Tests: `healthMonitor.test.ts`.
 
-The Health Monitor checks last night's five vitals against your own normal ranges and shows "N of 5 in range". The vitals are resting HR, HRV, respiratory rate, SpO2 and skin-temperature deviation. Where Google gives a range, Pulse uses it (resting HR and HRV from its personal-range roll-ups, skin temperature from its 30-night SD); every other range is your baseline mean ± 2.5σ (scoring version 16; widened a little while the baseline is young; see [baselines](baselines.md)), and SpO2 also has a fixed floor of 95 %. noop's illness signal is shown alongside as a combined flag. This is a wellness view, not a diagnosis.
+The Health Monitor checks last night's five vitals against your own normal ranges and shows "N of 5 in range". The vitals are resting HR, HRV, respiratory rate, SpO2 and skin-temperature deviation. Where Google gives a range, Pulse uses it (resting HR and HRV from its personal-range roll-ups, skin temperature from its 30-night SD); every other range is your baseline mean ± 2.5σ (scoring version 16; widened a little while the baseline is young; see [baselines](baselines.md)), and SpO2 is judged against your own normal: low at 2 points below it (or below its personal range, if narrower) or below a 92 % safety floor (scoring version 22; it was a fixed 95 % floor). noop's illness signal is shown alongside as a combined flag. This is a wellness view, not a diagnosis.
 
 ## Flow
 
@@ -18,7 +18,7 @@ flowchart TB
   U -->|no| ND[no_data]
   U -->|yes| R[Range = mean ± 2.5 × zSigma]
   R --> S{SpO2?}
-  S -->|yes| FL[low = max of range low, 95; high = 100]
+  S -->|yes| FL["low = max(92, normal − min(2.5 × zSigma, 2)); high = 100"]
   S -->|no| C
   FL --> C[Compare last night's value]
   T --> C
@@ -34,7 +34,13 @@ flowchart TB
 0. **Google's range first.** The caller (`scores.ts` `googleRanges`) passes last night's ranges from Google: resting HR = `[rhr_range_low, rhr_range_high]` and HRV = `[hrv_range_low, hrv_range_high]` from the `dailyRollUp` personal ranges, and skin temperature = ± 2 × `temp_sd_c` (Google's 30-night SD of nightly − baseline) around 0, since the deviation is already relative to Google's baseline. A vital with one uses it as is (`rangeSource: "google"`), even before Pulse's baseline is usable; steps 1–2 are skipped for it. Google's skin-temperature range has no floor, so it can be narrower than Pulse's ±0.75 °C.
 1. **Baselines.** For each vital, fold the prior nights' values, oldest first and excluding last night, through `baselines.foldHistory` with that vital's `MetricCfg`. This gives a Winsorized EWMA centre and spread, with hard outliers rejected once settled. Over the first ~30 nights the spread is the running mean of the nights' deviations, so it reflects your real wobble from the start ([baselines](baselines.md)).
 2. **Range** = centre ± 2.5 × `baselines.zSigma(state)` (`rangeSigmas`; it was 2 before scoring version 16, see § Why ±2.5), where zSigma = 1.253 × spread × (n + 2) / n and n is the baseline's accepted nights. The (n + 2) / n factor is the short-history shrink every z-score uses: with 7 nights the range is 9/7 ≈ 1.29× the raw ±2.5σ, with 30 nights 1.07×, and it keeps fading. A night is flagged on the same scale as Recovery's z. The floor spreads keep σ from collapsing on smooth nightly values.
-3. **SpO2** is one-sided. The low bound is max(centre − 2.5 × zSigma, 95), and the high bound is 100, so a high SpO2 is never flagged.
+3. **SpO2** is one-sided (*scoring version 22*).
+   - The low bound is max(**92**, centre − min(2.5 × zSigma, **2**)); the high bound is 100, so a high SpO2 is never
+     flagged.
+   - A value below 92 is low even before the baseline is usable.
+   - The reading carries `usual` (the centre), so the screen can say "Below your usual (95.8%)".
+   - **Home** names SpO2 only below 92, or at least 3 points below your usual (`spo2NeedsHome`); smaller dips show on
+     the Health Monitor only.
 4. **Status.** The value is `low` below the range, `high` above it, and `in_range` otherwise. It is `no_data` when last night has no value or the baseline is not usable (fewer than 4 accepted nights, or stale).
 5. **Counts.** `inRange` is the number of `in_range` vitals, shown as "N of 5". `flagged` is the number that are high or low.
 6. **Illness.** `illness.illnessFromDays(days, journal)` runs over the same rows. It z-scores RHR, HRV, skin temperature and respiration against the 30 prior nights, and it is quiet until 14 of those nights have RHR or HRV. SpO2 is not one of its signals.
@@ -58,7 +64,9 @@ flowchart TB
 |---|---|---|
 | `healthMonitorConfig.rangeSigmas` | 2.5 | version 16 (was 2, the spec's value); applied to `zSigma` (with the short-history shrink, `zShrinkK` = 2). Pulse's ranges only |
 | `healthMonitorConfig.googleTempSdMultiple` | 2 | the skin-temperature range built from Google's 30-night SD (step 0); kept at 2 with Google's other ranges |
-| `healthMonitorConfig.spo2FloorPct` | 95 | spec; a common cut-off for normal resting SpO2 |
+| `healthMonitorConfig.spo2SafetyFloorPct` | 92 | version 22 (was the 95 % `spo2FloorPct`); the owner's choice over 90 (see § Why version 22) |
+| `healthMonitorConfig.spo2MaxDropPct` | 2 points | version 22: a drop this far below your normal is low however variable your nights |
+| `healthMonitorConfig.spo2HomeDropPct` | 3 points | version 22: Home names SpO2 below 92 or this far below your normal |
 | `healthMonitorConfig.spo2Cfg` | plausible 70–100, floor spread 0.5 | *tunable*; there is no noop config for SpO2 |
 | `healthMonitorConfig.skinTempDevCfg` | plausible −5 to 5 °C, floor spread 0.3 | *tunable*; `skin_temp`'s floor, with bounds for a deviation |
 | RHR, HRV, respiration configs | floor spreads 2 bpm, 5 ms, 0.5 | noop: `Baselines.kt` (`metricCfg`) |
@@ -75,7 +83,9 @@ flowchart TB
 ## Worked examples
 
 1. **Ordinary night** (a test). Forty nights with RHR around 55, HRV 60, respiration 14.5, SpO2 97 and skin temperature ±0.1 °C. A night at those values is **5 of 5**, with the illness signal quiet.
-2. **SpO2 94** (a test). Nights alternate 92 and 98, so the personal range is wide and includes 94. The floor still makes it **low**, with range [95, 100].
+2. **SpO2 94** (a test). Nights alternate 92 and 98, a normal of 95 with a wide personal range.
+   - The 2-point cap sets the low bound at 93, so 94 is **in range** and 92.9 is low.
+   - Version 21's 95% floor made 94 low.
 3. **The seeded illness peak, 2026-08-04 on the demo database** (scoring version 16):
 
    | Vital | Value | Range | Source | Status |
@@ -123,16 +133,82 @@ out at once, cut false alarms to about 1 in 400. But they caught only about half
   is unconfirmed until a real account syncs. Widening them blindly could hide real changes.
   - The skin-temperature range is built by Pulse from Google's SD (`googleTempSdMultiple`). It is the easiest of the
     three to widen once the data agrees.
-- **The SpO2 95 % floor**, which flags people whose normal is 95–96 % on about 1 night in 5. It is safety-adjacent, so
-  it should be decided on real nightly values, for example "below 95 % and below your own range", with a hard alert
-  under about 92 %.
+- **The SpO2 95 % floor**, which flags people whose normal is 95–96 % on about 1 night in 5. *Replaced in version 22*;
+  see § Why version 22.
 
 The Health Monitor count is a display: Recovery and the illness signal don't read it.
+
+## Why version 22: SpO2 against your own normal
+
+**The problem.**
+- The low bound was max(your normal − 2.5σ, **95%**).
+- Nightly averages run below daytime readings, so for anyone whose healthy normal is 94–96% the fixed floor bound
+  almost every night.
+- Each flag shows "Below 95%" on the Monitor and a Home banner naming Blood oxygen.
+
+**Ordinary nights flagged**, with the real `healthMonitor()` (60 nights of history, 30 scored nights, 40 people;
+night-to-night SD 0.8). The floor caused 100% of these flags:
+
+| Normal SpO2 | 93 | 94 | 94.5 | 95 | 95.5 | 96 | 97 | 98 |
+|---|---|---|---|---|---|---|---|---|
+| v21 (95% floor) | 99% | 88% | 71% | 46% | 23% | 7% | 1% | 0% |
+| **v22** | **9%** | **1%** | 1% | 1% | 1% | 1% | 1% | 1% |
+
+**How many users.** Under *assumed* population distributions, version 21 flagged on most nights:
+- 7% of young healthy adults (normal about 96.5 ± 1);
+- 23% of a mixed adult population (96 ± 1.2);
+- 59% of older adults (95 ± 1.2);
+- 86% of people living at 1,500–2,000 m (94 ± 1.2).
+
+Real Fitbit nightly values are needed to know the true share.
+
+**But the floor also helped.** For a high-normal person (97), it is what caught a −2 drop. So "your own range only" is
+not enough either.
+
+**Options tested** (false-flag columns: normals of 93 / 94 / 95 / 96 / 97; drops from normals of 94 / 95.5 / 97):
+
+| Low bound | False flags | −2 caught | −3 caught | Slow decline 96 → 90 over 6 weeks: nights < 92 flagged | A constant 91 |
+|---|---|---|---|---|---|
+| v21: max(personal, 95) | 99 / 88 / 46 / 7 / 1 | 100 / 95 / 41 | 100 / 100 / 86 | 100 | 100 |
+| Personal range only | 0 | 30 | 69 | **4** | **2** |
+| Personal + safety 92 | 7 / 1 / 0 / 0 / 0 | 41 / 30 / 30 | 86 / 69 / 69 | 100 | 92 |
+| **v22: personal, drop capped at 2, + safety 92** | **7 / 1 / 1 / 1 / 1** | **42 / 40 / 40** | **87 / 82 / 82** | **100** | **92** |
+| The same with safety 90 | 1 everywhere | 40 | 82 | 89 | 10 |
+
+- **The personal range alone follows a slow decline down:** only 4% of nights below 92 were flagged.
+- **Capping the drop at 2 points** catches dips that a variable person's wide range would hide.
+- **92 rather than 90** was the owner's decision (2026-10-08):
+  - it catches a decline the baseline follows, and a constant 91, which is low at sea level;
+  - the cost is about 7–9% of nights for someone whose normal is 93;
+  - at high altitude a normal of 90–92 is possible and will be flagged.
+
+**The Home banner** (below 92, or 3+ below your normal), measured on the same simulations:
+
+| | Banner rate |
+|---|---|
+| Ordinary nights, normals 95 / 97 | 0% |
+| Ordinary nights, normal 93 | 11% (prototype) / 9% (v22 code) |
+| Real drops −2 / −3 / −4 | 8% / 51% / 91% |
+
+The Monitor still lists every low night.
+
+**The real code** reproduces the table: 1% false flags at normals of 94–97 (9% at 93); −3 drops caught 84–88%, −2
+drops 40–44%.
+
+**On the seed:** at most 2 ordinary nights flag SpO2, and the illness peak still does.
 
 ## Tests (`healthMonitor.test.ts`)
 
 - `rangeSigmas` is 2.5. On a long history +2.2σ is in range and +2.6σ is flagged, high and low.
-- The SpO2 low bound = max(centre − 2.5 × zSigma, 95), and SpO2 is never high.
+- The SpO2 low bound = max(92, centre − min(2.5 × zSigma, 2)), and SpO2 is never high. Version 22 also tests:
+  - a hand-computed bound;
+  - the 92 floor binding for a normal of 93, and before any baseline;
+  - `spo2NeedsHome`;
+  - simulations: false flags ≤ 3% at normals of 94–98 (≤ 10% at 93); −3 drops caught ≥ 75% and −2 ≥ 35%; a slow
+    decline below 92 flagged ≥ 95%; a constant 91 ≥ 85%.
+- `home.test.ts`: on a recomputed copy of the seed, −2.5 is low on the Monitor ("Below your usual") but not on Home;
+  −3.5 and 91.5 ("Below 92%") reach Home.
+- `pipeline.test.ts`: at most 2 ordinary seed nights flag SpO2; the illness peak still does.
 - Google's range is used exactly as given, even when narrower.
 - Respiration's range is at least ±1.57 (its floor).
 - A simulation: about 3 % of healthy nights are flagged at ±2.5 against over 7 % at ±2. Full illness always flags
@@ -143,5 +219,5 @@ The Health Monitor count is a display: Recovery and the illness signal don't rea
 ## Sources
 
 - noop (`ryanbr/noop`), `Baselines.kt` (Winsorized EWMA, floor spreads), `IllnessSignalEngine.kt` and `V5HealthSignals.kt`, ported in `src/core/scoring/baselines.ts` and `illness.ts`.
-- SpO2 floor: 95 % is the plan's spec, a common clinical cut-off for normal resting saturation at sea level. It is not taken from one paper.
+- SpO2: the old 95 % floor was the plan's spec, a common cut-off for *awake* resting saturation at sea level. Nightly averages run lower than awake readings. The 92 % safety floor and the 2-point drop are Pulse's choices, tested below; neither is a clinical threshold, and the screen says the Monitor is not a diagnosis.
 - The reference app Health Monitor: the design target only.

@@ -1,6 +1,8 @@
 // Own algorithm (docs/algorithms/health-monitor.md): last night's five vitals against personal ranges
-// (Google's where the caller has them, else baseline mean ± 2.5σ from the Winsorized EWMA baselines; SpO2 also
-// floored at 95 %), plus noop's illness signal as the combined flag.
+// (Google's where the caller has them, else baseline mean ± 2.5σ from the Winsorized EWMA baselines), plus noop's
+// illness signal as the combined flag. SpO2 is one-sided and, since SCORING_VERSION 22, judged against your own normal:
+// low at 2 points below it (or its 2.5σ range, if narrower) or below a 92 % safety floor. The old fixed 95 % floor
+// flagged most ordinary nights for anyone whose healthy nightly average is 94–96 %.
 import { foldHistory, hrvCfg, isUsable, respCfg, restingHRCfg, skinTempCfg, zSigma } from "../scoring/baselines";
 import { illnessFromDays, type IllnessContext, type IllnessDay, type IllnessResult } from "../scoring/illness";
 import type { MetricCfg } from "../scoring/types";
@@ -16,8 +18,15 @@ export const healthMonitorConfig = {
    * Kept at 2 with Google's other ranges, which version 16 leaves as they are until real data shows their width.
    */
   googleTempSdMultiple: 2,
-  /** SpO2 below this is low whatever the personal range (spec). */
-  spo2FloorPct: 95,
+  /**
+   * SpO2 below this is low whatever your normal, from the first night (version 22; was a 95 % floor). Catches a slow
+   * decline the baseline would follow. A nightly average of 91 is low at sea level; at altitude it can be normal.
+   */
+  spo2SafetyFloorPct: 92,
+  /** SpO2 this many points below your normal is low however variable your nights are (version 22). */
+  spo2MaxDropPct: 2,
+  /** Home names SpO2 only below the safety floor or at least this many points below your normal (version 22). */
+  spo2HomeDropPct: 3,
   /** SpO2 baseline (*tunable*): plausible 70–100 %, floor spread 0.5 points. */
   spo2Cfg: { minVal: 70, maxVal: 100, floorSpread: 0.5, halfLifeB: 14, halfLifeS: 21 } as MetricCfg,
   /** Skin-temperature deviation baseline, °C (*tunable*): ±5 °C plausible, skin_temp's floor spread. */
@@ -42,6 +51,15 @@ export interface VitalReading {
   rangeSource?: "google" | "pulse";
   /** no_data when the value or a usable baseline is missing. */
   status: VitalStatus;
+  /** SpO2 only: your normal (the baseline centre), for "below your usual" (version 22). */
+  usual?: number;
+}
+
+/** Whether a low SpO2 belongs on Home: below the safety floor, or at least spo2HomeDropPct below your normal. */
+export function spo2NeedsHome(r: VitalReading): boolean {
+  const c = healthMonitorConfig;
+  if (r.key !== "spo2" || r.status !== "low" || r.value == null) return false;
+  return r.value < c.spo2SafetyFloorPct || (r.usual != null && r.value <= r.usual - c.spo2HomeDropPct);
 }
 
 export interface HealthMonitorResult {
@@ -83,11 +101,21 @@ export function healthMonitor(
       return { key, value, range: given, rangeSource: "google", status };
     }
     const state = foldHistory(prior.map((d) => pick(d) ?? null), cfg);
-    if (!isUsable(state)) return { key, value, range: null, status: "no_data" };
-    let low = state.baseline - c.rangeSigmas * zSigma(state);
-    let high = state.baseline + c.rangeSigmas * zSigma(state);
-    // SpO2 is one-sided: never high, and low below the floor even inside the personal range.
-    if (key === "spo2") [low, high] = [Math.max(low, c.spo2FloorPct), 100];
+    if (!isUsable(state)) {
+      // SpO2 under the safety floor is low even before a baseline exists.
+      if (key === "spo2" && value != null && value < c.spo2SafetyFloorPct) {
+        return { key, value, range: { low: c.spo2SafetyFloorPct, high: 100 }, rangeSource: "pulse", status: "low" };
+      }
+      return { key, value, range: null, status: "no_data" };
+    }
+    if (key === "spo2") {
+      // One-sided: never high. Low at your normal minus the smaller of 2.5σ and 2 points, but never below the floor.
+      const low = Math.max(c.spo2SafetyFloorPct, state.baseline - Math.min(c.rangeSigmas * zSigma(state), c.spo2MaxDropPct));
+      const status: VitalStatus = value == null ? "no_data" : value < low ? "low" : "in_range";
+      return { key, value, range: { low, high: 100 }, rangeSource: "pulse", status, usual: state.baseline };
+    }
+    const low = state.baseline - c.rangeSigmas * zSigma(state);
+    const high = state.baseline + c.rangeSigmas * zSigma(state);
     const status: VitalStatus = value == null ? "no_data" : value < low ? "low" : value > high ? "high" : "in_range";
     return { key, value, range: { low, high }, rangeSource: "pulse", status };
   });

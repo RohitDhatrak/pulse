@@ -464,6 +464,30 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.still_hr": "280d884a01803ce9",
     "intraday_series.stress": "ceafceaf08ce8343",
     "reports": "d4b20308c61bdbea",
+  },  // 22: the Health Monitor's SpO2 is low at 2 points below your own normal or below a 92 % safety floor (was a fixed 95 %
+  // floor). Moved: health_monitor, the version stamp and strain's key.
+  22: {
+    "daily_scores.scoring_version": "1be75842de2b2bd1",
+    "daily_scores.strain": "9c766f54af55dbc0",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "18c29349167fe9f7",
+    "daily_scores.sleep": "82e3b4ff7229d2b8",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "a70cc076e96b17e2",
+    "daily_scores.sleep_planner": "1e4416c535fcefe8",
+    "daily_scores.energy_bank": "0ecbe39c9d378191",
+    "daily_scores.stress": "6c70d849f7ab1d7e",
+    "daily_scores.health_monitor": "cb62f1823f63668d",
+    "daily_scores.healthspan": "e4f64a3e9259b139",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "fba2b406ac2befd1",
+    "intraday_series.energy_bank": "5f1ddc4782a31061",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "280d884a01803ce9",
+    "intraday_series.stress": "ceafceaf08ce8343",
+    "reports": "d4b20308c61bdbea",
   },
 };
 
