@@ -298,17 +298,17 @@ export const SCORE_DOCS: ScoreDoc[] = [
         rows: [
           { term: "Minute heart rate", detail: "The average heart rate of each minute." },
           { term: "Steps", detail: "Only still minutes count: no steps in that minute or the 2 either side." },
-          { term: "Workouts and sleep", detail: "Minutes inside them are left out." },
+          { term: "Workouts, exercise and sleep", detail: "Minutes inside them are left out, and so are minutes at 40% or more of your heart-rate reserve and the 30\u00a0minutes after a workout or 10+ minutes of exercise, while your heart rate comes down." },
           { term: "Your usual still level", detail: "The typical heart rate of your still minutes, from earlier days." },
         ],
         paragraphs: [
-          "Each day’s still level is the median heart rate of its still minutes between 06:00 and 22:00 (at least 60 of them). It feeds the next day’s baseline.",
+          "Each day’s still level is the median heart rate of its still minutes between 06:00 and 22:00 (at least 60 of them). It feeds the next day’s baseline, unless it sits well above it (a sick day, for example), so one bad week doesn’t change your baseline.",
         ],
       },
       {
         title: "How it is weighted",
         paragraphs: [
-          "Each still minute’s distance above your usual still level is measured in your usual spread, never less than 3.76\u00a0bpm, and mapped onto 0 to 3 on an S-shaped curve. At your usual level it reads 0.4, 1.5 spreads above reads 1.8, and 3 spreads above reads 2.8. A single high minute counts as medium: high needs 2 minutes in a row. Today Pulse shows the latest scored minute; past days show the day’s average.",
+          "Each still minute’s distance above your usual still level is measured in your usual spread, never less than 3.76\u00a0bpm, and mapped onto 0 to 3 on an S-shaped curve. At your usual level it reads 0.4, 1.5 spreads above reads 1.8, and 3 spreads above reads 2.8. A single high minute counts as medium: high needs 2 minutes in a row. When your still heart rate has been raised for hours (heat, coffee through the day, getting ill), that becomes the day’s level, so only what rises above it counts. Today Pulse shows the latest scored minute; past days show the day’s average.",
         ],
       },
       {
@@ -322,7 +322,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "Stress is Provisional until 4\u00a0days have set your baseline; until then it uses a fixed spread of 7.65\u00a0bpm and today’s own still level, so 13\u00a0bpm above it reads 2.0. It reads heart rate alone, so standing still, talking, meals, caffeine, heat, illness or recovering from exercise raise it too. It is not a measure of how you feel.",
+          "Stress is Provisional until 4\u00a0days have set your baseline; until then it uses a fixed spread of 7.65\u00a0bpm and today’s own still level, so 13\u00a0bpm above it reads 2.0. It reads heart rate alone, so standing still, talking, meals or a quick coffee can still raise it for a while; slow, hours-long rises and exercise are filtered out. It is not a measure of how you feel.",
         ],
       },
     ],

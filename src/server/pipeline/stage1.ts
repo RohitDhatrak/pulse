@@ -141,7 +141,9 @@ function stage1Day(
     start: x.startTs,
     end: x.endTs,
   }));
-  const probe = stress({ start, end, hr: dayHr, steps, excluded, baseline: MASK_BASELINE });
+  // Exertion and the 30 minutes after it (or after a logged workout) are not still (version 21).
+  const exertion = { restingHr, maxHr, workouts: exs.map((e) => ({ start: e.startTs, end: e.endTs })) };
+  const probe = stress({ start, end, hr: dayHr, steps, excluded, baseline: MASK_BASELINE, exertion });
   const still = probe.minutes.map((v, m) => (v == null ? null : means[m]));
   const noon = Math.min(n, 720);
   const withHr = (from: number, to: number) => means.slice(from, to).filter((v) => v != null).length;

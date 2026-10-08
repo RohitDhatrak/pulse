@@ -1,7 +1,7 @@
 // Ports DaytimeStress.kt and DaytimeBaselines.kt on the HR-only path (no R-R, so RMSSD is always absent):
 // hourly waking-hour mean HR z-scored against the day's calm quartile or a personal daytime-HR baseline,
 // squashed onto 0–3. Not ported: the RMSSD term, the gravity motion gate and the half-step display timeline.
-import { daytimeHRCfg, foldHistory, isUsable } from "./baselines";
+import { daytimeHRCfg, foldHistory, isUsable, sigma } from "./baselines";
 import type { BaselineState, HrSample } from "./types";
 
 /** HR samples an hour needs before its mean HR is trusted (~5 min at 1 Hz). */
@@ -161,6 +161,22 @@ export function dayDaytimeAggregate(hr: HrSample[], tzOffsetSeconds = 0): number
 
 /** Fold per-day aggregates (oldest first, today excluded) through the daytime_hr baseline. */
 export const foldDaytimeBaseline = (aggregates: (number | null)[]): BaselineState => foldHistory(aggregates, daytimeHRCfg);
+
+/** Version 21: a day this many σ above a usable baseline is left out of it (illness, a hangover). */
+export const foldGateSigma = 2;
+/** Days of history the gate needs, so a new user's first days always fold. */
+export const foldGateMinDays = 7;
+
+/**
+ * The value to fold for today's still median: null when it sits more than foldGateSigma σ above a usable baseline
+ * with at least foldGateMinDays days behind it. An illness week otherwise raised the reference, hiding stress for weeks
+ * after. Sustained stress days sit well inside 2σ, so they still fold.
+ */
+export function foldableStillMedian(history: (number | null)[], value: number | null): number | null {
+  if (value == null || history.length < foldGateMinDays) return value;
+  const b = foldDaytimeBaseline(history);
+  return isUsable(b) && value - b.baseline > foldGateSigma * sigma(b) ? null : value;
+}
 
 /** baselineRelative once the folded daytime-HR baseline is usable (≥ 4 days), else dayRelative. */
 export function scoringMode(aggregates: (number | null)[]): ScoringMode {

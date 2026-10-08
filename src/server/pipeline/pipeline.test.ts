@@ -553,3 +553,44 @@ describe("the Energy Bank counts last night's sleep once (SCORING_VERSION 20)", 
     expect(ebs.filter((e) => e.value! <= 0.01).length).toBeLessThanOrEqual(12);
   });
 });
+
+describe("Stress on the seed (SCORING_VERSION 21)", () => {
+  type S1 = { restingHr: number; maxHr: number };
+  const series = async (kind: string, day: string) =>
+    (await rows<{ data: (number | null)[] }>(db, sql`select data from intraday_series where user_id = ${USER} and day = ${day} and kind = ${kind}`))[0]?.data ?? [];
+
+  it("the 30 minutes after each logged workout are not still minutes, nor is any minute at ≥ 40 % of reserve", async () => {
+    const exs = await rows<{ day: string; end_ts: number }>(db, sql`select day, end_ts from exercises where user_id = ${USER} order by start_ts`);
+    expect(exs.length).toBeGreaterThan(20);
+    let tails = 0, hot = 0;
+    for (const e of exs.filter((_, i) => i % 5 === 0)) {
+      const day = String(e.day).slice(0, 10);
+      const lo = localMidnight(day, TZ);
+      const still = await series("still_hr", day);
+      const end = Math.ceil((Number(e.end_ts) - lo) / 60);
+      for (let m = end; m < Math.min(still.length, end + 30); m++) {
+        expect(still[m]).toBeNull();
+        tails++;
+      }
+      // Exertion: any minute whose mean HR reaches 40 % of reserve is never still.
+      const s1 = js<S1>("strain", day);
+      const threshold = s1.restingHr + 0.4 * (s1.maxHr - s1.restingHr);
+      const hr = await series("hr", day);
+      hr.forEach((v, m) => {
+        if (v != null && v >= threshold) {
+          expect(still[m] ?? null).toBeNull();
+          hot++;
+        }
+      });
+    }
+    expect(tails).toBeGreaterThan(100);
+    expect(hot).toBeGreaterThan(0);
+  });
+
+  it("the illness week doesn't move the daytime reference (a day > 2σ above it is not folded)", () => {
+    type St = { referenceHr: number | null };
+    const ref = (i: number) => js<St>("stress", dayAt(i)).referenceHr!;
+    const before = ref(117);
+    for (let i = 118; i <= 131; i++) expect(Math.abs(ref(i) - before)).toBeLessThan(1);
+  });
+});

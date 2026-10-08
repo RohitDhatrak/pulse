@@ -10,7 +10,7 @@ import { evaluateWithTrainingLoad, type ReadinessDay } from "@/core/scoring/read
 import { gatedRecovery, minBaselineNights, personalSleepCentre } from "@/core/scoring/recovery";
 import { creditedSleepMin, hypnogramMetrics, ledger, minNeedNights, personalizedNeedHours, rest } from "@/core/scoring/sleep";
 import { toStrainScale } from "@/core/scoring/strain";
-import { foldDaytimeBaseline } from "@/core/scoring/stressBase";
+import { foldableStillMedian, foldDaytimeBaseline } from "@/core/scoring/stressBase";
 import type { BaselineState } from "@/core/scoring/types";
 import { energyBank, energyBankConfig } from "@/core/algorithms/energyBank";
 import { fitnessLevel } from "@/core/algorithms/fitnessLevel";
@@ -392,7 +392,8 @@ export function scoreStress(f: Fold, d: Day, inputs: Inputs) {
     excluded: [],
     baseline,
   });
-  f.stillMedians.push(st.stillMedianHr);
+  // An abnormal day (illness, a hangover) stays out of the baseline (version 21).
+  f.stillMedians.push(foldableStillMedian(f.stillMedians, st.stillMedianHr));
   const last = st.minutes.findLastIndex((v) => v != null);
   const row: StressRow = {
     provisional: st.provisional,

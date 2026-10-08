@@ -3,7 +3,9 @@
 // then mapped onto 0–3 with our own logistic. Minutes with steps nearby, workouts and sleep are excluded rather
 // than guessed. Since SCORING_VERSION 13 the baseline folds each day's *median* still-minute HR (your usual still
 // level, not your calmest hour), a minute at it reads 0.4, and "high" needs 2 minutes in a row: simulated calm desk
-// days read about half as many high minutes while a real 30-minute episode is still caught.
+// days read about half as many high minutes while a real 30-minute episode is still caught. Since SCORING_VERSION 21:
+// exertion (≥ 40 % of heart-rate reserve) and the 30 minutes after it are not stress, and each minute's reference
+// follows a slow rise over hours (heat, caffeine, illness) above your usual level, so only episodes stand out.
 import { isUsable, sigma } from "../scoring/baselines";
 import {
   daytimeHRAggregatePercentile,
@@ -29,6 +31,18 @@ export const stressConfig = {
   minMedianMinutes: 60,
   /** A waking hour joins the day's aggregate with at least this many still minutes with HR (*tunable*). */
   minHourStillMinutes: 15,
+  /** Version 21: a minute at or above this share of heart-rate reserve is exertion, not stress (*tunable*). */
+  exertionShare: 0.4,
+  /** Minutes after an exertion run or a logged workout that are not scored: the heart-rate recovery tail. */
+  exertionTailMin: 30,
+  /** An exertion run this long (1-minute gaps allowed) starts a tail. */
+  exertionRunMin: 10,
+  /** Version 21: the trailing window (minutes) whose still-minute median can lift the reference (*tunable*). */
+  rollWindowMin: 300,
+  /** The median must exceed the reference by more than this many σ before it lifts it. */
+  rollAllowanceSigma: 1,
+  /** Still minutes the window needs before it counts. */
+  rollMinStill: 30,
   /** σ in bpm while the personal baseline is not usable: noop's fixed σ (+15 bpm squashes to 2.0). */
   // Puts baseline + 15 bpm at stress 2.0 on our curve (z ≈ 1.96), noop's fixed-σ intent.
   fallbackSigmaBpm: 15 / 1.96,
@@ -69,6 +83,11 @@ export interface StressInput {
   excluded: Interval[];
   /** foldDaytimeBaseline over the prior days' `stillMedianHr` values, oldest first, today excluded. */
   baseline: BaselineState;
+  /**
+   * Version 21: exclude exertion and its recovery tail. Needs every minute's HR (moving minutes too), so the pipeline
+   * passes it to the masking run in stage 1, whose still series stage 2 then scores.
+   */
+  exertion?: { restingHr: number; maxHr: number; workouts: Interval[] };
 }
 
 export interface StressResult {
@@ -110,6 +129,7 @@ export function stress(input: StressInput): StressResult {
     if (!steps[m]) continue;
     for (let j = Math.max(0, m - c.stillWindowMin); j <= Math.min(n - 1, m + c.stillWindowMin); j++) blocked[j] = 1;
   }
+  if (input.exertion) blockExertion(blocked, means, input.exertion, start);
 
   const still = means.map((bpm, m) => (bpm == null || blocked[m] ? null : bpm));
 
@@ -125,8 +145,9 @@ export function stress(input: StressInput): StressResult {
   // A baseline with no accepted day holds a placeholder centre; use today's own median instead.
   const referenceHr = baseline.nValid > 0 ? baseline.baseline : stillMedianHr;
 
+  const reference = referenceHr == null ? null : rollingReference(still, referenceHr, sigmaBpm);
   const minutes = demoteShortHighRuns(
-    still.map((bpm) => (bpm == null || referenceHr == null ? null : stressLevel((bpm - referenceHr) / sigmaBpm))),
+    still.map((bpm, m) => (bpm == null || reference == null ? null : stressLevel((bpm - reference[m]) / sigmaBpm))),
   );
   const hourly: (number | null)[] = [];
   for (let h = 0; h * 60 < n; h++) hourly.push(meanOf(minutes.slice(h * 60, h * 60 + 60)));
@@ -144,6 +165,76 @@ export function stress(input: StressInput): StressResult {
     dayAggregate,
     stillMedianHr,
   };
+}
+
+/**
+ * Version 21: blocks exertion minutes (mean HR ≥ resting + exertionShare × reserve) and the exertionTailMin minutes
+ * after each exertion run of at least exertionRunMin minutes (1-minute gaps allowed) and after each logged workout.
+ * Exercise without steps (a ride, weights) read as stress, and so did the heart rate coming down after any workout.
+ */
+export function blockExertion(
+  blocked: Uint8Array,
+  means: (number | null)[],
+  ex: { restingHr: number; maxHr: number; workouts: Interval[] },
+  start: number,
+) {
+  const c = stressConfig;
+  const n = means.length;
+  const threshold = ex.restingHr + c.exertionShare * Math.max(1, ex.maxHr - ex.restingHr);
+  const hot = means.map((v) => v != null && v >= threshold);
+  const tailFrom: number[] = ex.workouts.map((w) => Math.ceil((w.end - start) / 60));
+  for (let m = 0; m < n; ) {
+    if (!hot[m]) {
+      m++;
+      continue;
+    }
+    let end = m;
+    while (end < n && (hot[end] || (end + 1 < n && hot[end + 1]))) end++;
+    for (let j = m; j < end; j++) blocked[j] = 1;
+    if (end - m >= c.exertionRunMin) tailFrom.push(end);
+    m = end + 1;
+  }
+  for (const t of tailFrom) for (let m = Math.max(0, t); m < Math.min(n, t + c.exertionTailMin); m++) blocked[m] = 1;
+}
+
+/**
+ * Version 21: each minute's reference. The baseline reference, lifted by however far the median of the previous
+ * rollWindowMin minutes' still minutes sits above it beyond rollAllowanceSigma σ (once the window has rollMinStill of
+ * them). A rise that lasts hours (heat, caffeine, illness) becomes the day's level; an episode of minutes to a couple
+ * of hours stays above it. Trailing only, so a minute's score never changes as the day goes on.
+ */
+export function rollingReference(still: (number | null)[], reference: number, sigmaBpm: number): number[] {
+  const c = stressConfig;
+  const out = new Array<number>(still.length).fill(reference);
+  const window: number[] = []; // sorted
+  const insert = (v: number) => {
+    let lo = 0, hi = window.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (window[mid] < v) lo = mid + 1;
+      else hi = mid;
+    }
+    window.splice(lo, 0, v);
+  };
+  const remove = (v: number) => {
+    let lo = 0, hi = window.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (window[mid] < v) lo = mid + 1;
+      else hi = mid;
+    }
+    window.splice(lo, 1);
+  };
+  for (let m = 0; m < still.length; m++) {
+    // The window is minutes [m − rollWindowMin, m): add m − 1, drop m − rollWindowMin − 1.
+    if (m > 0 && still[m - 1] != null) insert(still[m - 1]!);
+    const drop = m - c.rollWindowMin - 1;
+    if (drop >= 0 && still[drop] != null) remove(still[drop]!);
+    if (window.length < c.rollMinStill) continue;
+    const median = window[Math.floor(window.length / 2)];
+    out[m] = reference + Math.max(0, median - reference - c.rollAllowanceSigma * sigmaBpm);
+  }
+  return out;
 }
 
 /**

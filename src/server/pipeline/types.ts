@@ -50,8 +50,11 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * between 55 and 65 (see docs/handoff/pulse-age-issues.md).
  * 20: the Energy Bank starts at 0.6 × Recovery without its sleep term + 0.4 × sleep performance, so last night's
  * sleep counts once (it counted 0.69 per point, 42 % of it through Recovery). Recovery itself is unchanged.
+ * 21: Stress leaves out exertion (≥ 40 % of heart-rate reserve) and the 30 minutes after it or a logged workout;
+ * each minute's reference follows a slow rise over the previous 5 hours (heat, caffeine, illness); and a day more than
+ * 2σ above the daytime baseline is not folded into it. The Energy Bank reads the corrected stress.
  */
-export const SCORING_VERSION = 20;
+export const SCORING_VERSION = 21;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { foldDaytimeBaseline } from "../scoring/stressBase";
+import { sigma } from "../scoring/baselines";
+import { foldableStillMedian, foldDaytimeBaseline, foldGateSigma } from "../scoring/stressBase";
 import type { BaselineState, HrSample } from "../scoring/types";
 import { energyBank, minuteLoad } from "./energyBank";
-import { demoteShortHighRuns, minuteMeanHr, stress, stressConfig, stressLevel, type StressInput } from "./stress";
+import { demoteShortHighRuns, minuteMeanHr, rollingReference, stress, stressConfig, stressLevel, type StressInput } from "./stress";
 
 const start = 1_790_000_000 - (1_790_000_000 % 86_400); // a UTC midnight
 const N = 1440;
@@ -258,5 +259,108 @@ describe("simulated desk days (SCORING_VERSION 13 design check)", () => {
       expect(e).toBeGreaterThanOrEqual(15);
       expect(e).toBeLessThanOrEqual(40);
     }
+  });
+});
+
+// ── SCORING_VERSION 21 ─────────────────────────────────────────────────────────────────────────────────────────────
+describe("exertion is not stress (version 21)", () => {
+  // Resting 55, max 185: 40 % of reserve is 55 + 0.4 × 130 = 107 bpm.
+  const exertion = { restingHr: 55, maxHr: 185, workouts: [] as { start: number; end: number }[] };
+  const threshold = 55 + stressConfig.exertionShare * 130;
+
+  it("a minute at 40 % of heart-rate reserve is excluded; just below it is scored", () => {
+    const r = run({ hr: hrFrom((m) => (m === at(10) ? threshold : m === at(11) ? threshold - 0.5 : 70)), exertion });
+    expect(r.minutes[at(10)]).toBeNull();
+    expect(r.minutes[at(11)]).not.toBeNull();
+  });
+
+  it("a 10-minute exertion run excludes the 30 minutes after it; a 9-minute one does not", () => {
+    const ten = run({ hr: hrFrom((m) => (m >= at(14) && m < at(14, 10) ? 130 : 70)), exertion });
+    for (let m = at(14, 10); m < at(14, 40); m++) expect(ten.minutes[m]).toBeNull();
+    expect(ten.minutes[at(14, 40)]).not.toBeNull();
+    const nine = run({ hr: hrFrom((m) => (m >= at(14) && m < at(14, 9) ? 130 : 70)), exertion });
+    expect(nine.minutes[at(14, 9)]).not.toBeNull();
+  });
+
+  it("a 1-minute dip inside a run doesn't break it", () => {
+    const r = run({ hr: hrFrom((m) => (m >= at(14) && m < at(14, 11) && m !== at(14, 5) ? 130 : 70)), exertion });
+    expect(r.minutes[at(14, 20)]).toBeNull(); // the run counted as 11 minutes, so the tail applies
+  });
+
+  it("a logged workout's end starts a 30-minute tail, however its heart rate looked", () => {
+    const w = { start: start + at(18) * 60, end: start + at(18, 45) * 60 };
+    const r = run({ excluded: [w], exertion: { ...exertion, workouts: [w] } });
+    for (let m = at(18, 45); m < at(19, 15); m++) expect(r.minutes[m]).toBeNull();
+    expect(r.minutes[at(19, 15)]).not.toBeNull();
+  });
+
+  it("a strong stress response (+22 bpm, far below 40 %) is still scored and reads high", () => {
+    const r = run({ hr: hrFrom((m) => (m >= at(10) && m < at(10, 45) ? 92 : 70)), exertion });
+    expect(r.minutes[at(10, 20)]).toBeGreaterThanOrEqual(2);
+  });
+
+  it("without the exertion input nothing changes (the old behaviour)", () => {
+    const hr = hrFrom((m) => (m >= at(14) && m < at(14, 30) ? 130 : 70));
+    expect(run({ hr }).minutes[at(14, 5)]).not.toBeNull();
+    expect(run({ hr, exertion }).minutes[at(14, 5)]).toBeNull();
+  });
+});
+
+describe("rollingReference: a slow rise is the day's level, not stress (version 21)", () => {
+  const sigma = 4;
+
+  it("hand-computed: a 6-hour +8 bpm rise lifts the reference by (median − reference − σ) = 4", () => {
+    const still = Array.from({ length: N }, (_, m) => (m >= at(12) && m < at(18) ? 78 : 70));
+    const ref = rollingReference(still, 70, sigma);
+    // Before the rise the window's median is 70: the reference stays 70.
+    expect(ref[at(12)]).toBe(70);
+    // Once more than half of the previous 300 minutes are at 78, the median is 78: 70 + (78 − 70 − 4) = 74.
+    expect(ref[at(16)]).toBe(74);
+    // A +8 minute then sits only 4 bpm (1σ) above its reference.
+    const r = run({ hr: hrFrom((m) => still[m]) });
+    expect(r.minutes[at(16)]).toBeLessThan(stressConfig.highFrom);
+    expect(r.minutes[at(12, 30)]).toBeGreaterThan(stressConfig.highFrom); // the rise's start still reads high
+  });
+
+  it("a 45-minute +14 bpm episode in a calm day leaves the reference unchanged", () => {
+    const still = Array.from({ length: N }, (_, m) => (m >= at(14) && m < at(14, 45) ? 84 : 70));
+    const ref = rollingReference(still, 70, sigma);
+    for (let m = at(14); m < at(16); m++) expect(ref[m]).toBe(70);
+  });
+
+  it("uses the baseline reference until 30 still minutes fill the window", () => {
+    const still = Array.from({ length: N }, (_, m) => (m >= at(10) ? 90 : null));
+    const ref = rollingReference(still, 70, sigma);
+    expect(ref[at(10, 29)]).toBe(70);
+    expect(ref[at(10, 30)]).toBe(70 + (90 - 70 - sigma));
+  });
+
+  it("the incremental window equals a naive sort on random data", () => {
+    let x = 7;
+    const rnd = () => ((x = (x * 1103515245 + 12345) % 2147483648), x / 2147483648);
+    const still = Array.from({ length: N }, () => (rnd() < 0.3 ? null : 60 + 30 * rnd()));
+    const ref = rollingReference(still, 70, sigma);
+    for (let m = 0; m < N; m += 37) {
+      const w = still.slice(Math.max(0, m - stressConfig.rollWindowMin), m).filter((v): v is number => v != null).sort((a, b) => a - b);
+      const expected = w.length < stressConfig.rollMinStill ? 70 : 70 + Math.max(0, w[Math.floor(w.length / 2)] - 70 - sigma);
+      expect(ref[m]).toBeCloseTo(expected, 12);
+    }
+  });
+});
+
+describe("foldableStillMedian: an abnormal day stays out of the baseline (version 21)", () => {
+  const steady = Array.from({ length: 30 }, (_, i) => 74 + (i % 3) - 1);
+  const b = foldDaytimeBaseline(steady);
+  const twoSigma = foldGateSigma * sigma(b);
+
+  it("a day more than 2σ above a usable baseline is left out; one inside is kept", () => {
+    expect(foldableStillMedian(steady, b.baseline + twoSigma + 0.1)).toBeNull();
+    expect(foldableStillMedian(steady, b.baseline + twoSigma - 0.1)).toBe(b.baseline + twoSigma - 0.1);
+    expect(foldableStillMedian(steady, b.baseline - 10)).toBe(b.baseline - 10); // low days fold (the gate is one-sided)
+    expect(foldableStillMedian(steady, null)).toBeNull();
+  });
+
+  it("with under 7 days of history every day folds, so a new user's baseline can form", () => {
+    expect(foldableStillMedian(steady.slice(0, 6), 120)).toBe(120);
   });
 });

@@ -439,6 +439,31 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.still_hr": "c0bf14266ee71abd",
     "intraday_series.stress": "8131d5344e8e2307",
     "reports": "d4b20308c61bdbea",
+  },  // 21: Stress leaves out exertion and the 30 minutes after it (or a logged workout), follows slow rises over 5 hours,
+  // and keeps days > 2σ above the daytime baseline out of it. Moved: still_hr, stress (row and series), the Energy
+  // Bank (row and series), the version stamp and strain's key. Everything else is unchanged.
+  21: {
+    "daily_scores.scoring_version": "416071272e0e6e64",
+    "daily_scores.strain": "88af6b3dbeda079d",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "18c29349167fe9f7",
+    "daily_scores.sleep": "82e3b4ff7229d2b8",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "a70cc076e96b17e2",
+    "daily_scores.sleep_planner": "1e4416c535fcefe8",
+    "daily_scores.energy_bank": "0ecbe39c9d378191",
+    "daily_scores.stress": "6c70d849f7ab1d7e",
+    "daily_scores.health_monitor": "a4baa71279549a09",
+    "daily_scores.healthspan": "e4f64a3e9259b139",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "fba2b406ac2befd1",
+    "intraday_series.energy_bank": "5f1ddc4782a31061",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "280d884a01803ce9",
+    "intraday_series.stress": "ceafceaf08ce8343",
+    "reports": "d4b20308c61bdbea",
   },
 };
 

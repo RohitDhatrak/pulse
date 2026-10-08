@@ -122,6 +122,23 @@ The days below 15 are the training block (two sessions or long rides), the short
    - E₀ = **69.4**, and it ends at **36.6**.
    - Top drains: Ride 9.1, Activity 0.9.
 
+## Version 21: stress no longer drains for coffee, heat, illness or exercise
+
+The Energy Bank code is unchanged, but it reads the corrected stress minutes (`stress.md` § "Why version 21"). On
+generated days (median end of day):
+
+| Day | v20 | v21 |
+|---|---|---|
+| Calm desk day | 30 | 30 |
+| Stressful workday | 25 | 27 |
+| Heavy coffee | 13 | 28 |
+| Illness: reaches 0 at / minutes at 0 | 13:36 / 566 | 19:24 / 200 |
+| Hangover: minutes at 0 | 493 | 43 |
+| Two workouts | 0 | 2 |
+
+A low start still empties the bank on a sick day by evening. That comes from Recovery and the basal drain, not from
+"stress".
+
 ## Why version 20: sleep counted twice
 
 **The problem.** E₀ was 0.6 × Recovery + 0.4 × sleep performance, but Recovery already has a sleep term (weight 0.15,
