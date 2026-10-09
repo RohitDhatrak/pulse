@@ -1,4 +1,4 @@
-import { Activity, HeartPulse, Hourglass, RefreshCw, Watch, type LucideIcon } from "lucide-react";
+import { Activity, Feather, HeartPulse, Hourglass, Moon, RefreshCw, Watch, type LucideIcon } from "lucide-react";
 
 // The single source of reason copy (spec §5.14) and the metric shape every view model uses (§4.8).
 
@@ -8,6 +8,8 @@ export const REASON_CODES = [
   "awaiting_sleep_sync",
   "insufficient_hr_data",
   "band_not_worn",
+  "no_sleep",
+  "light_load",
   "no_data",
 ] as const;
 export type ReasonCode = (typeof REASON_CODES)[number];
@@ -49,6 +51,10 @@ export const REASONS: Record<ReasonCode, ReasonEntry> = {
     long: () => "Not enough heart-rate data",
   },
   band_not_worn: { icon: Watch, short: "Not worn", long: () => "No data: band not worn" },
+  // A night with no sleep session but the band worn, heart rate up and steps (scoring version 25).
+  no_sleep: { icon: Moon, short: "Up all night", long: () => "No sleep: you were up all night" },
+  // Under 30 TRIMP a day over 28 days: no acute:chronic ratio to show (scoring version 27).
+  light_load: { icon: Feather, short: "Light load", long: () => "Too little training load to compare weeks" },
   no_data: { icon: null, short: "--", long: () => "No data" },
 };
 

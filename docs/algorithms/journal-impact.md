@@ -114,7 +114,7 @@ rate is 0.1 for each of 3 metrics. That is the price of finding real effects at 
 | A minimum Δ (5 points) | Changes nothing once the interval is right: a significant Δ with SD 18 is already above 5. |
 | Adjusting each outcome by its trailing 7- or 28-day mean | Lower power, and slightly more false labels (8.1% vs 7.2% at 95%). |
 | Adjusting by weekday | Removes the weekend bias below, but also absorbs real effects of weekend habits (a true −10 reads −6.8). |
-| An effective-n correction for autocorrelation (the research review's suggestion) | Not needed: with a lag-1 correlation of 0.4–0.9 and habits in runs or on weekends, at most 12.3% are labelled and ≤ 2% clear (a test covers the independent case). On the seed, Recovery's lag-1 correlation is 0.01. |
+| An effective-n correction for autocorrelation (the research review's suggestion) | Not adopted in version 2, on the claim that habits in runs gave at most 12.3% labelled and ≤ 2% clear. **That claim does not hold** (re-tested below, § Habits in runs). On the seed, Recovery's lag-1 correlation is 0.01, so the seed can't show the problem. |
 
 ### 2. Illness distorted every other behaviour
 
@@ -241,6 +241,34 @@ differ from the stored Δ and interval. Each effect now stores `meanYes` and `me
      - illness itself is still analysed.
 5. **A rare tag** with 2 "yes" days: `not_enough_data`, with n = 2 reported.
 
+## Habits in runs: false effects when Recovery carries over (open)
+
+The Welch interval assumes each day is independent. Two things break that together:
+- a habit that comes in **runs** (a week of late meals, a fortnight off alcohol), so its yes days cluster in time;
+- an outcome that **carries over** from day to day (Recovery's lag-1 correlation).
+
+Then the yes days share one stretch of Recovery, the arms are not independent samples, and the interval is too narrow.
+
+Re-tested with the real `journalImpact` (2026-10-09). The setup:
+- 400 simulated users per row, 90 days, answers on 85% of days;
+- one habit with **no effect**, on 30% of days, in runs of the given mean length (a two-state Markov chain);
+- 8 independent tags beside it, so Benjamini–Hochberg has its usual family;
+- Recovery SD 18 with the given lag-1 correlation, HRV z following Recovery, sleep independent.
+
+| Recovery lag-1 | Mean run | Labelled (any metric) | Clear (any metric) | Clear on Recovery |
+|---|---|---|---|---|
+| 0.4 | independent days | 10.1% | 1.2% | 1.0% |
+| 0.4 | 3 / 7 / 14 days | 13 / 17 / 16% | 1.8 / 2.9 / 4.1% | 3.3 / 4.4 / 5.7% |
+| 0.6 | 3 / 7 / 14 days | 16 / 21 / 23% | 3.7 / 5.6 / 8.5% | 5.5 / 9.6 / 15.4% |
+| 0.8 | 3 / 7 / 14 days | 19 / 28 / 31% | 5.8 / 11.3 / 15.6% | 10.8 / 20.8 / 28.4% |
+| 0.9 | 3 / 7 / 14 days | 22 / 34 / 36% | 7.3 / 15.9 / 20.3% | 13.3 / 30.2 / 34.6% |
+
+- **Independent days are fine:** 10% labelled at a 90% interval, about 1% clear, as designed.
+- **Runs inflate both tiers.** A habit in week-long runs with a lag-1 of 0.6 is called "clear" on Recovery about
+  10% of the time with no real effect, against 1% intended.
+- **How large real Recovery's lag-1 is, is not known yet.** The seed's is 0.01; measure it on a real account. Until then, treat "clear" effects of habits logged in long runs with care.
+- A fix (an effective-n or block-bootstrap interval) is not implemented; this section only records the behaviour.
+
 ## Sources
 
 - Welch BL. The generalization of "Student's" problem when several different population variances are involved.
@@ -251,5 +279,5 @@ differ from the stored Δ and interval. Each effect now stores `meanYes` and `me
   undercoverage).
 - Press WH, et al. *Numerical Recipes*, the incomplete beta function (`betacf`), and Lanczos' ln Γ.
 - Pulse's research review, `docs/research/stress-healthspan.md` (journal impact rows): it flagged the spurious-effect
-  problem and suggested a Welch t-interval. The effective-n correction it also suggested was tested and not adopted
-  (above).
+  problem and suggested a Welch t-interval. The effective-n correction it also suggested was not adopted; § Habits in
+  runs shows it is needed when habits come in runs.

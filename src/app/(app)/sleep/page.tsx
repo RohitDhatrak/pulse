@@ -159,12 +159,17 @@ function Planner({ vm, timeZone }: { vm: SleepVM; timeZone: string }) {
   return (
     <div className="space-y-2">
       <div className="divide-y divide-border">
-        {plan.plans.map((p) => row(p.label, `${Math.round(p.share * 100)}% of need`, clock(p.bedtimeAt, timeZone)))}
+        {plan.plans.map((p) => row(p.label, `${p.needPct}% of need`, clock(p.bedtimeAt, timeZone)))}
         {row("Typical wake", plan.weekdayWake ? "Weekday wake time" : "Weekend wake time", clock(plan.wakeAt, timeZone))}
       </div>
       <p className={CAPTION}>
         Need tonight: <span className="font-numeric tabular-nums">{hmm(plan.needMin)}</span>
       </p>
+      {plan.notes.map((n) => (
+        <p key={n} className={CAPTION}>
+          {n}
+        </p>
+      ))}
     </div>
   )
 }

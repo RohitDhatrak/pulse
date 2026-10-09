@@ -187,10 +187,65 @@ export interface SleepDebtLedger {
   magnitudeMin: number;
 }
 
-/** Main-night minutes plus nap credit; null without a usable main sleep. */
-export function creditedSleepMin(mainSleepMin: number | null, napSleepMin = 0.0): number | null {
+/**
+ * Main-night minutes plus nap credit; null without a usable main sleep. Since SCORING_VERSION 25 a night spent awake
+ * (`awakeAllNight`) is a measured 0 plus the naps, so the ledger counts it.
+ */
+export function creditedSleepMin(mainSleepMin: number | null, napSleepMin = 0.0, opts: { awakeAllNight?: boolean } = {}): number | null {
+  if (mainSleepMin == null && opts.awakeAllNight) return Math.max(napSleepMin, 0.0);
   if (mainSleepMin == null || !(mainSleepMin > 0.0)) return null;
   return mainSleepMin + Math.max(napSleepMin, 0.0);
+}
+
+// ── A night spent awake (SCORING_VERSION 25) ─────────────────────────────────
+
+/**
+ * A night with no sleep session is usually a night without data: the band was off, the session hasn't synced, or
+ * Fitbit missed it. Counting those as 0 h would invent hours of debt, so a night counts as spent awake only with
+ * positive evidence over its core, 00:00–06:00: the band worn, heart rate above resting, and some steps. Assumption-
+ * based (docs/algorithms/sleep-need.md § A night spent awake): on simulated nights no sleeping night passes, fever
+ * included, and 88 % of nights awake at a desk do.
+ */
+export const allNighterConfig = {
+  /** Local minutes of the night's core, from midnight. */
+  nightMinutes: 360,
+  /** Minutes of the core with heart rate: the band was worn. */
+  wornMin: 300,
+  /** The core's median minute HR is at least this far above resting HR, bpm. */
+  hrAboveRest: 5,
+  /** Steps in the core: someone up and about, not lying in bed. */
+  minSteps: 100,
+};
+
+export interface NightSummary {
+  /** Minutes of 00:00–06:00 with heart rate. */
+  hrMinutes: number;
+  /** Median of those minutes' mean HR, or null without any. */
+  medianHr: number | null;
+  steps: number;
+}
+
+/** 00:00–06:00 of a day from its per-minute mean HR (null = no HR) and per-minute steps, both from local midnight. */
+export function nightSummary(minuteHr: (number | null)[], minuteSteps: number[]): NightSummary {
+  const n = allNighterConfig.nightMinutes;
+  const hr = minuteHr.slice(0, n).filter((v): v is number => v != null).sort((a, b) => a - b);
+  const mid = hr.length >> 1;
+  return {
+    hrMinutes: hr.length,
+    medianHr: hr.length === 0 ? null : hr.length % 2 ? hr[mid] : (hr[mid - 1] + hr[mid]) / 2,
+    steps: minuteSteps.slice(0, n).reduce((a, b) => a + b, 0),
+  };
+}
+
+/**
+ * True when the night was spent awake: no sleep session of any kind touched 00:00–06:00, the band was worn for most
+ * of it, the median HR sat at least `hrAboveRest` above resting, and there were steps.
+ */
+export function awakeAllNight(a: { night: NightSummary | null | undefined; restingHr: number | null; sessionOverlapsNight: boolean }): boolean {
+  const c = allNighterConfig;
+  const n = a.night;
+  if (a.sessionOverlapsNight || !n || a.restingHr == null || n.medianHr == null) return false;
+  return n.hrMinutes >= c.wornMin && n.medianHr >= a.restingHr + c.hrAboveRest && n.steps >= c.minSteps;
 }
 
 /** Half-away-from-zero to 1 dp. */
@@ -206,7 +261,9 @@ const nextDebt = (needMin: number, currentDebt: number, sleptMin: number): numbe
 
 /**
  * Ledger over the most recent `window` nights with usable sleep, from chronological `[day, totalSleepMin]`
- * rows. Each night: debt = 0.55 × max(0, need + debt − slept).
+ * rows. Each night: debt = 0.55 × max(0, need + debt − slept). null is a night without data and is skipped; since
+ * SCORING_VERSION 25 a 0 is a measured night without sleep and counts (noop skipped 0 too; Pulse never passes 0
+ * for missing data).
  */
 export function ledger(
   series: [string, number | null][],
@@ -215,7 +272,7 @@ export function ledger(
 ): SleepDebtLedger {
   const needMin = Math.max(needHours, 0.0) * 60.0;
   const cap = Math.max(window, 1);
-  const windowed = series.filter(([, slept]) => (slept ?? 0.0) > 0.0).slice(-cap);
+  const windowed = series.filter(([, slept]) => slept != null && slept >= 0.0).slice(-cap);
   const nights: SleepDebtNight[] = [];
   let debt = 0.0;
   for (const [day, slept] of windowed) {
@@ -239,7 +296,7 @@ export function debtSeries(
   const result: [string, number][] = [];
   for (const [day, slept] of series) {
     const imported = importedDebtMin.get(day);
-    const sleptMin = slept != null && slept > 0.0 ? slept : null;
+    const sleptMin = slept != null && slept >= 0.0 ? slept : null;
     if (sleptMin != null) {
       usable.push([day, sleptMin]);
       if (usable.length > cap) usable.shift();

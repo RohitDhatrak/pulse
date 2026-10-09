@@ -19,7 +19,7 @@ flowchart TB
   L["Prior days' load (TRIMP), last 28"] --> N{"≥ 7 days with a load?"}
   N -->|no| CAL[No target: calibrating]
   N -->|yes| REF["Typical session = median of the training days<br/>(loads ≥ 30 % of the 90th percentile)"]
-  L2["Days 29–56"] --> PROG["Limit: ≤ 1.10 × the previous 28 days' typical session"]
+  L2["Days 29–56"] --> PROG["Limit: ≤ 1.10 × the median of the previous 28 days' sessions at today's level (4+ of them)"]
   REF --> PROG
   R["Today's Recovery"] --> G["g(R): ln multiplier, 10 → 0.35×, 58 → 1×, 90 → 1.4×"]
   RH["Prior 28 Recoveries (≥ 14)"] --> C["centre = mean g"]
@@ -46,7 +46,16 @@ flowchart TB
    - Training days are the loads ≥ 30 % of that window's 90th percentile.
    - `ref` is their median.
    - With fewer than 14 days with a load the target is still the person's own, tagged as an estimate (`coldStart`).
-3. **Progression limit.** If days 29–56 hold at least 14 loads, `ref = min(ref, 1.10 × their typical session)`.
+3. **Progression limit** (*since version 26*). Compare sessions with sessions:
+   - the earlier sessions are the loads of days 29–56 at least `trainingDayShare` (30 %) × today's `ref`;
+   - if days 29–56 hold at least 14 loads **and** at least 4 such sessions (`minEarlierSessions`, about one a week),
+     `ref = min(ref, 1.10 × the median of those sessions)`;
+   - otherwise there is no limit: those weeks were a low period (a beginner, or a break with the band on), not a
+     smaller habit to grow from.
+   - It is still a **ceiling tied to days 29–56**, not a smooth +10 % per 28 days. After a real jump in session size
+     (100 → 200), the target is held at 110 until the bigger sessions reach days 29–56, then steps up.
+   - *Before version 26* the limit used days 29–56's typical *day*. After a low month that was a rest day, so the
+     target sat near rest level (Strain about 5–6) for up to 5 weeks, then jumped about 6 points (§ Why version 26).
 4. **Recovery multiplier.**
    - `g(R)` is linear in ln between the anchors (10, ln 0.35), (58, 0) and (90, ln 1.4), and flat outside them.
    - With at least 14 prior Recoveries, `centre` = the mean of `g` over the last 28; otherwise 0.
@@ -115,8 +124,9 @@ start):**
 | 4 | ×1.45 | ×1.67 | ×0.77 | ×0.51 |
 | 7 | ×2.11 | ×2.01 | ×1.39 | ×0.71 |
 
-- Any target built on your own history drifts a little when followed exactly. The +10 % per 4 weeks limit bounds the
-  upside.
+- Any target built on your own history drifts a little when followed exactly. The progression limit (at most
+  1.10 × the typical session of days 29–56) bounds the upside; it can also hold the target down after a low month
+  (step 3).
 - Centring stops the collapse for low-Recovery users (×0.08 before).
 - Real users don't follow exactly, and the test asserts ×0.6–1.8.
 
@@ -132,6 +142,50 @@ start):**
 - Capped on 30 days, "returning" on 6.
 - Days 8–14 are the person's own (for example 11.3–12.4 on a green day), not 14–18.
 
+## Why version 26: the progression limit held beginners and returners at rest level
+
+**The problem.** The limit capped today's typical session at 1.1 × the typical session of days 29–56. That is the
+median of the window's loads at or above 30 % of its own 90th percentile. When those weeks were a low period, that
+median is a rest day:
+- a sedentary person who starts training;
+- a break of 4+ weeks with the band on (injury, illness).
+
+The target sat near rest level for weeks, then jumped in one day once the new sessions reached days 29–56.
+
+**How it was tested.** A copy of `strainTarget` with switchable options matched the real one on every call. The
+setup: 30 simulated people per case, rest days log-normal around TRIMP 8, sessions ± 20 %, Recovery 58, ACWR 1.
+"Pinned" counts the days the typical session sat more than 3 Strain points under the session the person was really
+doing.
+
+| Case | Version 25: days pinned per person / largest 1-day jump | Version 26 |
+|---|---|---|
+| Beginner: 70 sedentary days, then 3×/week at 120 | 24.2 / 5.9 | **0 / 0.4** |
+| Beginner who ramps: 4 weeks at 60, then 120 | 18.1 / 5.1 | 0.1 / 2.6 |
+| 28-day break with the band on, back at the same level | 10.6 / 6.1 | **0 / 0.5** |
+| 42-day break with the band on | 23.3 / 6.0 | **0 / 0.3** |
+| 42-day break, back easier (70 for 3 weeks, then 118) | 3.0 / 4.9 | 0 / 0.6 |
+| Steady 4×/week; weekend warrior 1×/week; sudden doubling 100 → 200 | — | unchanged |
+| Following the target for 26 weeks (end ÷ start, Recovery shift 0 / +12 / −12) | 1.41 / 1.27 / 1.08 | **1.41 / 1.27 / 1.08** |
+
+In the ramping beginner's case the 2.6-point step is the limit doing its job on a real doubling: 60 → 120 is held
+at 66 until the 120s reach days 29–56.
+
+**Options tested:**
+
+| Option | Result | Chosen? |
+|---|---|---|
+| No limit | Fixes every low-period case, but the 26-week drift rises to 1.65 / 1.32 / 1.15 | No: the limit's job is real |
+| Keep the old earlier "typical session", but only with ≥ k sessions at today's level in days 29–56 | k = 3 still jumps 5 points: 3 sessions among 25 rest days leave a rest-level 90th-percentile threshold | No |
+| **Median of days 29–56's sessions at today's level, with ≥ 4 of them** | As in the table | **Yes** |
+
+**Not fixed here.** A once-a-week beginner still sees one jump of about 6 points when the third session enters the
+window, with or without any limit (4.6 with none). That is `typicalSession` switching from rest days to sessions,
+not the limit.
+
+**On the seed** one day of 180 moves: on 2026-05-18 the typical session is 11.25 instead of 11.37. The median of
+the earlier month's sessions is a little lower than its old "typical session". The seed never has a low month with
+the band on, so nothing else changes.
+
 ## Constants (`strainTargetConfig`)
 
 | Constant | Value | Why |
@@ -140,6 +194,7 @@ start):**
 | `minDays` / `estimateBelowDays` | 7 / 14 | the target first appears on day 8 (Recovery needs 7 nights) |
 | `trainingDayShare` | 0.3 | separates rest days (seed 4–9 TRIMP) from sessions (30–300) |
 | `maxGrowth` | 0.10 per 28 days | bounds the closed-loop drift (above) |
+| `minEarlierSessions` | 4 | version 26: about one session a week in days 29–56 before the limit applies; 3 still let a mostly-rest window hold a beginner down |
 | `anchors` | 10 → 0.35×, 58 → 1×, 90 → 1.4× | 58 is Recovery for a night exactly at your baselines; the ends follow the fix list's red/green intent, applied to a *session* |
 | `minRecoveriesToCentre` | 14 | half the window |
 | `width` | 1.25 | symmetric, about 1 Strain point |

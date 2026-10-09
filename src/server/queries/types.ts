@@ -93,7 +93,15 @@ export type SleepPlanVM = {
   /** Tomorrow's typical wake, epoch ms. */
   wakeAt: number;
   weekend: boolean;
-  plans: { key: "peak" | "perform" | "get_by"; label: "Peak" | "Perform" | "Get by"; share: number; sleepMin: number; bedtimeAt: number }[];
+  /** `needPct`: the share of tonight's need the plan delivers, whole percent; below `share` × 100 when capped. */
+  plans: { key: "peak" | "perform" | "get_by"; label: "Peak" | "Perform" | "Get by"; share: number; needPct: number; sleepMin: number; bedtimeAt: number }[];
+  /** Recent efficiency was under 85 %, so the bedtimes plan on 85 % (scoring version 24). */
+  efficiencyFloored: boolean;
+  /** Time in bed hit the age cap, `inBedCapMin`: each plan falls short of its share of need (scoring version 24). */
+  capped: boolean;
+  inBedCapMin: number;
+  /** Why the bedtimes are later than need ÷ efficiency would give, when they are. */
+  notes: string[];
 };
 
 export type EnergyBankVM = {
@@ -328,7 +336,8 @@ export type HealthspanVM = {
   asOf: string;
   nextUpdateInDays: number;
   age: number;
-  result: Metric<{ pulseAge: number; deltaYears: number; pace: number; paceProvisional: boolean; vo2maxSource: "run" | "daily" | "blend" | null }>;
+  /** `paceActivityDays`: days in the last 30 worn ≥ 10 h awake; under 14, Pace leaves activity at its 6-month value. */
+  result: Metric<{ pulseAge: number; deltaYears: number; pace: number; paceProvisional: boolean; paceActivityDays: number; vo2maxSource: "run" | "daily" | "blend" | null }>;
   insight: { title: string; body: string } | null;
   /** Pulse Age at each week end. */
   history: DayPoint[];

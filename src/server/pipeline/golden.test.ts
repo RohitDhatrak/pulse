@@ -390,7 +390,7 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "reports": "d4b20308c61bdbea",
   },  // 19: Pulse Age against a person who meets health guidelines, run and daily VO2max blended, activity curves on
   // rolling 7-day windows, a 14-activity-day gate, zone and strength minutes only on days worn ≥ 10 h awake, strength
-  // unknown until logged, and curve fixes (docs/handoff/pulse-age-issues.md). Moved: healthspan only, plus the version
+  // unknown until logged, and curve fixes (docs/algorithms/healthspan.md § Why version 19). Moved: healthspan only, plus the version
   // stamp (and strain's key).
   19: {
     "daily_scores.scoring_version": "769c3cb7fe6c5606",
@@ -512,6 +512,154 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.still_hr": "280d884a01803ce9",
     "intraday_series.stress": "ceafceaf08ce8343",
     "reports": "d4b20308c61bdbea",
+  },  // 24: the Sleep Planner's time in bed is bounded (bedtimes assume at least 85 % efficiency; an age cap from the
+  // NSF ranges), and its rows gain planningEfficiency, efficiencyFloored, inBedCapMin and capped. Moved: sleep_planner
+  // (only the new fields: the seed's efficiency is 0.92–0.96, so no day is floored or capped), the version stamp and
+  // strain's key.
+  24: {
+    "daily_scores.scoring_version": "eca080343200e2aa",
+    "daily_scores.strain": "51a2cef85583a7d8",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "18c29349167fe9f7",
+    "daily_scores.sleep": "82e3b4ff7229d2b8",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "a70cc076e96b17e2",
+    "daily_scores.sleep_planner": "4b65c030adc2879a",
+    "daily_scores.energy_bank": "0ecbe39c9d378191",
+    "daily_scores.stress": "6c70d849f7ab1d7e",
+    "daily_scores.health_monitor": "1f1fef4812d4ca09",
+    "daily_scores.healthspan": "e4f64a3e9259b139",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "fba2b406ac2befd1",
+    "intraday_series.energy_bank": "5f1ddc4782a31061",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "280d884a01803ce9",
+    "intraday_series.stress": "ceafceaf08ce8343",
+    "reports": "d4b20308c61bdbea",
+  },  // 25: a night spent awake counts as no sleep in the debt ledger; stage 1 stores the night's core (00:00–06:00).
+  // Moved: sleep (the new awakeAllNight field; no seed night qualifies, so debt is unchanged), strain (the night
+  // summary) and the version stamp.
+  25: {
+    "daily_scores.scoring_version": "cd0c930a0a7e70db",
+    "daily_scores.strain": "f24095cf8cbad744",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "18c29349167fe9f7",
+    "daily_scores.sleep": "4831caa39f09c41e",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "a70cc076e96b17e2",
+    "daily_scores.sleep_planner": "4b65c030adc2879a",
+    "daily_scores.energy_bank": "0ecbe39c9d378191",
+    "daily_scores.stress": "6c70d849f7ab1d7e",
+    "daily_scores.health_monitor": "1f1fef4812d4ca09",
+    "daily_scores.healthspan": "e4f64a3e9259b139",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "fba2b406ac2befd1",
+    "intraday_series.energy_bank": "5f1ddc4782a31061",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "280d884a01803ce9",
+    "intraday_series.stress": "ceafceaf08ce8343",
+    "reports": "d4b20308c61bdbea",
+  },  // 26: Strain Target's progression limit compares sessions with sessions (1.1 × the median of the earlier month's
+  // sessions at today's level, with 4+ of them). Moved: strain_target, the version stamp and strain's key.
+  26: {
+    "daily_scores.scoring_version": "56420b3a0a69eda6",
+    "daily_scores.strain": "79d182a9027b54f2",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "18c29349167fe9f7",
+    "daily_scores.sleep": "4831caa39f09c41e",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "1c0a35e44aefb2c4",
+    "daily_scores.sleep_planner": "4b65c030adc2879a",
+    "daily_scores.energy_bank": "0ecbe39c9d378191",
+    "daily_scores.stress": "6c70d849f7ab1d7e",
+    "daily_scores.health_monitor": "1f1fef4812d4ca09",
+    "daily_scores.healthspan": "e4f64a3e9259b139",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "fba2b406ac2befd1",
+    "intraday_series.energy_bank": "5f1ddc4782a31061",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "280d884a01803ce9",
+    "intraday_series.stress": "ceafceaf08ce8343",
+    "reports": "d4b20308c61bdbea",
+  },  // 27: ACWR under 30 TRIMP a day of chronic load is a light load with no ratio, unless acute ÷ 30 shows a jump.
+  // Moved: training_load and reports (the new lightLoad field), the version stamp and strain's key.
+  27: {
+    "daily_scores.scoring_version": "bfc30f8718e6d5cb",
+    "daily_scores.strain": "4537ab140bf3cce3",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "18c29349167fe9f7",
+    "daily_scores.sleep": "4831caa39f09c41e",
+    "daily_scores.training_load": "51845d6b7e4b8fb9",
+    "daily_scores.strain_target": "1c0a35e44aefb2c4",
+    "daily_scores.sleep_planner": "4b65c030adc2879a",
+    "daily_scores.energy_bank": "0ecbe39c9d378191",
+    "daily_scores.stress": "6c70d849f7ab1d7e",
+    "daily_scores.health_monitor": "1f1fef4812d4ca09",
+    "daily_scores.healthspan": "e4f64a3e9259b139",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "fba2b406ac2befd1",
+    "intraday_series.energy_bank": "5f1ddc4782a31061",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "280d884a01803ce9",
+    "intraday_series.stress": "ceafceaf08ce8343",
+    "reports": "7ec7483a8a27bef0",
+  },  // 28: Pace's 30-day activity terms need 14 activity days and are shrunk toward the 6-month ones. Moved: healthspan
+  // (the new paceActivityDays field, and Pace on days with fewer than 30 activity days in the last 30), the version
+  // stamp and strain's key.
+  28: {
+    "daily_scores.scoring_version": "32eeb5d9e23357a3",
+    "daily_scores.strain": "fd5f45477c6bdac4",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "18c29349167fe9f7",
+    "daily_scores.sleep": "4831caa39f09c41e",
+    "daily_scores.training_load": "51845d6b7e4b8fb9",
+    "daily_scores.strain_target": "1c0a35e44aefb2c4",
+    "daily_scores.sleep_planner": "4b65c030adc2879a",
+    "daily_scores.energy_bank": "0ecbe39c9d378191",
+    "daily_scores.stress": "6c70d849f7ab1d7e",
+    "daily_scores.health_monitor": "1f1fef4812d4ca09",
+    "daily_scores.healthspan": "9c85f6c42efc5cd1",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "fba2b406ac2befd1",
+    "intraday_series.energy_bank": "5f1ddc4782a31061",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "280d884a01803ce9",
+    "intraday_series.stress": "ceafceaf08ce8343",
+    "reports": "7ec7483a8a27bef0",
+  },  // 29: Pulse Age's strength term weighted n / (n + 8) for n logged strength workouts in 6 months. Moved: healthspan
+  // (and its strengthLogs fields), the version stamp and strain's key.
+  29: {
+    "daily_scores.scoring_version": "22839852f7ee4661",
+    "daily_scores.strain": "b2bd945a4698888c",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "18c29349167fe9f7",
+    "daily_scores.sleep": "4831caa39f09c41e",
+    "daily_scores.training_load": "51845d6b7e4b8fb9",
+    "daily_scores.strain_target": "1c0a35e44aefb2c4",
+    "daily_scores.sleep_planner": "4b65c030adc2879a",
+    "daily_scores.energy_bank": "0ecbe39c9d378191",
+    "daily_scores.stress": "6c70d849f7ab1d7e",
+    "daily_scores.health_monitor": "1f1fef4812d4ca09",
+    "daily_scores.healthspan": "7d5bfef33f56df8c",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "fba2b406ac2befd1",
+    "intraday_series.energy_bank": "5f1ddc4782a31061",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "280d884a01803ce9",
+    "intraday_series.stress": "ceafceaf08ce8343",
+    "reports": "7ec7483a8a27bef0",
   },
 };
 

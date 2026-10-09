@@ -117,7 +117,7 @@ export async function getReport(period: string, ctx: QueryCtx): Promise<ReportVM
       stat("hrv", "Heart rate variability", a.hrv, pa?.hrv, "ms", "up"),
       stat("rhr", "Resting heart rate", a.rhr, pa?.rhr, "bpm", "down"),
     ],
-    trainingBalance: r.trainingBalance && tb ? ok({ status: tb.status, word: tb.word, acwr: r.trainingBalance.acwr, line: tb.line }) : none("no_data"),
+    trainingBalance: r.trainingBalance && tb ? ok({ status: tb.status, word: tb.word, acwr: r.trainingBalance.acwr, line: tb.line }) : none(r.lightLoad ? "light_load" : "no_data"),
     topImpacts: impacts,
     bestWorst:
       r.best && r.worst && scored >= 2

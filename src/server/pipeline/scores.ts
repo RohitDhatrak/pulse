@@ -8,7 +8,7 @@ import { chargeDrivers, type ChargeDriver } from "@/core/scoring/drivers";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
 import { evaluateWithTrainingLoad, type ReadinessDay } from "@/core/scoring/readiness";
 import { gatedRecovery, minBaselineNights, personalSleepCentre } from "@/core/scoring/recovery";
-import { creditedSleepMin, hypnogramMetrics, ledger, minNeedNights, personalizedNeedHours, rest } from "@/core/scoring/sleep";
+import { allNighterConfig, awakeAllNight, creditedSleepMin, hypnogramMetrics, ledger, minNeedNights, personalizedNeedHours, rest } from "@/core/scoring/sleep";
 import { toStrainScale } from "@/core/scoring/strain";
 import { foldableStillMedian, foldDaytimeBaseline } from "@/core/scoring/stressBase";
 import type { BaselineState } from "@/core/scoring/types";
@@ -68,7 +68,8 @@ export const newFold = () => ({
   hsRows: [] as HealthspanDay[],
   outcomes: [] as OutcomeDay[],
   recoveries: [] as number[],
-  /** Each prior night's sleepPerf as Recovery used it (0–1), oldest first, for the personal sleep centre. */
+  /** Each prior night's sleepPerf (0–1; Sleep Performance, else efficiency), oldest first, for the personal sleep
+   * centre. Pushed whether or not Recovery could score that night. */
   sleepPerfs: [] as number[],
   /** Each prior day's median still-minute HR (stress().stillMedianHr), oldest first. */
   stillMedians: [] as (number | null)[],
@@ -160,11 +161,14 @@ export function scoreSleep(data: Data, inputs: Inputs, f: Fold, d: Day, tz: stri
       ? rest(main.asleepMin * 60, main.efficiency, (main.deepMin ?? 0) * 60, (main.remMin ?? 0) * 60, needHours, consistency)
       : null;
   const yesterdayNaps = (data.sessionsByDay.get(addDays(day, -1)) ?? []).filter((s) => !s.isMain);
-  const creditedMin = creditedSleepMin(main?.asleepMin ?? null, yesterdayNaps.reduce((a, s) => a + (s.asleepMin ?? 0), 0));
+  const awake = !mainSession && wasAwakeAllNight(data, f, d);
+  const creditedMin = creditedSleepMin(main?.asleepMin ?? null, yesterdayNaps.reduce((a, s) => a + (s.asleepMin ?? 0), 0), { awakeAllNight: awake });
   f.ledgerSeries.push([day, creditedMin]);
   const debtMin = ledger(f.ledgerSeries, needHours).magnitudeMin;
   const reason: ReasonCode | null = !mainSession
-    ? "band_not_worn"
+    ? awake
+      ? "no_sleep"
+      : "band_not_worn"
     : !mainSession.processed
       ? "awaiting_sleep_sync"
       : performance == null
@@ -177,11 +181,28 @@ export function scoreSleep(data: Data, inputs: Inputs, f: Fold, d: Day, tz: stri
     performance,
     needHours,
     needNights: Math.min(recentNights.length, 28),
+    awakeAllNight: awake,
     creditedMin,
     debtMin,
     sri,
     consistency: sri == null ? null : sriDisplay(sri),
   };
+}
+
+/**
+ * Whether last night was spent awake (version 25): no sleep session of any kind touched 00:00–06:00 and the night's
+ * core shows the band worn, HR above resting and steps. Resting HR is the usable RHR baseline (the day's own may come
+ * from the awake night itself), else the day's.
+ */
+function wasAwakeAllNight(data: Data, f: Fold, d: Day): boolean {
+  const from = d.start;
+  const to = d.start + allNighterConfig.nightMinutes * 60;
+  const sessions = [...(data.sessionsByDay.get(addDays(d.day, -1)) ?? []), ...(data.sessionsByDay.get(d.day) ?? [])];
+  return awakeAllNight({
+    night: d.s1.night,
+    restingHr: f.rhrB && isUsable(f.rhrB) ? f.rhrB.baseline : d.s1.restingHr,
+    sessionOverlapsNight: sessions.some((s) => s.startTs < to && s.endTs > from),
+  });
 }
 
 /** SRI over the 7 nights ending on D: noon-to-noon periods, so tonight's sleep never counts toward today. */
@@ -233,7 +254,8 @@ export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
   let value: number | null = null;
   let withoutSleep: number | null = null;
   let drivers: ChargeDriver[] = [];
-  if (!mainSession) reason = "band_not_worn";
+  // A night spent awake has no HRV to score, not a band left off (version 25).
+  if (!mainSession) reason = sleep.awakeAllNight ? "no_hrv_last_night" : "band_not_worn";
   else if (!mainSession.processed) reason = "awaiting_sleep_sync";
   else if (mainSession.stagesStatus !== "SUCCEEDED" || hrv == null) reason = "no_hrv_last_night";
   else {
@@ -303,6 +325,7 @@ export function scoreTrainingLoad(f: Fold, d: Day, rec: RecoveryRow): TrainingLo
   const { readiness, trainingLoad } = evaluateWithTrainingLoad(f.readinessRows, d.day);
   return {
     acwr: readiness.acwr,
+    lightLoad: readiness.lightLoad,
     acwrPrior: f.prevAcwr,
     monotony: readiness.monotony,
     level: readiness.level,
@@ -357,6 +380,7 @@ export function scorePlanner(f: Fold, d: Day, sleep: SleepRow, tz: string) {
     napMin: d.naps.reduce((a, n) => a + n.asleepMin, 0),
     nights: f.wakeNights,
     wakeDay: addDays(day, 1),
+    age: d.age.whole,
   });
   const row: SleepPlannerRow =
     f.wakeNights.length < minNeedNights
@@ -611,6 +635,7 @@ export function recordOutcomes(f: Fold, d: Day, rec: RecoveryRow, sleep: SleepRo
     hrv: rec.inputs.hrv,
     rhr: rec.inputs.rhr ?? dm?.rhrBpm ?? null,
     acwr: tl.acwr,
+    lightLoad: tl.lightLoad,
     sleepConsistency: sleep.consistency,
   });
 }

@@ -7,14 +7,23 @@ SLEEP_QUALITY row) and `src/server/pipeline/scores.ts` (`scoreRecovery`). Tests:
 Recovery mixes how last night went against your normal: HRV (weight 0.55), resting HR (0.20), sleep (0.15),
 respiration and skin temperature (0.05 each). This page is about the sleep part.
 
+`recovery()` also accepts two more terms ported from noop, a recovery index (`recoveryIndexSlope`, weight 0.05) and
+activity balance (weight 0.05). The pipeline never passes them, so they never count. Missing terms renormalise, so
+the weights above are the ones in use.
+
 ## Formula (scoring version 17)
 
     z_sleep = (sleepPerf − centre) / 0.12            weight 0.15
 
 - `sleepPerf` is last night's Sleep Performance ÷ 100. Without one, it is the main sleep's efficiency.
-- **`centre` = your own average `sleepPerf` over the 28 nights before** (`personalSleepCentre`).
-  - With fewer than 7 such nights it is noop's fixed **0.85**.
-  - Every night with a `sleepPerf` counts, including the efficiency fallback, exactly as Recovery used it.
+- **`centre` = your own average `sleepPerf` over the last 28 earlier values** (`personalSleepCentre`).
+  - They are the last 28 nights *that had a value*, not the last 28 calendar nights: nights with no main sleep are
+    skipped, so with gaps the window reaches further back.
+  - With fewer than 7 values it is noop's fixed **0.85**.
+  - Every night with a `sleepPerf` counts, including the efficiency fallback. That includes **nights Recovery did not
+    score**: unstaged nights, nights without HRV and nights while the baseline calibrates (`scoreRecovery` pushes the
+    value before deciding whether it can score). Unstaged nights score low on Sleep Performance, so they pull the
+    centre down a little.
 - **The scale stays the fixed 0.12** (12 Sleep Performance points per unit). Only the centre is personal.
 - The centre is stored with each day as `recovery.inputs.sleepCentre`. The Recovery screen's sleep evidence shows it
   as the baseline.

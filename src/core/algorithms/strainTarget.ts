@@ -3,8 +3,11 @@
 // your typical training session × a Recovery multiplier centred on your own last 28 days, about one Strain point
 // wide, capped while load climbs fast or while you come back from a break (5 days without a session). Every
 // constant below was checked by simulating light, heavy, daily and sedentary users and 26 weeks of following the
-// target (see the doc).
+// target (see the doc). Since SCORING_VERSION 26 the progression limit compares sessions with sessions: it used the
+// earlier window's "typical session", which after a low month (a beginner, a break with the band on) was a rest day,
+// and pinned the target near rest level for up to 5 weeks.
 import { loadToStrain, trainingDayShare, typicalSession } from "../scoring/load";
+import { percentile } from "../scoring/strain";
 import { band, type RecoveryBand } from "../scoring/recovery";
 
 export { strainPointsAbove, typicalSession } from "../scoring/load";
@@ -18,8 +21,17 @@ export const strainTargetConfig = {
   estimateBelowDays: 14,
   /** A training day is a load of at least this share of the window's 90th percentile. */
   trainingDayShare,
-  /** The typical session may grow at most this much over the previous 28 days' (needs `estimateBelowDays` there). */
+  /**
+   * The typical session may grow at most this much over the previous 28 days' sessions (needs `estimateBelowDays`
+   * loads there, and `minEarlierSessions` of them sessions at today's level).
+   */
   maxGrowth: 0.1,
+  /**
+   * Sessions at today's level (≥ `trainingDayShare` × today's typical session) the previous 28 days need before the
+   * limit applies, about one a week (version 26). With fewer, those weeks were a low period, not a smaller habit to
+   * grow from; 3 still let a mostly-rest window hold a beginner down (docs/algorithms/strain-target.md).
+   */
+  minEarlierSessions: 4,
   /** ln(multiplier) anchors on Recovery, linear in between and flat outside: a normal night (58) is 1×. */
   anchors: [
     [10, Math.log(0.35)],
@@ -91,10 +103,13 @@ export function strainTarget({ priorLoad, priorRecovery, recovery, acwr }: Strai
   let ref = typicalSession(window);
   if (ref == null || !(ref > 0)) return null;
 
-  // Progression limit: a target built on what you followed would otherwise ratchet up month after month.
+  // Progression limit: a target built on what you followed would otherwise ratchet up month after month. Like with
+  // like: the earlier month's sessions at today's level, not its typical day, which after a low month is a rest day.
   const earlier = observed(priorLoad.slice(-2 * c.windowDays, -c.windowDays));
-  const earlierRef = earlier.length >= c.estimateBelowDays ? typicalSession(earlier) : null;
-  if (earlierRef != null && earlierRef > 0) ref = Math.min(ref, (1 + c.maxGrowth) * earlierRef);
+  const earlierSessions = earlier.filter((v) => v >= c.trainingDayShare * ref!).sort((a, b) => a - b);
+  if (earlier.length >= c.estimateBelowDays && earlierSessions.length >= c.minEarlierSessions) {
+    ref = Math.min(ref, (1 + c.maxGrowth) * percentile(earlierSessions, 50));
+  }
 
   // Centred on your own recent Recoveries, so your usual day asks for your usual session.
   const recent = priorRecovery.slice(-c.windowDays);

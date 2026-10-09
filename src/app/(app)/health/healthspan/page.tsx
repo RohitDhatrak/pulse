@@ -1,6 +1,7 @@
 import { Rabbit, Turtle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { AGE_LABEL, formatValue, MISSING } from "@/lib/format"
+import { healthspanConfig } from "@/core/algorithms/healthspan"
 import { getHealthspan } from "@/server/queries/health"
 import type { HealthspanVM } from "@/server/queries/types"
 import { TrendChart } from "@/components/charts/TrendChart"
@@ -41,7 +42,7 @@ function Orb({ vm, compact }: { vm: HealthspanVM; compact?: boolean }) {
     <div className="flex flex-col items-center gap-3">
       <AgeOrb age={r?.pulseAge ?? null} deltaYears={r?.deltaYears ?? null} provisional={vm.result.provisional} reason={vm.result.reason} size={300} />
       <p className={cn(CAPTION, "text-center tabular-nums")}>
-        {r ? `Your age: ${formatValue("decimal1", vm.age)}` : "Healthspan needs 20 days of data."}
+        {r ? `Your age: ${formatValue("decimal1", vm.age)}` : "Healthspan needs 14 days of 10+ hours of wear while awake."}
       </p>
       {r && vm.result.provisional && <p className={cn(CAPTION, "text-center")}>Healthspan firms up after 20 days of data.</p>}
     </div>
@@ -104,7 +105,9 @@ export default async function HealthspanPage({ searchParams }: PageProps<"/healt
           <p className={cn(CAPTION, "mt-3")}>
             {r?.paceProvisional
               ? "Pace of Aging uses a 6-month window. It firms up as history builds."
-              : "Compares your last 30 days with your 6-month Pulse Age."}
+              : r && r.paceActivityDays < healthspanConfig.paceMinActivityDays
+                ? `This month's activity isn't in your pace yet: fewer than ${healthspanConfig.paceMinActivityDays} days worn 10+ hours while awake.`
+                : "Compares your last 30 days with your 6-month Pulse Age."}
           </p>
         </SectionShell>
       }

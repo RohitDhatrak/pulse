@@ -7,6 +7,7 @@ import { readHr, readSamples } from "../samples";
 import { addDays } from "../time";
 import { hrRecovery } from "@/core/scoring/hrRecovery";
 import { sessionRestingHR } from "@/core/scoring/restingHr";
+import { nightSummary } from "@/core/scoring/sleep";
 import { defaultRestingHR, strain, strainDetail } from "@/core/scoring/strain";
 import type { BaselineState, HrSample } from "@/core/scoring/types";
 import { timeInZone, zones as hrZones } from "@/core/scoring/zones";
@@ -164,6 +165,7 @@ function stage1Day(
     zoneSeconds: tiz(dayHr),
     dayAggregate: probe.dayAggregate,
     stillMinutes: still.filter((v) => v != null).length,
+    night: nightSummary(means, steps),
   };
   const activities: Stage1Activity[] = exs.map((e) => {
     const xs = hr.filter((s) => s.ts >= e.startTs && s.ts <= e.endTs);

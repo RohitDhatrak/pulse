@@ -22,6 +22,19 @@ guide, not a model of your physiology.
 - **band:** max(the SD of the 14 scores, 8). Add 6 with fewer than 10 scores.
 - **confidence:** "solid" with 10+ scores and a sleep need informed by 7+ nights; otherwise "building".
 
+**In the pipeline** (`forecastOf`, `scores.ts`) no forecast is made before **14 scored days**, a stricter gate than the
+function's 5. So in the app the "+6 with fewer than 10 scores" band widening never applies, and "building" appears
+only if the sleep need has fewer than 7 nights behind it. The 5-score minimum and the widening matter only to direct
+callers and tests.
+
+**What "planned sleep" contains.** Tonight's Peak need is the Sleep Planner's need: baseline + strain + 0.2 × debt −
+today's naps ([sleep-planner](sleep-planner.md)). So:
+- sleep debt *raises* planned sleep, and with it the forecast, though debt means worse sleep so far;
+- a nap today *lowers* it;
+- planned ÷ need is 1 or more on almost every day without a nap, so the term rarely goes negative.
+
+The term reflects the plan, not how you are likely to sleep.
+
 ## Why the strain term changed
 
 noop's term was −9 × (today's Effort − the 14-day average Effort) ÷ 12, clamped to ±12. It was tested on the real

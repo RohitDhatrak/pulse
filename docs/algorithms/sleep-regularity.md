@@ -43,7 +43,7 @@ This is Phillips et al.'s definition, SRI = −100 + 200 / (M(N − 1)) · Σⱼ
 
 **Naps count as sleep.** SRI is defined over every epoch of the 24 h day, and a nap is sleep at an irregular time, which is what SRI measures. UK Biobank's accelerometer SRI cannot tell naps apart either, so including them keeps us comparable to the SRI that Healthspan's curve was fitted on. The cost is that one nap lowers SRI by about (2 × nap minutes) ÷ (6 × 1,440) × 200, which is 2.8 points for a 1 h nap in a 7-day window.
 
-**What counts as covered.** The pipeline (`sleepRegularity` in `src/server/pipeline.ts`) marks a noon-to-noon day covered when it has at least 720 minutes with heart rate, that is the band was worn for at least half of it: the afternoon of one calendar day (`hrMinutesPm`) plus the morning of the next (`hrMinutesAm`). A covered day with no sleep at all counts every minute as awake. A day with a few stray heart-rate minutes is skipped, so a mostly-unworn day cannot read as a night awake.
+**What counts as covered.** The pipeline (`sleepRegularity` in `src/server/pipeline/scores.ts`) marks a noon-to-noon day covered when it has at least 720 minutes with heart rate, that is the band was worn for at least half of it: the afternoon of one calendar day (`hrMinutesPm`) plus the morning of the next (`hrMinutesAm`). A covered day with no sleep at all counts every minute as awake. A day with a few stray heart-rate minutes is skipped, so a mostly-unworn day cannot read as a night awake.
 
 ## Constants
 
@@ -65,7 +65,11 @@ All of these are tests, except example 4, which was computed with the code.
 1. **Identical schedule.** Asleep 23:00–07:00 every night gives **SRI = 100**, shown as 100, and 1.0 for `rest()`.
 2. **12 h apart on alternate days.** Even days are asleep 00:00–08:00 and odd days 12:00–20:00. Each consecutive pair agrees only when both are awake, 08:00–12:00 and 20:00–24:00, which is 8 h of 24. P = 1/3, so **SRI = −33.3**, shown as 0.
 3. **A missing day.** The same schedule as example 1, with no data on day 4. With day 4 marked uncovered, its two pairs are skipped and **SRI = 100**. Marked covered, day 4 counts as awake all night, two of six pairs disagree for 8 h, and SRI = −100 + 200 × (1 − 960 / 8,640) = **77.8**.
-4. **Weekend shift.** Weekdays 23:00–07:00, Friday and Saturday nights 01:00–09:00, Monday to Sunday: **SRI = 93.1**.
+4. **Weekend shift.** Weekdays 23:00–07:00, Friday and Saturday nights 01:00–09:00, Monday to Sunday. The result depends on where the days are cut:
+   - **Midnight to midnight: SRI = 93.1.** The schedule changes across three pairs (Thursday → Friday 60 min, Friday → Saturday 180 min, Saturday → Sunday 60 min), so −100 + 200 × (1 − 300 / 8,640) = 93.1.
+   - **Noon to noon, as the pipeline cuts them: SRI = 88.9.** Each night now sits whole inside one day, so there are two transitions of 240 min (into and out of the late nights): −100 + 200 × (1 − 480 / 8,640) = 88.9.
+
+   Midnight days split each night in two and spread the same shift over more pairs, which here understates it. This is one reason the pipeline uses noon-to-noon days.
 5. **A nap.** Example 1 plus a 1 h nap on day 4 gives SRI = −100 + 200 × (1 − 120 / 8,640) = **97.2**.
 
 ## Sources

@@ -107,7 +107,17 @@ All of these live in `stressConfig`.
 | `rollWindowMin`, `rollAllowanceSigma`, `rollMinStill` | 300 min, 1σ, 30 | version 21; *tunable* (120 / 180 min absorbed long stress) |
 | `foldGateSigma`, `foldGateMinDays` | 2σ, 7 days | version 21 (`stressBase.ts`) |
 
-**The fallback σ under our mapping.** noop chose 21.64 bpm so that +15 bpm lands on 2.0 under *its* squash. Under ours, 2.0 needs z = 1.96, which is +42 bpm at that σ, so provisional days read mostly low. We therefore use 15 / 1.96 = 7.65 bpm, so that +15 bpm lands on 2.0 under our curve and the first days read like later ones.
+**The fallback σ under our mapping.** noop chose 21.64 bpm so that +15 bpm lands on 2.0 under *its* squash. Under ours, 2.0 needs z = 1.96, which is +42 bpm at that σ, so provisional days read mostly low. We therefore use 15 / 1.96 = 7.65 bpm, so that +15 bpm lands on 2.0 under our curve.
+
+That was meant to make the first days read like later ones. **They don't: provisional days read low.** Once the baseline is usable, σ in the simulation is 3.8–4.4 bpm (mostly at its 3.76 floor), so 7.65 bpm is about twice as wide. On day 0 the reference is also today's own median still HR, which includes the stress itself. Measured with the stress simulator (`src/core/algorithms/__sim__/days.ts`; 7 kinds of people × 6 runs, a realistic mix of days before):
+
+| Days of history | Provisional | Stress minutes caught on a stressful workday | High minutes on a calm desk day (median) |
+|---|---|---|---|
+| 0–3 | all | 31–38% | 2–4 |
+| 4 | none | 71% | 56 |
+| 7 / 14 / 7 weeks | none | 72% | 61–65 |
+
+So the first four days under-report both real stress and everyday background. The Stress screen marks them provisional.
 
 ## Edge rules
 

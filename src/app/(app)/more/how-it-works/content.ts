@@ -222,8 +222,9 @@ export const SCORE_DOCS: ScoreDoc[] = [
         title: "How it is weighted",
         paragraphs: [
           "Tonight’s need = your sleep need + 3\u00a0minutes for each Strain point today goes above your typical training session (up to 30\u00a0minutes) + 20% of your sleep debt − today’s nap time. A rest day or a usual session adds nothing; twice your usual session adds about 5\u00a0minutes.",
-          "Sleep debt runs over your last 14\u00a0nights with sleep. Each night, debt becomes 55% of (need + the debt so far − sleep), with the previous day’s naps counted as sleep; anything under 10\u00a0minutes clears to zero.",
+          "Sleep debt runs over your last 14\u00a0nights with sleep. Each night, debt becomes 55% of (need + the debt so far − sleep), with the previous day’s naps counted as sleep; anything under 10\u00a0minutes clears to zero. A night you stayed up through counts as no sleep, when the band shows you awake and moving from midnight to 6 am; a night with no sleep and no data is skipped.",
           "Bedtimes count back from your median wake time on recent weekday or weekend mornings, to match tomorrow, allowing for your median efficiency (90% until known). A need of 8\u00a0hours, a 07:00 wake and 90% efficiency give a Peak bedtime of 22:07.",
+          "Bedtimes never plan on less than 85% efficiency. If you've been awake in bed for much of the night, going to bed even earlier mostly adds more time awake, so the planner assumes 85%: the same 8\u00a0hours at 65% efficiency gives 21:35, not 18:42. Time in bed is also capped for your age, at the most sleep the National Sleep Foundation says may be appropriate: 12\u00a0hours under 14, 11 to age 25, 10 to 64, and 9 from 65. When the cap applies, each band shows the share of your need it actually leaves room for.",
         ],
       },
       {
@@ -259,7 +260,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
           { term: "Sleep consistency", detail: "Reference 81, the median in a large UK study." },
           { term: "Heart rate zones 1-3", detail: "Time at 50-80% of your heart-rate reserve, on days you wore Pulse at least 10\u00a0hours awake. Reference 100\u00a0minutes a week." },
           { term: "Heart rate zones 4-5", detail: "Time at 80% of your heart-rate reserve and above, on the same days. Reference 15\u00a0minutes a week." },
-          { term: "Strength activity", detail: "Logged strength workouts. Reference 40\u00a0minutes a week; more adds nothing. With none logged in 6\u00a0months it doesn’t count either way." },
+          { term: "Strength activity", detail: "Logged strength workouts. Reference 40\u00a0minutes a week; more adds nothing. With none logged in 6\u00a0months it doesn’t count either way, and it counts more fully the more workouts you log (a single one counts for little)." },
           { term: "Lean body mass", detail: "Fat-free mass for your height. Needs weight, body fat and height; without them it counts as typical for your age." },
         ],
       },
@@ -267,7 +268,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
         title: "How it is weighted",
         paragraphs: [
           "Each input maps to a change in mortality risk from a published study. The changes are added, shrunk by 25% for overlap, and turned into years on the rule that mortality risk doubles about every 8\u00a0years. Activity is scored week by week (every 7-day stretch) and averaged, so a few inactive weeks show up straight away. A missing input counts as a typical person of your age and sex. Steps and time in zones 1-3 both measure how active you are, so when both fall short only the larger shortfall counts. A resting heart rate of 70\u00a0bpm, all else at reference, adds about 0.75\u00a0years.",
-          "Pace of Aging repeats this for your last 30\u00a0days: 1 + (30-day years − 6-month years) ÷ 5.",
+          "Pace of Aging repeats this for your last 30\u00a0days: 1 + (30-day years − 6-month years) ÷ 5. Activity only counts in it with 14 or more of those days worn 10\u00a0hours or more while awake, and a partly worn month counts for less, so a few days of wear can’t swing it.",
         ],
       },
       {
@@ -463,7 +464,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "How it is weighted",
         paragraphs: [
-          "Training load (ACWR) is your average daily load over the last 7\u00a0calendar days, divided by your average over the last 28 (both over the days the band was worn). 1.00 means this week matches your usual; twice your usual load for a week reads 1.60. Reports use the last day of the week or month that has a ratio; Fitness shows today’s.",
+          "Training load (ACWR) is your average daily load over the last 7\u00a0calendar days, divided by your average over the last 28 (both over the days the band was worn). 1.00 means this week matches your usual; twice your usual load for a week reads 1.60. Reports use the last day of the week or month that has a ratio; Fitness shows today’s. With under about 30 a day of load over the 28 days, the ratio isn’t shown (“Light load”): there’s too little load to compare, and one walk would read as a spike. A big jump still shows: this week averaging 1.3 times 30 or more reads building fast or spiking.",
         ],
       },
       {

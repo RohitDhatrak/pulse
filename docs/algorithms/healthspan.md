@@ -21,8 +21,8 @@ the UI labels it as an estimate (KTD8).
 Ours differs from noop in the inputs, the dose-response curves (pinned below from the papers), the reference and the
 gates.
 
-**Scoring version 19** reworked it after `docs/handoff/pulse-age-issues.md` found 14 problems by testing. "Why
-version 19" below has the before/after numbers.
+**Scoring version 19** reworked it after testing found 14 problems. "Why version 19" below describes them with the
+before/after numbers.
 
 ## Flow
 
@@ -70,6 +70,11 @@ flowchart TB
     at 0.5.
 - **A missing input** counts as the typical profile's value, marked `estimated`, at full weight.
 - **Strength with no workout logged in the 6 months** is 0 years, marked `unlogged`.
+- **Strength once logged** (*since version 29*) is weighted by how much is logged: its ln HR × n ÷ (n + 8), for n
+  strength workouts logged in the 6 months (`strengthLogPrior`). One log counts 11 %, a weekly habit (26) 76 %.
+  - The same 6-month weight applies in Pace's 30-day window.
+  - While n < 24 (weight under 0.75), the strength row says "Based on n logged strength workouts in 6 months: it
+    counts more fully as you log more."
   - Once one exists, days before the first logged workout are left out, and later days without one count as 0.
 - **Steps and zones 1–3 count once:** when both are penalties, the smaller is set to 0 and marked `overlapped`.
 
@@ -82,7 +87,17 @@ flowchart TB
 **Notes:**
 - Both Δage values use the reference at today's age, so steady inputs give Pace 1.0.
 - Pace uses the unclamped Δage values, so a change still shows while Pulse Age sits at the clamp.
-- ln 2 / 8 = 0.0866 per year, so one unit of ln HR is 8.66 years before the shrink, 6.49 after it.
+- *Since version 28*, the 30-day window's **activity** inputs (zones 1–3, zones 4–5, steps, strength) depend on how
+  many days in the 30 have data for them (worn ≥ 10 h awake), *n*:
+  - under **14** (`paceMinActivityDays`, like the 6-month gate), the input keeps its 6-month term, so activity adds
+    nothing to Pace. With no 6-month term either, it counts as typical in both windows;
+  - from 14, the 30-day term is pulled toward the 6-month one: term₃₀ = term₆ₘₒ + w × (term₃₀ − term₆ₘₒ), with
+    w = min(1, [n ÷ (n + 60)] ÷ [30 ÷ 90]) = 3n ÷ (n + 60). That is 0.57 at 14 days, 0.75 at 20 and 1 at 30.
+  - A fully worn month counts in full.
+  - `paceActivityDays` reports *n* for zones. Under 14 the page says "This month's activity isn't in your pace yet:
+    fewer than 14 days worn 10+ hours while awake."
+
+- ln 2 / 8 = 0.0866 per year, so one unit of ln HR is 1 / 0.0866 = 11.54 years before the shrink, and 11.54 × 0.75 = 8.66 years after it (`toYears` in `deltaAge`).
 
 ## Inputs
 
@@ -207,7 +222,7 @@ inputs changed (version 14)" below.
 ## Why version 19
 
 The real `healthspan()` was tested: probes, simulated people with realistic day-to-day noise, a simulated population,
-and the demo database (`docs/handoff/pulse-age-issues.md`).
+and the demo database.
 
 Every candidate fix was prototyped first. The prototype was a copy of the function with options; in "old" mode it
 matched the real one exactly on 120 random cases. Then the final code was re-run through the same tests.
@@ -273,6 +288,95 @@ values:
 - the 8-year doubling;
 - missing = typical.
 
+## Why version 29: one logged strength workout added 1.5 years
+
+**The problem (a version 19 rule).**
+- With no strength workout logged in 6 months, strength is unknown (0 years).
+- Once one is logged, every worn day from it on counts as 0 minutes unless it has a logged workout.
+
+The reference (40 min/week) is the curve's lowest-risk point, so the term can only add years. Consequences:
+- one logged session added about **1.5 years**;
+- 180 days later, when it left the window, the term flipped back to unknown and Pulse Age fell **1.6 years
+  overnight**;
+- people who lift but log only some sessions read as barely lifting.
+
+It punished exactly the logging the strength row asks for.
+
+**How it was tested.** A copy of `healthspan.ts` with the rule switchable, piped to esbuild in memory. Every input is
+at the reference except strength; a man of 40; days 150–419 scored daily. Strength years at days 200 / 330 / 419,
+and the largest one-day move in Δage:
+
+| Pattern | Version 28 | Gate (unknown until 4 logs) | n / (n + 4) | **n / (n + 8)** | n / (n + 12) |
+|---|---|---|---|---|---|
+| Never logs | 0 | 0 | 0 | **0** | 0 |
+| One 45-min log, never again | +1.48; 1-day move 1.58 | 0 | +0.30; 0.32 | **+0.16; 0.18** | +0.11 |
+| One 45-min log a month | +1.23 | +1.23 | +0.74 | **+0.53** | +0.41 |
+| Regular 2 × 30 min a week | 0 | 0 | 0 | **0** | 0 |
+| Regular 1 × 20 min a week (low, logged) | +0.81 | +0.81 | +0.70 | **+0.62** | +0.55 |
+| 2 × 30 a week, then stops (2 / 4 months later) | +0.24 / +1.06 | same | +0.22 / +0.85 | **+0.21 / +0.72** | +0.19 / +0.62 |
+| Starts 2 × 30 a week | 0 | 0 | 0 | **0** | 0 |
+
+**Why weighting, and why 8:**
+- A missing strength input counts as typical, which here is the reference (0 years). So weighting by the evidence
+  pulls a few logs toward "unknown" rather than toward "no strength".
+- The gate still gave a monthly logger the full +1.23, and would jump when the 4th log arrived.
+- 4 left one log at +0.3.
+- 12 weakened a genuinely low but regularly logged habit to +0.55.
+
+**Trade-off.** Someone who stops lifting reads a smaller penalty as their old logs age out of the 6 months (+0.72
+rather than +1.06 four months on). That is the price of not over-reading a few logs.
+
+**On the seed** the latest day has 23 logged workouts in its 6 months (weight 0.74). Strength goes from +0.19 to
++0.14 years, and Pulse Age's Δ from −3.76 to −3.81.
+
+## Why version 28: a sparsely worn month swung Pace
+
+**The problem.** Activity is scored per 7-day window with at least 4 worn days, and the 6-month window needs 14
+activity days. The 30-day window had no gate. With too few days for any window it fell back to the plain mean × 7,
+so **one worn day became the month's weekly activity**: a rest day read as about 0 min a week (aging fast), a
+workout day as 300+ (aging slowly). A month of night-only wear (a trip, another watch by day) swung Pace with nothing
+changed.
+
+**How it was tested.** A copy of `healthspan.ts` with the rule switchable, piped to esbuild in memory; its "version
+27" mode matched the real function on every case. The setup:
+- 60 simulated people per row, 250 days;
+- zones 1–3 150 and zones 4–5 30 min a week over 4 workouts, and 8,500 steps;
+- the first 220 days fully worn, and the last 30 worn ≥ 10 h awake only on the days named (others night-only).
+
+Median Pace [P10–P90] and the share outside 0.9–1.1:
+
+| Case | Version 27 | Gate 14 only | Gate 14 + shrinkage, k = 20 / 30 / **60** |
+|---|---|---|---|
+| Steady, 1 random worn day | 1.15 [0.74–2.73] 78 % | 0 % | 0 % / 0 % / **0 %** |
+| Steady, 8 / 12 random days | 37 % / 57 % | 0 % / 0 % | **0 % / 0 %** for all k |
+| Steady, 14 random days | 33 % | 33 % | 17 % / 17 % / **12 %** |
+| Steady, 16 random days | 43 % | 43 % | 27 % / 23 % / **18 %** |
+| Steady, 20 random days | 28 % | 28 % | 20 % / 15 % / **15 %** |
+| Steady, fully worn / weekends off | 2 % / 3 % | same | **same** |
+| Steady, every other day worn | 1.22, 93 % | 1.22, 93 % | 1.15 / 1.14 / **1.13**, 67 % |
+| Became sedentary, fully worn | 2.36 | 2.36 | **2.36** |
+| Became sedentary, weekends off | 2.36 | 2.36 | 2.18 / 2.14 / **2.08** |
+| Became sedentary, 15 alternate days worn | 2.51 | 2.51 | 2.07 / 2.00 / **1.89** |
+| Became sedentary, 8 random days worn | 2.69 | 1.00 | **1.00** (too little data to say) |
+| Half as active, fully worn / weekends off | 1.49 / 1.46 | same | 1.49 / **1.37** |
+| Sedentary → active, fully worn | −0.46 | −0.46 | **−0.46** |
+
+**Options compared:**
+- **Fall back to the 6-month term only when no 7-day window qualifies:** fixed 1–3 days, but 8 and 12 random days
+  were still 33 % and 57 % outside.
+- **A gate alone (8 or 14 days):** moves the problem to just above the gate.
+- **Plain shrinkage n ÷ (n + k):** also damped real changes in fully worn months (becoming sedentary 2.36 → 1.79 at
+  k = 20).
+- **Chosen: gate 14 plus shrinkage normalised to count a fully worn month in full, k = 60.** It removes the noise
+  below 14 days and halves it between 14 and 20, and every real change in the table is still clearly shown.
+
+**Known limit (not fixed).** Wearing exactly every other day still reads 1.13. Each 7-day window then holds 4 days,
+and the curves' shape turns that extra noise into a worse average. Fixing it means changing the window rule for both
+windows.
+
+**On the seed** 41 of 167 days have fewer than 30 activity days in their last 30, so their Pace is shrunk a little
+toward the 6 months; none is under 14. Seed Pace runs 0.80–1.45 (median 1.00).
+
 ## Why missing inputs and activity changed (version 14)
 
 **Missing inputs.**
@@ -297,6 +401,9 @@ inactive person +14.1 years.
 | `activityWindowDays`, `minWindowDays` | 7, 4 | v19 |
 | `minDays` | 20 | provisional below |
 | `minActivityDays` | 14 | v19 |
+| `paceMinActivityDays` | 14 | v28: the 30-day window's activity gate (as `minActivityDays`) |
+| `paceShrinkDays` | 60 | v28: shrinkage of a partly worn month's activity toward the 6 months; normalised so 30 days count in full |
+| `strengthLogPrior` | 8 | v29: strength's term × n / (n + 8) for n logged workouts in 6 months |
 | `minTerms` | 5 | |
 | `steps` | cap 10,000 → 8,000; reference 8,000 → 6,000; ramp 55–65 | v19 (Paluch 2022) |
 | `reference` | see the table above | v19 |

@@ -3,6 +3,7 @@ import type { ReasonCode } from "@/lib/reasons";
 import type { ChargeDriver } from "@/core/scoring/drivers";
 import type { RecoveryForecast } from "@/core/scoring/forecast";
 import type { HrRecoveryResult } from "@/core/scoring/hrRecovery";
+import type { NightSummary } from "@/core/scoring/sleep";
 import type { BaselineState } from "@/core/scoring/types";
 import type { Drain } from "@/core/algorithms/energyBank";
 import type { FitnessCategory } from "@/core/algorithms/fitnessLevel";
@@ -47,7 +48,7 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * six months of estimates); activity curves on rolling 7-day windows; no result before 14 days of activity data;
  * zone and strength minutes only on days worn ≥ 10 h awake; strength unknown until a workout is logged; no long-sleep
  * or high-strength penalty; per-sex lean mass; SRI below 65 and the VO2max reference past 75 extended; steps ramp
- * between 55 and 65 (see docs/handoff/pulse-age-issues.md).
+ * between 55 and 65 (see docs/algorithms/healthspan.md § Why version 19).
  * 20: the Energy Bank starts at 0.6 × Recovery without its sleep term + 0.4 × sleep performance, so last night's
  * sleep counts once (it counted 0.69 per point, 42 % of it through Recovery). Recovery itself is unchanged.
  * 21: Stress leaves out exertion (≥ 40 % of heart-rate reserve) and the 30 minutes after it or a logged workout;
@@ -58,8 +59,23 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * 23: the illness signal's 30-night window skips the 3 nights before last night (a running illness entered its own
  * baseline and faded), and yesterday's hard (2+ Day Strain points over your typical session) or late (ending within
  * 2 h of sleep) workout is passed as a confounder.
+ * 24: the Sleep Planner's time in bed is bounded: bedtimes assume at least 85 % efficiency (planning at your own low
+ * efficiency sent people with insomnia to bed at about 18:30), and time in bed is capped by age at the National Sleep
+ * Foundation's "may be appropriate" upper bound (12 h under 14, 11 h to 25, 10 h to 64, 9 h from 65).
+ * 25: a night spent awake counts as no sleep in the debt ledger (it was skipped like a night without data, so an
+ * all-nighter added no debt while a 1 h night added about 214 min). Only with positive evidence over 00:00–06:00: no
+ * sleep session, the band worn, median HR at least 5 above resting and 100+ steps. Stage 1 stores the night's summary.
+ * 26: Strain Target's progression limit compares sessions with sessions: 1.1 × the median of the previous 28 days'
+ * sessions at today's level, only when there are 4+. It used that month's typical day, which after a low month (a
+ * beginner, a break with the band on) was a rest day, pinning the target near rest for up to 5 weeks.
+ * 27: ACWR under a chronic load of 30 TRIMP a day is a light load with no ratio (one walk after weeks of rest read
+ * "spiking" and made readiness "strained"), unless acute ÷ 30 still shows a jump (≥ 1.3), which bands as usual.
+ * 28: Pace of Aging's 30-day activity terms need 14 days worn ≥ 10 h awake (else the 6-month term stays), and are
+ * shrunk toward the 6-month term by 3n / (n + 60), full at 30 days: one worn day used to swing Pace from 0.7 to 2.7.
+ * 29: Pulse Age's strength term is weighted n / (n + 8) for n strength workouts logged in 6 months: one logged session
+ * added about 1.5 years (every later worn day counted as 0), then fell away overnight 180 days later.
  */
-export const SCORING_VERSION = 23;
+export const SCORING_VERSION = 29;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
@@ -93,6 +109,11 @@ export type Stage1Day = {
   /** Stress Monitor's resting daytime HR for the day (independent of the baseline). */
   dayAggregate: number | null;
   stillMinutes: number;
+  /**
+   * The night's core, local 00:00–06:00 (`nightSummary`): minutes with HR, their median minute HR, and steps. Tells a
+   * night spent awake from one without data (version 25, `awakeAllNight`).
+   */
+  night: NightSummary;
 };
 
 /** Stage 1, `daily_scores.activities`. */
@@ -153,7 +174,12 @@ export type SleepRow = {
   performance: number | null;
   needHours: number;
   needNights: number;
-  /** Main sleep plus yesterday's naps, the debt ledger's night. */
+  /**
+   * No sleep session and the night's core shows you up and about (version 25, `awakeAllNight`): the ledger counts the
+   * night as 0 plus naps, and `reason` is "no_sleep".
+   */
+  awakeAllNight: boolean;
+  /** Main sleep plus yesterday's naps, the debt ledger's night; 0 + naps after a night spent awake. */
   creditedMin: number | null;
   debtMin: number;
   /** Raw SRI on [−100, 100] over the 7 nights ending on D. */
@@ -190,6 +216,8 @@ export type EnergyBankRow =
 
 export type TrainingLoadRow = {
   acwr: number | null;
+  /** Too little chronic load to compare weeks: no ratio (version 27, readiness' `acwrChronicFloor`). */
+  lightLoad: boolean;
   /** ACWR over the days before D (what Strain Target uses). */
   acwrPrior: number | null;
   monotony: number | null;

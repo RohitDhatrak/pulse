@@ -17,7 +17,7 @@ export const energyBankConfig = {
   k2: 0.08,
   /** Recharge per calm still minute, stress < stressConfig.mediumFrom (*tunable*). */
   k3: 0.01,
-  /** Recharge per minute asleep in a nap (*tunable*). */
+  /** Recharge per minute of a nap session, start to end, awake-in-bed minutes included (*tunable*). */
   k4: 0.25,
   /** Drain minutes this close together join one episode (*tunable*). */
   episodeGapMin: 5,

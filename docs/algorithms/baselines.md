@@ -208,8 +208,21 @@ An HRV baseline after 7 nights of 50, 62, 44, 58, 47, 55, 41 ms (sample SD 7.66 
 ## Edge rules
 
 - **Below the floor.** A user whose real wobble is under the floor still gets σ at the floor (a test). Their z-scores
-  are *smaller* than the truth. This is a separate question of tuning the floors, and is not changed here.
+  are *smaller* than the truth. This is a separate question of tuning the floors, and is not changed here. The
+  effect is large for low HRV, common in older adults. The SD of nightly HRV z over nights 60–120 (40 simulated
+  people each, log-normal nights) is:
+
+  | HRV, night-to-night CV | 20 ms, 12% | 25 ms, 15% | 30 ms, 18% | 50 or 70 ms, 18% |
+  |---|---|---|---|---|
+  | SD of z | 0.39 | 0.60 | 0.86 | 1.05 |
+
+  So a low-HRV user's Recovery moves about half as much as a typical user's for the same relative change.
 - **Rejected outliers and gaps** never advance the running-mean count (tests).
+- **A rejected outlier counts as "seen" for staleness.** It resets `nightsSinceUpdate` to 0 (`update`), just as an
+  accepted night does. So after a large real step (more than 5 spreads, `hardOutlierK`; for example a new device, a
+  new medicine or a move to altitude), every later night is rejected, the baseline keeps its old centre, and it
+  **never turns stale**, so the stale rule never releases it. It stays wrong until the baseline is reset. Gaps and
+  out-of-range values do advance `nightsSinceUpdate`.
 - **A constant history** stays on the floor, and z stays finite.
 - **`zSpread` with `nValid` 0** uses n = 1, so it is finite. No consumer scores an unusable baseline anyway.
 

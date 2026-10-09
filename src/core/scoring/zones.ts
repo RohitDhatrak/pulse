@@ -2,6 +2,11 @@
 // edges as Strain's Edwards zones (strain.ts). WHOOP's zones 2–5 share these edges, but its zone 1 starts at 40%
 // (its Healthspan white paper), not 50%. A zone's lower bound in bpm is
 // resting + share × (max − resting). Time-in-zone ports noop's HrZones.kt.
+// Only the edges are shared with Strain: the time crediting differs. Here a sample holds until the next one, capped
+// at the day's median sample interval; Strain (strain.ts `sampleDurationsMinutes`) caps each sample at 2 minutes.
+// When a day mixes dense and sparse sampling the minutes disagree: 30 min of 60-second samples in a day otherwise
+// sampled every 5 s counts 30 min in Strain but 2.5 min here. Healthspan's zone minutes and the zone displays use
+// this crediting.
 import type { HrSample } from "./types";
 
 export const ZONE_NAMES = ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5"] as const;

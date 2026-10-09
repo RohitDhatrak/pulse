@@ -31,6 +31,15 @@ describe("sleepRegularityIndex", () => {
     expect(sleepRegularityIndex(sessions, ws)).toBeCloseTo(-100 + 200 * (1 - 960 / (6 * 1440)), 10);
   });
 
+  it("the doc's weekend-shift example: 93.1 with midnight days, 88.9 with the pipeline's noon-to-noon days", () => {
+    // Day 0 is Monday; the night starting on day i. Friday and Saturday nights run 01:00–09:00, the rest 23:00–07:00.
+    const sessions = Array.from({ length: 8 }, (_, k) => k - 1).map((i) => (i === 4 || i === 5 ? at(i, 25, 33) : at(i, 23, 31)));
+    expect(sleepRegularityIndex(sessions, ws)).toBeCloseTo(-100 + 200 * (1 - 300 / 8640), 10);
+    expect(sleepRegularityIndex(sessions, ws)!.toFixed(1)).toBe("93.1");
+    expect(sleepRegularityIndex(sessions, ws + 12 * H)).toBeCloseTo(-100 + 200 * (1 - 480 / 8640), 10);
+    expect(sleepRegularityIndex(sessions, ws + 12 * H)!.toFixed(1)).toBe("88.9");
+  });
+
   it("no pair of consecutive covered days gives null", () => {
     expect(sleepRegularityIndex([at(0, 0, 8)], ws, [true, false, true])).toBeNull();
     expect(sleepRegularityIndex([], ws, [true])).toBeNull();

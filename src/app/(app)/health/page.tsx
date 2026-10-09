@@ -47,7 +47,7 @@ function paceChip(delta: number | null) {
  */
 function Healthspan({ m }: { m: HealthHubVM["healthspan"] }) {
   return (
-    <MetricState metric={m} skeleton={skeleton} renderReason={() => <p className={EMPTY}>Healthspan needs 20 days of data.</p>}>
+    <MetricState metric={m} skeleton={skeleton} renderReason={() => <p className={EMPTY}>Healthspan needs 14 days of 10+ hours of wear while awake.</p>}>
       {(v, meta) => {
         const chip = paceChip(v.paceDelta)
         return (

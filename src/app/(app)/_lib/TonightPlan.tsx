@@ -49,7 +49,7 @@ export function TonightPlan({ plan, timeZone }: { plan: SleepPlanVM; timeZone: s
           <ToggleGroupItem
             key={p.key}
             value={p.key}
-            aria-label={`${p.label}, ${Math.round(p.share * 100)} percent of need`}
+            aria-label={`${p.label}, ${p.needPct} percent of need`}
             className="h-10 rounded-md! px-2 text-[13px] font-bold tracking-[0.1em] text-muted-foreground uppercase transition-[background-color,color] duration-150 ease-standard hover:bg-transparent hover:text-foreground data-[state=on]:bg-secondary data-[state=on]:text-foreground"
           >
             {p.label}

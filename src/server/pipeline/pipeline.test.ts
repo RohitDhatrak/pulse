@@ -22,12 +22,15 @@ import { hardOrLateWorkout, typicalSession } from "@/core/scoring/load";
 import { logisticK, logisticScore, logisticZ0, sleepPerfScale, wHRV, wResp, wRHR, wSkinTemp, wSleep } from "@/core/scoring/recovery";
 import { journalImpactConfig } from "@/core/algorithms/journalImpact";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
-import { personalizedNeedHours } from "@/core/scoring/sleep";
+import { ledger, personalizedNeedHours } from "@/core/scoring/sleep";
+import { mergeSamples } from "../samples";
 import { trimpToStrain } from "@/core/scoring/strain";
 import { load } from "./data";
 import { stage1 } from "./stage1";
 import { seedPull } from "../sources/seed/generate";
-import { copyDb, DAY_S, dayAt, dump, freshDb, NOW, OPTS, seeded, TZ, PROFILE, USER } from "../testing";
+import { copyDb, ctxFor, DAY_S, dayAt, dump, freshDb, NOW, OPTS, seeded, TZ, PROFILE, USER } from "../testing";
+import { getSleep } from "../queries/sleep";
+import { reasonCopy } from "@/lib/reasons";
 import { addDays, localMidnight } from "../time";
 
 const COLS = new Set(["strain", "recovery", "sleep", "training_load", "strain_target", "health_monitor", "journal_impact"]);
@@ -359,6 +362,115 @@ describe("sleep need on the seed (SCORING_VERSION 15)", () => {
       if (prior.length < 7) expect(row.needHours).toBe(7.5);
       if (row.main) prior.push(row.main.asleepMin / 60);
     }
+  });
+});
+
+describe("the Sleep Planner on the seed (SCORING_VERSION 24)", () => {
+  type Plan = { reason: null; needMin: number; efficiency: number; planningEfficiency: number; efficiencyFloored: boolean; inBedCapMin: number; capped: boolean; plans: { share: number; inBedMin: number; sleepMin: number }[] };
+  const planned = () => allDays.map((day) => js<Plan | { reason: string }>("sleep_planner", day)).filter((p): p is Plan => p.reason === null);
+
+  it("time in bed never passes the age cap (10 h at the seed's 36), and bedtimes assume at least 85 % efficiency", () => {
+    const ps = planned();
+    expect(ps.length).toBeGreaterThan(150);
+    for (const p of ps) {
+      expect(p.inBedCapMin).toBe(600);
+      expect(p.planningEfficiency).toBe(Math.max(p.efficiency, 0.85));
+      expect(p.efficiencyFloored).toBe(p.efficiency < 0.85);
+      for (const x of p.plans) expect(x.inBedMin).toBeLessThanOrEqual(600 + 1e-9);
+    }
+  });
+
+  it("uncapped plans are share × need ÷ planning efficiency: version 23's formula whenever efficiency is 85 % or more", () => {
+    for (const p of planned().filter((p) => !p.capped)) {
+      for (const x of p.plans) {
+        expect(x.inBedMin).toBeCloseTo((x.share * p.needMin) / p.planningEfficiency, 9);
+        expect(x.sleepMin).toBeCloseTo(x.share * p.needMin, 9);
+      }
+    }
+  });
+});
+
+describe("a night spent awake (SCORING_VERSION 25)", () => {
+  type Sleep = SleepRow & { awakeAllNight: boolean };
+  const sleepOf = async (d: Db, day: string) => (await rows<{ s: Sleep }>(d, sql`select sleep s from daily_scores where user_id = ${USER} and day = ${day}`))[0].s;
+  const recoveryOf = async (d: Db, day: string) => (await rows<{ r: RecoveryRow }>(d, sql`select recovery r from daily_scores where user_id = ${USER} and day = ${day}`))[0].r;
+
+  it("no seed day is a night spent awake; nights without a session (band off) stay out of the ledger", () => {
+    let unworn = 0;
+    for (const day of allDays) {
+      const s = js<Sleep>("sleep", day);
+      expect(s.awakeAllNight).toBe(false);
+      if (!s.main) {
+        unworn++;
+        expect(s.creditedMin).toBeNull();
+      }
+    }
+    expect(unworn).toBeGreaterThan(0);
+  });
+
+  /** A copy where wake day `i` has no sleep session; `awake` also writes up-and-about HR and steps over 00:00–06:00. */
+  async function withoutNight(i: number, awake: boolean) {
+    const copy = await copyDb(db);
+    const day = dayAt(i);
+    const [main] = await rows<{ id: string }>(copy, sql`select id from sleep_sessions where user_id = ${USER} and is_main and day = ${day}`);
+    await copy.execute(sql`delete from sleep_segments where user_id = ${USER} and session_id = ${main.id}`);
+    await copy.execute(sql`delete from sleep_sessions where user_id = ${USER} and id = ${main.id}`);
+    if (awake) {
+      const mid = localMidnight(day, TZ);
+      const rhr = Number(metrics.get(dayAt(i - 1))!.rhr_bpm);
+      const hr = new Map<number, number>();
+      for (let t = mid; t < mid + 6 * 3600; t += 30) hr.set(t, Math.round(rhr + 14 + 3 * Math.sin(t / 600)));
+      await mergeSamples(copy, "hr", USER, { start: mid, end: mid + 6 * 3600 }, hr, "replace");
+      const steps = new Map<number, number>();
+      for (let t = mid + 600; t < mid + 6 * 3600; t += 1200) steps.set(t, 40);
+      await mergeSamples(copy, "steps", USER, { start: mid, end: mid + 6 * 3600 }, steps, "max");
+    }
+    await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(i - 1)}), (${USER}, ${day}), (${USER}, ${dayAt(i + 1)}) on conflict do nothing`);
+    await recompute(copy, OPTS);
+    return copy;
+  }
+  const I = 80;
+
+  it("end to end: the band worn, HR up and steps overnight, with no session, count as a night without sleep", async () => {
+    const copy = await withoutNight(I, true);
+    const s = await sleepOf(copy, dayAt(I));
+    expect(s).toMatchObject({ awakeAllNight: true, reason: "no_sleep", performance: null, main: null });
+    // 0 plus yesterday's naps, and the ledger counts it.
+    const naps = (await rows<{ m: number }>(copy, sql`select coalesce(sum(asleep_min), 0)::int m from sleep_sessions where user_id = ${USER} and not is_main and day = ${dayAt(I - 1)}`))[0].m;
+    expect(s.creditedMin).toBe(naps);
+    const series: [string, number | null][] = [];
+    for (let k = 0; k <= I; k++) series.push([dayAt(k), (await sleepOf(copy, dayAt(k))).creditedMin]);
+    expect(s.debtMin).toBe(ledger(series, s.needHours).magnitudeMin);
+    const before = js<Sleep>("sleep", dayAt(I));
+    expect(s.debtMin).toBeGreaterThan(before.debtMin + 150);
+    // The need doesn't drop, Recovery has no HRV rather than no band, and the next night carries the debt.
+    expect(s.needHours).toBe(before.needHours);
+    expect((await recoveryOf(copy, dayAt(I))).reason).toBe("no_hrv_last_night");
+    expect((await sleepOf(copy, dayAt(I + 1))).debtMin).toBeGreaterThan(js<Sleep>("sleep", dayAt(I + 1)).debtMin);
+    // The Sleep screen: "Up all night" instead of "band not worn", and the debt shows that day.
+    const vm = await getSleep(dayAt(I), ctxFor(copy));
+    expect(vm.performance).toMatchObject({ value: null, reason: "no_sleep" });
+    expect(reasonCopy("no_sleep")).toMatchObject({ short: "Up all night", long: "No sleep: you were up all night" });
+    expect(vm.details.find((d) => d.key === "debt")!.metric.value).toBe(s.debtMin);
+  });
+
+  it("control: no session but sleeping-level HR (a night not yet synced, or missed) stays a night without data", async () => {
+    const copy = await withoutNight(I, false);
+    const s = await sleepOf(copy, dayAt(I));
+    expect(s).toMatchObject({ awakeAllNight: false, reason: "band_not_worn", creditedMin: null });
+    expect((await recoveryOf(copy, dayAt(I))).reason).toBe("band_not_worn");
+  });
+});
+
+describe("ACWR on the seed (SCORING_VERSION 27)", () => {
+  it("every training-load row says whether it is a light load; the seed's chronic load is always over 30, so none is", () => {
+    let ratios = 0;
+    for (const day of allDays) {
+      const t = js<{ acwr: number | null; lightLoad: boolean }>("training_load", day);
+      expect(t.lightLoad).toBe(false);
+      if (t.acwr != null) ratios++;
+    }
+    expect(ratios).toBeGreaterThan(150);
   });
 });
 

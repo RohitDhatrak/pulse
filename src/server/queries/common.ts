@@ -221,6 +221,7 @@ export const nightReason = (reason: ReasonCode, isToday: boolean): ReasonCode =>
 /** Why a nightly vital (HRV, resting HR, …) is missing on `row`'s day. */
 export function vitalReason(row: DayRow | undefined, isToday: boolean, hrv = false): ReasonCode {
   const main = row?.sleep?.main;
+  if (!main && row?.sleep?.awakeAllNight) return "no_sleep";
   if (!main) return isToday ? "awaiting_sleep_sync" : "band_not_worn";
   if (!main.processed) return "awaiting_sleep_sync";
   return hrv ? "no_hrv_last_night" : "no_data";
@@ -358,6 +359,11 @@ const PLAN_LABELS = [
   ["get_by", "Get by"],
 ] as const;
 
+/** Shown when recent efficiency is under 85 % (scoring version 24): why the bedtime isn't earlier. */
+export const PLAN_EFFICIENCY_NOTE =
+  "You've been awake in bed for a good part of recent nights. These bedtimes plan for 85% of your time in bed asleep. Going to bed earlier usually adds time awake, not sleep.";
+const formatHours = (min: number) => `${+(min / 60).toFixed(1)} h`;
+
 export function planVM(ctx: QueryCtx, row: DayRow | undefined, isToday: boolean): Metric<SleepPlanVM> {
   const p = row?.sleepPlanner;
   if (!p) return none(isToday ? "awaiting_sleep_sync" : "no_data");
@@ -373,9 +379,17 @@ export function planVM(ctx: QueryCtx, row: DayRow | undefined, isToday: boolean)
       key: PLAN_LABELS[i][0],
       label: PLAN_LABELS[i][1],
       share: x.share,
+      needPct: Math.round(p.needMin > 0 ? (100 * x.sleepMin) / p.needMin : 100 * x.share),
       sleepMin: x.sleepMin,
       bedtimeAt: ms(wakeMidnight + Math.round(x.bedtimeMin * 60)),
     })),
+    efficiencyFloored: p.efficiencyFloored,
+    capped: p.capped,
+    inBedCapMin: p.inBedCapMin,
+    notes: [
+      ...(p.efficiencyFloored ? [PLAN_EFFICIENCY_NOTE] : []),
+      ...(p.capped ? [`Time in bed is capped at ${formatHours(p.inBedCapMin)} for your age.`] : []),
+    ],
   });
 }
 

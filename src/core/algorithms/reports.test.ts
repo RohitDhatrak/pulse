@@ -71,6 +71,15 @@ describe("buildReport", () => {
     expect(buildReport("2026-W39", rows).deltas.recovery).toBeNull(); // no previous week
   });
 
+  it("a delta against a partial previous period is not flagged: a 1-day first week gives −40 (docs/algorithms/reports.md)", () => {
+    // History starts on the Sunday of week 39 with one good day; week 40 is a full, ordinary week.
+    const first = [row("2026-09-27", 90), ...Array.from({ length: 7 }, (_, i) => row(addDays("2026-09-28", i), 50))];
+    expect(buildReport("2026-W39", first)).toMatchObject({ partial: true, days: 1 });
+    const r = buildReport("2026-W40", first);
+    expect(r.partial).toBe(false);
+    expect(r.deltas.recovery).toBe(-40);
+  });
+
   it("months follow calendar boundaries", () => {
     const sep = buildReport("2026-09", rows);
     const oct = buildReport("2026-10", rows);
@@ -91,6 +100,14 @@ describe("buildReport", () => {
     // A possible effect (SCORING_VERSION 18) never reaches the report, however large.
     const withPossible = [...impacts, impact("f", -30, "possible_negative"), impact("g", 25, "possible_positive")];
     expect(buildReport("2026-W40", rows, withPossible).topImpacts.map((t) => t.tag)).toEqual(["d", "c", "e"]);
+  });
+
+  it("a period that ends on a light load has no training balance, even with a ratio earlier (SCORING_VERSION 27)", () => {
+    const light = [...week.slice(0, 5), ...week.slice(5).map((r) => ({ ...r, acwr: null, lightLoad: true }))];
+    const r = buildReport("2026-W40", [...light, ...prev]);
+    expect(r).toMatchObject({ trainingBalance: null, lightLoad: true });
+    // A ratio on the last day wins, and rows from before version 27 (no lightLoad) read as not light.
+    expect(buildReport("2026-W40", rows)).toMatchObject({ trainingBalance: { acwr: 1.4, status: "LOAD_BUILDING_FAST" }, lightLoad: false });
   });
 
   it("an empty period has nulls and zero counts", () => {

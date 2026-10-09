@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { foldHistory, restingHRCfg, sigma } from "./baselines";
-import { acwrBand, acwrSignal, evaluate, evaluateWithTrainingLoad, mean, minAcute, minChronic, type ReadinessDay, sampleSD } from "./readiness";
+import { acwrBand, acwrChronicFloor, acwrSignal, evaluate, evaluateWithTrainingLoad, lightLoadJump, mean, minAcute, minChronic, type ReadinessDay, sampleSD } from "./readiness";
 import { trimpToStrain } from "./strain";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -12,10 +12,13 @@ const d = (i: number, hrv: number | null, rhr: number | null, load: number | nul
   resp,
 });
 
-/** 28 baseline days with gentle variation, then today as day 29. */
+/**
+ * 28 baseline days with gentle variation, then today as day 29. Loads are 10× noop's (100, not 10) since version 27:
+ * a chronic load under 30 TRIMP a day is a light load with no ratio, and these cases test the ratio.
+ */
 function baseline(todayHrv: number | null, todayRhr: number | null, todayLoad: number | null, todayResp: number | null = null) {
   const days: ReadinessDay[] = [];
-  for (let i = 1; i <= 28; i++) days.push(d(i, i % 2 === 0 ? 62 : 58, i % 2 === 0 ? 54 : 50, 10, i % 2 === 0 ? 14.5 : 13.5));
+  for (let i = 1; i <= 28; i++) days.push(d(i, i % 2 === 0 ? 62 : 58, i % 2 === 0 ? 54 : 50, 100, i % 2 === 0 ? 14.5 : 13.5));
   days.push(d(29, todayHrv, todayRhr, todayLoad, todayResp));
   return days;
 }
@@ -28,7 +31,7 @@ describe("ReadinessEngineTest", () => {
   });
 
   it("primed when signals aligned", () => {
-    const r = evaluate(baseline(72, 46, 10));
+    const r = evaluate(baseline(72, 46, 100));
     expect(r.level).toBe("primed");
     expect(flagOf(r, "hrv")).toBe("good");
     expect(flagOf(r, "rhr")).toBe("good");
@@ -36,14 +39,15 @@ describe("ReadinessEngineTest", () => {
   });
 
   it("rundown when two recovery signals down", () => {
-    expect(evaluate(baseline(50, 60, 10)).level).toBe("rundown");
+    expect(evaluate(baseline(50, 60, 100)).level).toBe("rundown");
   });
 
   it("ACWR spike strains", () => {
     const days: ReadinessDay[] = [];
-    for (let i = 1; i <= 21; i++) days.push(d(i, 60, 52, 5));
-    for (let i = 22; i <= 28; i++) days.push(d(i, 60, 52, 15));
-    days.push(d(29, 60, 52, 15));
+    // 10× noop's loads (5 and 15), so the chronic load is over the version 27 floor and the ratio applies.
+    for (let i = 1; i <= 21; i++) days.push(d(i, 60, 52, 50));
+    for (let i = 22; i <= 28; i++) days.push(d(i, 60, 52, 150));
+    days.push(d(29, 60, 52, 150));
     const r = evaluate(days);
     expect(flagOf(r, "acwr")).toBe("bad");
     expect(r.level).toBe("strained");
@@ -51,15 +55,15 @@ describe("ReadinessEngineTest", () => {
   });
 
   it("resp rate rise flags", () => {
-    expect(evaluate(baseline(60, 52, 10, 18)).signals.some((s) => s.key === "respRate")).toBe(true);
+    expect(evaluate(baseline(60, 52, 100, 18)).signals.some((s) => s.key === "respRate")).toBe(true);
   });
 
   it("implausible resp outlier produces no signal", () => {
-    expect(evaluate(baseline(60, 52, 10, 40)).signals.some((s) => s.key === "respRate")).toBe(false);
+    expect(evaluate(baseline(60, 52, 100, 40)).signals.some((s) => s.key === "respRate")).toBe(false);
   });
 
   it("explicit today without matching row is insufficient", () => {
-    const days = baseline(72, 46, 10);
+    const days = baseline(72, 46, 100);
     expect(evaluate(days, "2026-06-08").level).toBe("insufficient");
     expect(evaluate(days, "2024-03-29").level).not.toBe("insufficient");
     expect(evaluate(days).level).not.toBe("insufficient");
@@ -107,7 +111,7 @@ describe("ReadinessTrainingLoadTest", () => {
   const range = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
 
   it("paired API leaves readiness unchanged", () => {
-    const days = range(28).map((i) => metric(i, i <= 21 ? 5 : 15, i % 2 === 0 ? 62 : 58, i % 2 === 0 ? 54 : 50));
+    const days = range(28).map((i) => metric(i, i <= 21 ? 50 : 150, i % 2 === 0 ? 62 : 58, i % 2 === 0 ? 54 : 50));
     const paired = evaluateWithTrainingLoad(days);
     expect(paired.readiness).toEqual(evaluate(days));
     expect(paired.trainingLoad.state).toBe("building");
@@ -117,7 +121,7 @@ describe("ReadinessTrainingLoadTest", () => {
   });
 
   it("ACWR and monotony stay owned by readiness", () => {
-    const paired = evaluateWithTrainingLoad(range(28).map((i) => metric(i, i <= 21 ? 5 : 12 + (i % 3))));
+    const paired = evaluateWithTrainingLoad(range(28).map((i) => metric(i, i <= 21 ? 50 : 120 + 10 * (i % 3))));
     expect(paired.readiness.acwr).not.toBeNull();
     expect(paired.readiness.monotony).not.toBeNull();
     expect(paired.trainingLoad.state).not.toBe("unavailable");
@@ -245,7 +249,9 @@ describe("training load on linear TRIMP (SCORING_VERSION 10)", () => {
     // 25.92 × 7 has an SD of ~1e-14 in floating point, which passed the old `sd > 0` check.
     for (const v of [25.92, 118, 0.1, 1e6]) {
       const r = evaluate(rows(Array(28).fill(v)));
-      expect(r.acwr).toBeCloseTo(1, 12); // the gates passed, so monotony was considered
+      // The gates passed, so monotony was considered; under 30 a day it is a light load with no ratio (version 27).
+      if (v >= 30) expect(r.acwr).toBeCloseTo(1, 12);
+      else expect(r).toMatchObject({ acwr: null, lightLoad: true });
       expect(r.monotony).toBeNull();
       expect(r.signals.some((x) => x.key === "monotony")).toBe(false);
     }
@@ -273,5 +279,57 @@ describe("training load on linear TRIMP (SCORING_VERSION 10)", () => {
     const loads = weeks(usual);
     const paired = evaluateWithTrainingLoad(rows(loads));
     expect(paired.trainingLoad.points.map((p) => p.load)).toEqual(loads.slice(6));
+  });
+});
+
+describe("a light load has no ratio (SCORING_VERSION 27)", () => {
+  const iso = (i: number) => new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
+  const rows = (loads: number[]): ReadinessDay[] => loads.map((load, i) => ({ day: iso(i), load }));
+  /** 21 days at `base`, then 7 at `week` (so chronic = (21 × base + 7 × week) / 28 and acute = week). */
+  const month = (base: number, week: number) => rows([...Array(21).fill(base), ...Array(7).fill(week)]);
+
+  it("weeks of rest and one 40-TRIMP walk: no ratio, no load signal, not strained (version 26: spiking, strained)", () => {
+    const r = evaluate(rows([...Array(55).fill(3), 40]));
+    expect(r).toMatchObject({ acwr: null, lightLoad: true });
+    expect(r.signals.some((x) => x.key === "acwr")).toBe(false);
+    expect(r.level).not.toBe("strained");
+    // The plain ratio it used to give: (6 × 3 + 40) / 7 ÷ (27 × 3 + 40) / 28 = 1.92.
+    expect(((6 * 3 + 40) / 7 / ((27 * 3 + 40) / 28)).toFixed(2)).toBe("1.92");
+  });
+
+  it("chronic exactly at the floor uses the plain ratio; just under it uses the floor", () => {
+    expect(acwrChronicFloor).toBe(30);
+    const at = evaluate(month(30, 30));
+    expect(at).toMatchObject({ acwr: 1, lightLoad: false });
+    // Chronic 29.9 and acute 29.9: under the floor, and 29.9 / 30 < 1.3, so light.
+    expect(evaluate(month(29.9, 29.9))).toMatchObject({ acwr: null, lightLoad: true });
+  });
+
+  it("under the floor, acute ÷ floor below 1.3 is light; from 1.3 it is building fast, from 1.5 spiking", () => {
+    expect(lightLoadJump).toBe(1.3);
+    // A chronic load under 30 throughout: 21 days of 5, then a week at acute = 30 × the target ratio.
+    const at = (ratio: number) => evaluate(month(5, 30 * ratio));
+    expect(at(1.29)).toMatchObject({ acwr: null, lightLoad: true });
+    const building = at(1.3);
+    expect(building.acwr).toBeCloseTo(1.3, 12);
+    expect(building.signals.find((x) => x.key === "acwr")).toMatchObject({ detail: "LOAD_BUILDING_FAST", flag: "watch", evidence: { floor: 30 } });
+    const spiking = at(1.5);
+    expect(spiking.signals.find((x) => x.key === "acwr")).toMatchObject({ detail: "LOAD_SPIKING", flag: "bad" });
+    expect(spiking.level).toBe("strained");
+    // Each case really had chronic under the floor.
+    expect((21 * 5 + 7 * 30 * 1.5) / 28).toBeLessThan(30);
+  });
+
+  it("a sedentary person who starts running 5 days a week still reads spiking", () => {
+    const loads = [...Array(56).fill(4), ...[120, 120, 120, 120, 120, 4, 4]];
+    const r = evaluate(rows(loads));
+    expect(r.signals.find((x) => x.key === "acwr")?.detail).toBe("LOAD_SPIKING");
+  });
+
+  it("over the floor nothing changes: the plain ratio and its band", () => {
+    const r = evaluate(month(60, 90));
+    expect(r.acwr).toBeCloseTo(90 / ((21 * 60 + 7 * 90) / 28), 12);
+    expect(r.lightLoad).toBe(false);
+    expect(r.signals.find((x) => x.key === "acwr")?.evidence).toEqual({ kind: "trainingLoad", acute: 90, chronic: (21 * 60 + 7 * 90) / 28 });
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { personalizedNeedHours } from "../scoring/sleep";
 import { toStrainScale, trimpToStrain } from "../scoring/strain";
-import { isWeekendDay, sleepPlan, sleepPlannerConfig, type SleepPlannerInput, type WakeNight } from "./sleepPlanner";
+import { inBedCapHours, isWeekendDay, sleepPlan, sleepPlannerConfig, type SleepPlannerInput, type WakeNight } from "./sleepPlanner";
 
 const iso = (d: number) => new Date(Date.UTC(2026, 8, d)).toISOString().slice(0, 10); // September 2026
 /** 14 nights, Sep 17–30: weekdays wake 07:00, weekends 09:00, efficiency 0.9. */
@@ -20,6 +20,7 @@ const input = (over: Partial<SleepPlannerInput> = {}): SleepPlannerInput => ({
   napMin: 0,
   nights,
   wakeDay: "2026-10-01", // a Thursday
+  age: 35,
   ...over,
 });
 
@@ -129,5 +130,85 @@ describe("a steady 7 h sleeper's plan (SCORING_VERSION 15 sleep need)", () => {
     // Version 14: need 8 h and 73 min of debt (+20 % of it): (480 + 14.6) / 0.88 ≈ 9.37 h in bed.
     const v14 = sleepPlan(input({ baselineNeedHours: 8, debtMin: 73, nights: sevens }));
     expect(v14.plans[0].inBedMin / 60).toBeGreaterThan(9.3);
+  });
+});
+
+describe("SCORING_VERSION 24: time in bed is bounded", () => {
+  const at = (efficiency: number | null, n = 14): WakeNight[] => Array.from({ length: n }, (_, i) => ({ day: iso(17 + i), wakeMin: 420, efficiency }));
+  /** Version 23: in bed = share × need ÷ median efficiency, unbounded. */
+  const v23InBed = (needMin: number, eff: number, share = 1) => (share * needMin) / eff;
+
+  it("plans at no less than 85 % efficiency: 70 % is planned at 85 %", () => {
+    const p = sleepPlan(input({ nights: at(0.7) }));
+    expect(p.efficiency).toBe(0.7);
+    expect(p.planningEfficiency).toBe(0.85);
+    expect(p.efficiencyFloored).toBe(true);
+    expect(p.plans[0].inBedMin).toBeCloseTo(480 / 0.85, 9); // 9.4 h; version 23: 480 / 0.7 = 11.4 h
+    expect(p.plans[0].inBedMin).toBeLessThan(v23InBed(480, 0.7) - 100);
+    expect(p.plans[0].sleepMin).toBeCloseTo(480, 9);
+  });
+
+  it("at 85 % or more nothing changes: the plan equals version 23's", () => {
+    for (const eff of [0.85, 0.9, 0.97]) {
+      const p = sleepPlan(input({ nights: at(eff), debtMin: 90 }));
+      expect(p.efficiencyFloored).toBe(false);
+      expect(p.capped).toBe(false);
+      for (const x of p.plans) {
+        expect(x.inBedMin).toBeCloseTo(v23InBed(p.needMin, eff, x.share), 9);
+        expect(x.sleepMin).toBeCloseTo(x.share * p.needMin, 9);
+      }
+    }
+  });
+
+  it("one glitchy first night at 5 % efficiency: 8.8 h in bed, not 150 h", () => {
+    const p = sleepPlan(input({ baselineNeedHours: 7.5, todayLoad: null, nights: at(0.05, 1) }));
+    expect(p.plans[0].inBedMin / 60).toBeCloseTo(7.5 / 0.85, 9);
+    expect(v23InBed(450, 0.05) / 60).toBe(150);
+  });
+
+  it("with no efficiency known, the 0.9 default still applies", () => {
+    const p = sleepPlan(input({ nights: at(null) }));
+    expect(p.efficiency).toBe(0.9);
+    expect(p.planningEfficiency).toBe(0.9);
+    expect(p.efficiencyFloored).toBe(false);
+  });
+
+  it("the cap follows the NSF 'may be appropriate' upper bound for age, at both edges of each band", () => {
+    expect([0, 6, 13].map(inBedCapHours)).toEqual([12, 12, 12]);
+    expect([14, 17, 18, 25].map(inBedCapHours)).toEqual([11, 11, 11, 11]);
+    expect([26, 40, 64].map(inBedCapHours)).toEqual([10, 10, 10]);
+    expect([65, 90].map(inBedCapHours)).toEqual([9, 9]);
+    expect(inBedCapHours(null)).toBe(10);
+    expect(inBedCapHours(Number.NaN)).toBe(10);
+    expect(sleepPlan(input({ age: 70 })).inBedCapMin).toBe(540);
+    expect(sleepPlan(input({ age: null })).inBedCapMin).toBe(600);
+  });
+
+  it("extreme inputs (need 9.5 h, 300 min debt, maximum strain, 60 %): 10 h in bed at 30, not 18.3 h", () => {
+    const p = sleepPlan(input({ baselineNeedHours: 9.5, debtMin: 300, todayLoad: T(21), typicalSession: T(5), nights: at(0.6), age: 30 }));
+    expect(v23InBed(p.needMin, 0.6) / 60).toBeCloseTo(1100 / 60, 9); // 18.3 h
+    expect(p.capped).toBe(true);
+    expect(p.plans[0].inBedMin).toBe(600);
+    expect(p.plans[0].bedtimeMin).toBe(-180); // 21:00; version 23: 12:40
+  });
+
+  it("capped tiers are shares of the cap: distinct, and each falls short of its need share", () => {
+    const p = sleepPlan(input({ baselineNeedHours: 9.5, debtMin: 300, nights: at(0.6), age: 16 }));
+    expect(p.capped).toBe(true);
+    expect(p.plans.map((x) => x.inBedMin)).toEqual([660, 0.85 * 660, 0.7 * 660].map((m) => expect.closeTo(m, 9)));
+    const [a, b, c] = p.plans.map((x) => x.bedtimeMin);
+    expect(a).toBeLessThan(b);
+    expect(b).toBeLessThan(c);
+    for (const x of p.plans) {
+      expect(x.sleepMin).toBeCloseTo(x.inBedMin * 0.85, 9);
+      expect(x.sleepMin).toBeLessThan(x.share * p.needMin);
+    }
+  });
+
+  it("need and its parts don't change (the Recovery forecast reads needMin)", () => {
+    const over = { baselineNeedHours: 9.5, debtMin: 300, todayLoad: T(21), typicalSession: T(5), napMin: 20, nights: at(0.6) };
+    const p = sleepPlan(input(over));
+    expect(p.parts).toEqual({ baselineMin: 570, strainMin: 30, debtMin: 60, napMin: 20 });
+    expect(p.needMin).toBe(640);
   });
 });

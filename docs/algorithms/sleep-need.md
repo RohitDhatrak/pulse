@@ -1,7 +1,8 @@
 # Sleep need
 
-Code: `src/core/scoring/sleep.ts` (`personalizedNeedHours`, `populationNeedFloorHours`). Tests: `sleep.test.ts`, a
-plan case in `sleepPlanner.test.ts`, and "sleep need on the seed" in `pipeline.test.ts`.
+Code: `src/core/scoring/sleep.ts` (`personalizedNeedHours`, `populationNeedFloorHours`; the debt ledger, `ledger`,
+`creditedSleepMin`, `awakeAllNight`). Tests: `sleep.test.ts`, `sleep.allnighter.sim.test.ts`, a plan case in
+`sleepPlanner.test.ts`, and "sleep need on the seed" and "a night spent awake" in `pipeline.test.ts`.
 
 Sleep need is how much sleep, in hours **asleep** (not in bed), you need on a normal night. Everything about sleep
 is judged against it.
@@ -20,7 +21,7 @@ flowchart LR
   NEED --> FC["Recovery forecast: planned sleep ÷ need"]
 ```
 
-## Formula (scoring version 15)
+## Formula (since scoring version 15; unchanged through version 25)
 
 1. Take the main-sleep hours of the 28 nights before the scored night. Nights of 0 or less are ignored.
 2. With fewer than 7 nights, the need is `max(7.5, floor)`.
@@ -55,7 +56,8 @@ minutes / sleep score / planned hours in bed:
 | Floor 7.5, median | 73 / 84.7 / 8.8 | 37 / 88.1 / 8.7 | 0 / 91.4 / 8.5 | 0 / 91.4 / 9.1 |
 | **v15: floor 7, median** | 37 / 87.8 / 8.1 | **0 / 91.4 / 8.0** | 0 / 91.4 / 8.5 | 0 / 91.4 / 9.1 |
 
-Sleepers varying ±0.5 h a night. In brackets: the debt after 5 nights 1.5 h short.
+Sleepers varying ±0.5 h a night (one simulated person per cell, the test's seed). In brackets: the debt after 5 nights
+1.5 h short.
 
 | Rule | 6.5 h | 7 h | 7.5 h | 8 h |
 |---|---|---|---|---|
@@ -66,12 +68,18 @@ Sleepers varying ±0.5 h a night. In brackets: the debt after 5 nights 1.5 h sho
 
 - **The fix list's change alone** (floor 7) fixes perfectly steady sleepers, but leaves everyone who varies about
   17 min short. A healthy 8 h sleeper is still told to spend 9.5 h in bed.
-- **v15** leaves healthy 7–8 h sleepers with about 3 min of debt (under the 10-minute band, which counts as none).
+- **v15** leaves the test's healthy 7–8 h sleeper with about 3 min of debt (under the 10-minute band, which counts as
+  none). That is one seed. Across 200 simulated people varying ±0.5 h (Gaussian), the average debt is **9–10 min**
+  (P90 16–18 min), and **debt shows (10 min or more) on about 40% of days**. The median need sits at the middle of
+  your nights, so a run of below-median nights tips into a small debt that comes and goes. This is a known
+  trade-off of the median, not yet addressed.
 - **It still works where it should:**
   - a 6.5 h sleeper, below the recommended range, still carries about 33 min;
   - 5 short nights still raise debt to 100–139 min.
-- **Robustness** (a test): a week of 9.5 h sick nights raises next month's need by at most 0.3 h, less than the upper
-  quartile does.
+- **Robustness** (a test): 5 sick nights of 9.5 h barely raise the need 6 nights later, and raise it less than the
+  upper quartile does. The test checks one steady (±0.3 h) sleeper, whose lift is at most 0.3 h. Across 200 people:
+  - steady (±0.3 h) sleepers: median +0.07 h, P90 +0.16, worst +0.31;
+  - more varied (±0.5 h) sleepers: median +0.12 h, P90 +0.27, worst +0.5.
 
 **On the demo database** (180 days):
 
@@ -92,6 +100,71 @@ Strain is byte-identical.
 - That was weighed and not adopted (owner's decision, 2026-10-07). A floor above the guideline minimum puts most
   healthy sleepers in permanent debt and pushes 9+ h in bed.
 - A user who really needs more shows it: the median follows their own longer nights.
+
+## Sleep debt: which nights count (scoring version 25)
+
+**The ledger.** Over the last 14 nights with a value, each night: debt = 0.55 × max(0, need + debt − slept), and under
+10 min clears to 0 (`ledger`). A night's "slept" is `creditedSleepMin`: the main sleep's minutes plus the previous
+day's naps.
+
+**null vs 0.**
+- **null** is a night without data, and the ledger skips it. That covers no main sleep (the band off, a session not
+  yet synced, a night Fitbit missed) and a main sleep with 0 minutes asleep.
+- **0** is a measured night without sleep, and **counts** (*since version 25*). noop skipped 0 as well; Pulse never
+  passes 0 for missing data.
+
+### A night spent awake
+
+**The problem (before version 25).** An all-nighter has no sleep session, so it was null and skipped. The worst night
+added no debt, while a 1 h night added about 214 min (0.55 × (450 − 60) at 7.5 h). The Sleep screen also said
+"band not worn".
+
+**Why not count every night without a session.** Most nights without a session are nights without data. Counting
+them as 0 would invent about 4 h of debt after every band-off night, and every morning before the night syncs. So a
+night counts as spent awake only with **positive evidence** over its core, local 00:00–06:00 (`awakeAllNight`):
+1. no sleep session of any kind touched 00:00–06:00 (main or nap, processed or not, from either wake day);
+2. the band was worn: at least **300 of the 360 minutes** have heart rate (`wornMin`);
+3. the median minute HR is at least **resting + 5 bpm** (`hrAboveRest`). Resting is the usable resting-HR baseline,
+   else the day's resting HR;
+4. at least **100 steps** (`minSteps`): up and about, not lying in bed.
+
+Stage 1 stores the core's summary on each day (`strain.night`: `hrMinutes`, `medianHr`, `steps`; `nightSummary`).
+
+**How the thresholds were chosen.** 00:00–06:00 was simulated minute by minute, 2,000 nights per class, through the
+real functions. Assumptions:
+- Google's resting HR ≈ sleeping HR + 3;
+- awake and seated is 8–16 bpm over sleeping HR (4–8 for a low riser: beta-blockers, some older adults);
+- half of sleeping nights have one bathroom trip of about 50 steps;
+- a night up at a desk has a trip to the kitchen now and then.
+
+| Rule (share of nights called "awake") | Asleep: ordinary / alcohol / sick / high fever / insomnia | Up at a desk | Up and active | Up, low HR rise |
+|---|---|---|---|---|
+| median ≥ resting + 8 | 0 / 21 / 26 / 79 / 0 % | 63 % | 100 % | 4 % |
+| steps ≥ 300 | 0 % for all | 58 % | 100 % | 61 % |
+| median ≥ resting + 8 *or* steps ≥ 300 | 0 / 21 / 26 / 79 / 0 % | 86 % | 100 % | 62 % |
+| **median ≥ resting + 5 and steps ≥ 100** (chosen) | **0 % for all, fever included** | **88 %** | **100 %** | 24 % |
+
+**Why this rule.**
+- A wrong call needs a sleeping night with its session missing *and* passing the rule. HR alone can't tell a
+  feverish sleeper from someone up at a desk, but sleepers don't take 100 steps.
+- The chosen rule called no sleeping night "awake". So a night that hasn't synced yet, or that Fitbit missed, stays a
+  night without data, as before.
+- The nights it misses (a small HR rise, or very still) also stay without data: never worse than version 24.
+
+**What changes after a night spent awake:**
+- **Debt:** the night counts as 0 + the previous day's naps. At a 7.5 h need with no debt before, that is
+  0.55 × 450 = 247.5 min, now more than the 1 h night's 214.5 (a test checks debt never falls as sleep falls).
+- **Sleep need** is unchanged: the night isn't added to the 28 nights behind the median.
+- **The Sleep screen** shows "Up all night" (`no_sleep`) for Sleep Performance and the night's vitals, and the debt
+  for that day. Recovery shows "No HRV last night" instead of "band not worn".
+- **Tonight's Sleep Planner** grows with the debt, within the version 24 time-in-bed cap.
+
+**On the seed** no night qualifies (its nights without a session are band-off nights, with no HR), so the seed's debt
+is unchanged.
+
+**End to end on a copy of the seed** (a test), one night's session is deleted and up-and-about HR and steps written
+over 00:00–06:00. That day reads `no_sleep`, its debt matches the ledger and rises by more than 150 min, and the next
+day carries it. The control (session deleted, sleeping HR left) stays a night without data.
 
 ## Constants
 
@@ -124,7 +197,7 @@ Strain is byte-identical.
     - healthy varied sleepers have ≤ 15 min (version 14: > 15 for an 8 h sleeper);
     - 6.5 h sleepers have ≥ 25 min;
     - 5 short nights give ≥ 90 min;
-    - a sick week moves the need ≤ 0.3 h, less than the upper quartile.
+    - 5 sick nights move one steady sleeper's need ≤ 0.3 h, less than the upper quartile.
 - **`sleepPlanner.test.ts`:** a 7 h sleeper's plan, 7.95 h in bed (version 14: > 9.3 h).
 - **`pipeline.test.ts`:** on the seed, the stored need is ≥ 7 h, equals the median of the prior 28 nights, and is
   7.5 h in the first week.

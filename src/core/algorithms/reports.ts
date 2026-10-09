@@ -22,6 +22,8 @@ export interface ReportDay {
   rhr: number | null;
   /** Acute:chronic workload ratio on this day. */
   acwr: number | null;
+  /** Too little load to compare weeks on this day (no ratio; scoring version 27). Absent counts as false. */
+  lightLoad?: boolean;
   /** Sleep Regularity display value, 0–100. */
   sleepConsistency: number | null;
 }
@@ -46,6 +48,8 @@ export interface Report {
   bands: Record<RecoveryBand, number>;
   /** From the period's last day with an ACWR. */
   trainingBalance: { acwr: number; status: ReadinessDetail } | null;
+  /** The period ended on a light load: no training balance to show (scoring version 27). */
+  lightLoad: boolean;
   sleepConsistency: number | null;
   /** Up to 3 tags with a clear recovery effect, largest |Δ| first. */
   topImpacts: TagImpact[];
@@ -118,7 +122,9 @@ export function buildReport(period: string, rows: ReportDay[], impacts: TagImpac
   const best = scored.reduce<(typeof scored)[number] | null>((b, r) => (!b || r.recovery > b.recovery ? r : b), null);
   const worst = scored.reduce<(typeof scored)[number] | null>((w, r) => (!w || r.recovery < w.recovery ? r : w), null);
 
-  const lastAcwr = cur.findLast((r) => r.acwr != null)?.acwr ?? null;
+  // The period's last day with a load state: a ratio, or a light load (which has none since version 27).
+  const lastLoad = cur.findLast((r) => r.acwr != null || r.lightLoad);
+  const lastAcwr = lastLoad?.acwr ?? null;
   const consistency = cur.map((r) => r.sleepConsistency).filter((v): v is number => v != null);
 
   return {
@@ -132,6 +138,7 @@ export function buildReport(period: string, rows: ReportDay[], impacts: TagImpac
     deltas,
     bands,
     trainingBalance: lastAcwr == null ? null : { acwr: lastAcwr, status: acwrBand(lastAcwr) },
+    lightLoad: lastAcwr == null && !!lastLoad?.lightLoad,
     sleepConsistency: consistency.length ? mean(consistency) : null,
     topImpacts: impacts
       .filter((t) => t.effects.recovery.label === "positive" || t.effects.recovery.label === "negative")

@@ -118,8 +118,8 @@ export const TONIGHT_INFO: InfoContent = {
   title: "Tonight’s sleep",
   body: (
     <p>
-      Bedtimes are worked back from your typical wake time and how efficiently you sleep. Peak gets you 100% of tonight’s need, Perform 85%,
-      Get by 70%.
+      Bedtimes are worked back from your typical wake time and how efficiently you sleep (never planned below 85%). Peak gets you 100% of
+      tonight’s need, Perform 85%, Get by 70%. Time in bed is capped for your age.
     </p>
   ),
 }

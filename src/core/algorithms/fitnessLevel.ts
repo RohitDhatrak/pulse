@@ -1,6 +1,6 @@
 // Own algorithm (docs/algorithms/fitness-level.md): VO2max percentile for age decade and sex from the FRIEND
-// treadmill reference standards, a category from the percentile, and the 75th-percentile reference that
-// Healthspan scores VO2max against.
+// treadmill reference standards, a category from the percentile, and the 50th-percentile (median) reference that
+// Healthspan scores VO2max against (the 75th before scoring version 19).
 
 export type Sex = "male" | "female";
 

@@ -6,6 +6,7 @@ import {
   curves,
   healthspan,
   healthspanConfig,
+  paceActivity,
   referenceProfile,
   stepsCap,
   typicalProfile,
@@ -49,6 +50,16 @@ const series = (n: number, f: (daysAgo: number) => Partial<HealthspanDay> = () =
   Array.from({ length: n }, (_, i) => ({ day: iso(today - (n - 1 - i)), ...base(), ...f(n - 1 - i) }));
 const run = (days: HealthspanDay[], p: HealthspanProfile = profile) => healthspan(days, p, asOf)!;
 const term = (r: ReturnType<typeof run>, key: HealthspanInput) => r.contributions.find((c) => c.key === key)!;
+/** Runs `f` with `strengthLogPrior` set to `k` (0 = version 28's unweighted strength term), then restores it. */
+const withPrior = <T,>(k: number, f: () => T): T => {
+  const was = healthspanConfig.strengthLogPrior;
+  healthspanConfig.strengthLogPrior = k;
+  try {
+    return f();
+  } finally {
+    healthspanConfig.strengthLogPrior = was;
+  }
+};
 
 describe("the reference: a person who meets health guidelines (SCORING_VERSION 19)", () => {
   it("the reference profile scores Pulse Age = chronological age at every age, for both sexes", () => {
@@ -130,7 +141,8 @@ describe("each input", () => {
     const at = (m: number) => term(run(series(180, () => ({ strengthMin: m / 7 }))), "strength").years;
     expect(at(40)).toBeCloseTo(0, 10);
     for (const m of [60, 120, 140, 300]) expect(at(m)).toBeCloseTo(0, 10);
-    expect(at(20)).toBeCloseTo(yearsAt("strength", 20), 10);
+    // Every day has minutes, so 180 logs: weighted 180 / (180 + 8) since version 29.
+    expect(at(20)).toBeCloseTo(yearsAt("strength", 20) * (180 / 188), 10);
     expect(at(20)).toBeGreaterThan(0);
   });
 
@@ -321,10 +333,16 @@ describe("strength is unknown until a workout is logged (SCORING_VERSION 19)", (
     expect(term(r, "strength")).toMatchObject({ years: 0, unlogged: true, value: 0 });
   });
 
-  it("one logged session: the weeks without strength count as 0 minutes", () => {
-    const r = run(series(180, (ago) => ({ strengthMin: ago === 100 ? 45 : 0 })));
+  it("one logged session: the weeks without strength count as 0 minutes, weighted 1 / 9 for one log (version 29)", () => {
+    const days = series(180, (ago) => ({ strengthMin: ago === 100 ? 45 : 0 }));
+    const r = run(days);
     expect(term(r, "strength").unlogged).toBeUndefined();
-    expect(term(r, "strength").years).toBeGreaterThan(1);
+    expect(term(r, "strength").strengthLogs).toBe(1);
+    // Version 28 counted it in full: over 1 year for one logged session.
+    const unweighted = withPrior(0, () => term(run(days), "strength").years);
+    expect(unweighted).toBeGreaterThan(1);
+    expect(term(r, "strength").years).toBeCloseTo(unweighted / 9, 10);
+    expect(term(r, "strength").years).toBeLessThan(0.2);
   });
 
   it("days before the first logged workout are unknown: starting to log doesn't count the months before against you", () => {
@@ -448,7 +466,7 @@ describe("dose-response curves", () => {
   });
 });
 
-// ── Simulations (deterministic; docs/handoff/pulse-age-issues.md and docs/algorithms/healthspan.md) ─────────────────
+// ── Simulations (deterministic; docs/algorithms/healthspan.md § Why version 19) ───────────────────────────────────
 function rng(seed: number) {
   let x = seed;
   const rnd = () => ((x = (x * 1103515245 + 12345) % 2147483648), x / 2147483648);
@@ -584,5 +602,108 @@ describe("simulations", () => {
         prev = out.deltaYears;
       }
     }
+  });
+});
+
+describe("Pace's 30-day activity (SCORING_VERSION 28)", () => {
+  const c = healthspanConfig;
+  const T = (lnHazard: number, days?: number) => ({ value: 0, lnHazard, ...(days != null && { days }) });
+
+  it("paceActivity: under 14 days the 6-month term; from 14, shrunk toward it with weight 3n / (n + 60), full at 30", () => {
+    expect(c.paceMinActivityDays).toBe(14);
+    expect(c.paceShrinkDays).toBe(60);
+    const long = { zone45: T(-0.2), steps: T(-0.1) };
+    const at = (days: number) => paceActivity(long, { zone45: T(0.1, days) }).zone45!.lnHazard;
+    expect(at(13)).toBe(-0.2);
+    expect(at(14)).toBeCloseTo(-0.2 + ((3 * 14) / 74) * 0.3, 12); // weight 0.57
+    expect(at(20)).toBeCloseTo(-0.2 + 0.75 * 0.3, 12);
+    expect(at(30)).toBeCloseTo(0.1, 12);
+  });
+
+  it("paceActivity: with no 6-month term, a short input under the gate is dropped (typical in both windows); others pass", () => {
+    expect(paceActivity({}, { zone13: T(0.3, 5) })).not.toHaveProperty("zone13");
+    expect(paceActivity({}, { zone13: T(0.3, 20) }).zone13!.lnHazard).toBe(0.3);
+    const unlogged = { value: 0, lnHazard: 0, unlogged: true as const, days: 2 };
+    expect(paceActivity({ strength: T(0.5) }, { strength: unlogged }).strength).toBe(unlogged);
+    expect(paceActivity({ sleepHours: T(0.1) }, { sleepHours: T(0.4) }).sleepHours!.lnHazard).toBe(0.4);
+  });
+
+  /** 180 reference days; in the last 30, activity only on the days `worn` picks (others night-only: null). */
+  const sparse = (worn: (ago: number) => boolean, z45: number) =>
+    run(series(180, (ago) => (ago >= 30 ? {} : worn(ago) ? { zone45Min: z45 } : { zone13Min: null, zone45Min: null, strengthMin: null, steps: null })));
+
+  it("one worn day in a month of night-only wear doesn't move Pace (version 27: a rest day read as aging much faster)", () => {
+    const none = sparse(() => false, 0);
+    const restDay = sparse((ago) => ago === 3, 0);
+    const workout = sparse((ago) => ago === 3, 60);
+    expect(none.paceActivityDays).toBe(0);
+    expect(restDay.paceActivityDays).toBe(1);
+    expect(restDay.paceOfAging).toBeCloseTo(none.paceOfAging, 12);
+    expect(workout.paceOfAging).toBeCloseTo(none.paceOfAging, 12);
+  });
+
+  it("13 worn days are still left out; at 14 the month counts", () => {
+    const none = sparse(() => false, 0);
+    expect(sparse((ago) => ago < 13, 0).paceOfAging).toBeCloseTo(none.paceOfAging, 12);
+    expect(sparse((ago) => ago < 14, 0).paceOfAging).toBeGreaterThan(none.paceOfAging + 0.01);
+  });
+});
+
+describe("strength counts in proportion to how much is logged (SCORING_VERSION 29)", () => {
+  const c = healthspanConfig;
+  const strength = (r: ReturnType<typeof run>) => term(r, "strength");
+
+  it("the weight is n / (n + 8): 26 weekly 20-minute logs count 26 / 34 of the unweighted term", () => {
+    expect(c.strengthLogPrior).toBe(8);
+    const days = series(180, (ago) => ({ strengthMin: ago % 7 === 0 && ago < 182 ? 20 : 0 }));
+    const r = run(days);
+    expect(strength(r).strengthLogs).toBe(26);
+    expect(r.strengthLogs).toBe(26);
+    expect(strength(r).years).toBeGreaterThan(0.4);
+    expect(strength(r).years).toBeCloseTo(withPrior(0, () => strength(run(days)).years) * (26 / 34), 10);
+  });
+
+  it("a regular 60 min/week lifter and someone who never logs are unchanged at 0 years", () => {
+    const regular = run(series(180, (ago) => ({ strengthMin: ago % 7 < 2 ? 30 : 0 })));
+    expect(strength(regular).years).toBeCloseTo(0, 10);
+    const never = run(series(180, () => ({ strengthMin: 0 })));
+    expect(strength(never)).toMatchObject({ unlogged: true, years: 0 });
+    expect(strength(never).strengthLogs).toBeUndefined();
+    expect(never.strengthLogs).toBe(0);
+  });
+
+  /** Δage on each of days 150–419 of a man of 40 at the reference, with strength minutes `str(i)` on day i. */
+  const timeline = (str: (i: number) => number) => {
+    const all = Array.from({ length: 420 }, (_, i) => ({ day: iso(today - 419 + i), ...refDay(), strengthMin: str(i) }));
+    return Array.from({ length: 270 }, (_, k) => {
+      const i = 150 + k;
+      const r = healthspan(all.slice(0, i + 1), profile, iso(today - 419 + i))!;
+      return { deltaYears: r.deltaYears, strength: strength(r).years };
+    });
+  };
+  const maxMove = (xs: { deltaYears: number }[]) => Math.max(...xs.slice(1).map((x, k) => Math.abs(x.deltaYears - xs[k].deltaYears)));
+
+  it("one 45-minute log: under 0.2 years, and leaving the window 180 days later moves Pulse Age under 0.2 (version 28: 1.6)", () => {
+    const one = (i: number) => (i === 150 ? 45 : 0);
+    const now = timeline(one);
+    expect(Math.max(...now.map((x) => x.strength))).toBeLessThan(0.2);
+    expect(maxMove(now)).toBeLessThan(0.2);
+    expect(withPrior(0, () => maxMove(timeline(one)))).toBeGreaterThan(1.4);
+  });
+
+  it("a monthly logger: at most 0.6 years (version 28: 1.2); a low weekly logger still shows at least 0.5", () => {
+    expect(timeline((i) => (i % 30 === 5 ? 45 : 0)).at(-1)!.strength).toBeLessThanOrEqual(0.6);
+    expect(timeline((i) => (i % 7 === 1 ? 20 : 0)).at(-1)!.strength).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it("stopping lifting still shows: the penalty rises after the last session", () => {
+    const t = timeline((i) => (i < 300 && [1, 4].includes(i % 7) ? 30 : 0));
+    expect(t[150 - 150].strength).toBeCloseTo(0, 6); // day 150, still lifting
+    expect(t[330 - 150].strength).toBeGreaterThan(0.1);
+    expect(t[419 - 150].strength).toBeGreaterThan(t[330 - 150].strength + 0.3);
+  });
+
+  it("starting a regular habit costs nothing", () => {
+    for (const x of timeline((i) => (i >= 390 && [1, 4].includes(i % 7) ? 30 : 0))) expect(x.strength).toBeCloseTo(0, 6);
   });
 });

@@ -121,7 +121,7 @@ const HS_META: Record<string, Omit<HealthspanContributor, "metric" | "target" | 
     unit: "h",
     domain: [4, 10],
     higherIsBetter: true,
-    explanation: "Both short and long sleep are linked to higher mortality. Seven to eight hours a night carries the lowest risk.",
+    explanation: "Short sleep is linked to higher mortality. Risk is lowest from seven hours a night; longer sleep is not penalised here.",
     source: "Cappuccio 2010",
   },
   sri: {
@@ -148,7 +148,7 @@ const HS_META: Record<string, Omit<HealthspanContributor, "metric" | "target" | 
     unit: "min",
     domain: [0, 150],
     higherIsBetter: true,
-    explanation: "Vigorous activity adds benefit on top of moderate activity. About 75 to 150 minutes a week is where it levels off.",
+    explanation: "Vigorous activity adds benefit on top of moderate activity. Most of it comes by about 75 to 150 minutes a week, with a little more up to about 225.",
     source: "Lee 2022",
   },
   strength: {
@@ -198,6 +198,8 @@ const HS_META: Record<string, Omit<HealthspanContributor, "metric" | "target" | 
     source: "Sedlmeier 2021",
   },
 };
+/** Under this many logged strength workouts the term counts less than 75 % (n / (n + 8), version 29): say so. */
+const STRENGTH_FULL_LOGS = 24;
 const HS_ORDER = ["sleepHours", "sri", "zone13", "zone45", "strength", "steps", "vo2max", "restingHr", "leanMass"];
 
 /** Healthspan `/health/healthspan` for the ISO week containing `day` (spec §7.7). Updated weekly. */
@@ -222,7 +224,7 @@ export async function getHealthspan(day: string, ctx: QueryCtx): Promise<Healths
   if (!hs) result = none("no_data");
   // Pulse Age needs 14 days of activity data (version 19); older rows only carry dataDays.
   else if (hs.reason !== null) result = none("calibrating", Math.max(1, hs.activityDays != null ? healthspanConfig.minActivityDays - hs.activityDays : 20 - hs.dataDays));
-  else result = ok({ pulseAge: hs.pulseAge, deltaYears: hs.deltaYears, pace: hs.paceOfAging, paceProvisional: hs.paceProvisional, vo2maxSource: hs.vo2maxSource }, hs.provisional);
+  else result = ok({ pulseAge: hs.pulseAge, deltaYears: hs.deltaYears, pace: hs.paceOfAging, paceProvisional: hs.paceProvisional, paceActivityDays: hs.paceActivityDays, vo2maxSource: hs.vo2maxSource }, hs.provisional);
 
   const contributions = hs && hs.reason === null ? hs.contributions : [];
   const contributors: HealthspanContributor[] = HS_ORDER.map((key) => {
@@ -238,6 +240,8 @@ export async function getHealthspan(day: string, ctx: QueryCtx): Promise<Healths
         ? vo2maxCaption(hs.vo2maxSource, hs.vo2maxRuns ?? 0)
         : c?.unlogged
           ? "Not logged: log strength workouts in Fitbit to count them."
+          : c?.strengthLogs != null && c.strengthLogs < STRENGTH_FULL_LOGS
+            ? `Based on ${c.strengthLogs} logged strength ${c.strengthLogs === 1 ? "workout" : "workouts"} in 6 months: it counts more fully as you log more.`
           : key === "leanMass" && !measured
           ? "Not measured: counted as typical for your age. Add weight and body fat in Fitbit."
           : c?.estimated
@@ -546,7 +550,11 @@ export async function getFitness(ctx: QueryCtx): Promise<FitnessVM> {
   const tl = row?.trainingLoad;
   const effortDays = [...rows.values()].filter((r) => r.s1?.effort != null).length;
   const trainingLoad: Metric<NonNullable<FitnessVM["trainingLoad"]["value"]>> =
-    tl?.acwr != null ? ok({ acwr: tl.acwr, ...acwrStatus(tl.acwr) }) : none("calibrating", Math.max(1, minChronic - effortDays));
+    tl?.acwr != null
+      ? ok({ acwr: tl.acwr, ...acwrStatus(tl.acwr) })
+      : tl?.lightLoad
+        ? none("light_load")
+        : none("calibrating", Math.max(1, minChronic - effortDays));
   const load = Array.from({ length: 90 }, (_, k) => {
     const d = addDays(last, k - 89);
     const t = rows.get(d)?.trainingLoad;

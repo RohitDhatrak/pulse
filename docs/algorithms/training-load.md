@@ -56,12 +56,28 @@ flowchart TB
 - Stage 1 stores it as `daily_scores.strain.trimp`. It is null exactly when Effort is null.
 - Stage 2 feeds one row per calendar day: `load = trimp`; `0` when the band was worn but there was too little heart
   rate for Effort (a measured rest day); `null` when the band was off (`hrCount` 0).
+- **"Worn" means any heart-rate sample in the calendar day** (`hrCount > 0`, `scores.ts`), sleep included. So:
+  - a day worn only in bed (the night's samples after midnight) is a **measured rest day**: its load is its small
+    TRIMP or 0, not null, although the day's activity was never seen;
+  - a day worn for an hour is the same.
+
+  This pulls acute and chronic loads down for people who take the band off by day, and makes their ACWR swing.
+  A wear threshold is not applied here (Pulse Age uses ≥ 600 awake minutes, `healthspanWornAwakeMin`).
+- **Today's row is the load so far.** The pipeline scores today while it is still going, so this morning's row
+  holds only the hours since midnight, usually close to 0. Acute load, ACWR, form and readiness read lower in the
+  morning than they will that evening.
 
 **ACWR** (coupled, Gabbett's form), evaluated on `today`:
 
     acute   = mean load over the days with a load among the 7 calendar days ending today
     chronic = mean load over the days with a load among the 28 calendar days ending today
-    ACWR    = acute / chronic           (needs ≥ 4 loads in the 7, ≥ 14 in the 28, and chronic > 0)
+    ACWR    = acute / chronic           (needs ≥ 4 loads in the 7, ≥ 14 in the 28, and chronic ≥ 30)
+
+**A light load** (*since version 27*, `acwrChronicFloor = 30` TRIMP a day): when chronic is under 30,
+- if acute ÷ 30 ≥ 1.3, ACWR = acute ÷ 30. That is a jump that is large in absolute terms, banded as usual (building
+  fast or spiking), and the signal's evidence carries `floor: 30`;
+- otherwise ACWR is **null** and `lightLoad` is true. There is no band, no readiness signal, and no Strain Target cap.
+  Fitness and Reports show "Light load: too little training load to compare weeks".
 
 - Rows after `today` are ignored.
 - Before version 10 the windows were "the last 7 / 28 rows with a value", so unworn days pulled in older days.
@@ -151,6 +167,50 @@ Recovery, Effort, Sleep, Energy Bank, Stress and the Health Monitor are unchange
 3. **Fitness carried across short gaps.** A missing day is unknown, not a rest day: it neither adds load nor decays
    it. Three days covers a weekend without the band; longer gaps restart, since the averages would be stale.
 
+## Why version 27: a light load has no ratio
+
+**The problem.** ACWR's only guard was chronic > 0. For someone whose days are nearly all rest, acute ÷ chronic is
+the ratio of two near-zero means, so it is noise:
+- after weeks of rest-level days (about 3 TRIMP), one 40-TRIMP walk read **spiking** for 30 of 30 simulated people,
+  and readiness turned "strained";
+- steady sedentary days read building fast or spiking 13 % of the time.
+
+**How it was tested.** 30 simulated people per case through the real `evaluate`; the prototype's "version 26" mode
+matched it on every day. Daily TRIMP is log-normal: rest days around 4, walks and sessions as named.
+
+**A floor in the denominator** (acute ÷ max(chronic, F)) stops the false spikes, but moves every low-load person into
+"ramping down", which the app shows as "Undertrained: your load dropped below your usual". At F = 30, that was 98.6 %
+of a 2 × 50 light trainer's days and 84 % of an older daily walker's. Rejected.
+
+**No band at all under F** misses real spikes: a sedentary person who starts running 5 days a week read nothing 40 %
+of the time at F = 30. Rejected.
+
+**The chosen hybrid.** No ratio under F, unless acute ÷ F is itself a jump. Shares of days:
+
+| Case | Version 26: spiking / building | F = 20 | **F = 30** | F = 40 |
+|---|---|---|---|---|
+| Weeks of rest, one 40-TRIMP walk | 100 / 0 | light | **light** | light |
+| Steady sedentary (an occasional 15-TRIMP walk) | 4.2 / 8.5 (and 23 % ramping down) | light | **light** | light |
+| Older adult's daily walk (about 25) | 2.2 / 9.0 | 0.8 / 5.2, 67 % light | **light** | light |
+| Light trainer, 2 × 50 a week | 0 / 1.7 | 96 % light | **light** | light |
+| Sedentary starts walking 40 a day | 98.6 / 1.0 | 67.1 / 4.8 | **8.1 / 31.0** | 0 / 0.2 |
+| Sedentary starts running 5 × 120 a week | 100 spiking | 100 | **100** | 100 |
+| Light 2 × 50 → 5 × 100; regular 3 × 100 → 6 × 150 | 89 / 84 spiking | unchanged | **unchanged** | about unchanged |
+| Moderate 3 × 80 (chronic about 36) | 95 % sweet spot | unchanged | **unchanged** | 90 % light |
+| Regular 4 × 118 | 98 % sweet spot | unchanged | **unchanged** | unchanged |
+
+**Why F = 30:**
+- 20 still calls a new daily walk "spiking" two-thirds of the time.
+- 40 hides a moderate 3-sessions-a-week trainer.
+- 30 TRIMP a day is about 3.5 h a week of easy walking, under the guideline 150 min of moderate activity. Below it
+  a load *ratio* says little; the absolute load matters more.
+
+The sedentary walker who starts 40 a day is a real 10× jump, so "building fast" (and on the heaviest weeks
+"spiking") is fair there.
+
+**On the seed** the chronic load is 44–155 a day, so nothing changes. Only the new `lightLoad` field (false) is
+added to `training_load` and the reports.
+
 ## Constants
 
 | Constant | Value | Kind |
@@ -179,7 +239,7 @@ Recovery, Effort, Sleep, Energy Bank, Stress and the Health Monitor are unchange
 ## Edge rules
 
 - Fewer than 4 loads in the last 7 days, or fewer than 14 in the last 28: no ratio and no monotony.
-- A chronic mean of 0 (four weeks of measured rest): no ratio.
+- A chronic mean of 0 (four weeks of measured rest): no ratio, and since version 27 it is a light load (`lightLoad`).
 - Rows after `today` never count.
 - A gap at the target day itself is carried: the result ends on the last day with a load.
 - A config without `maxGapDays` behaves as noop (any gap restarts). An invalid value fails closed

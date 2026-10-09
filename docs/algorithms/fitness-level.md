@@ -19,13 +19,13 @@ Fitness level places a VO2max value among people of the same sex and age decade,
    | Superior | ≥ 80 |
 
    The bands are half-open, so 39.9 is Fair and 40 is Good.
-4. **The Healthspan reference**, `referenceVo2max(age, sex)`, is the 50th-percentile column (since scoring version 19; it was the 75th, see `healthspan.md`), linear between decade midpoints (25, 35 … 75), flat below 25, and past 75 continued with the 65 → 75 slope down to a floor of 15 mL/kg/min (`vo2maxAtPercentileExtended`; FRIEND has no row above 70–79). A decade step would make Pulse Age jump by about 1.5 years on a decade birthday. Fitness level itself keeps the published decade rows. Near a decade edge, someone exactly at the Healthspan reference can therefore show a percentile a few points off 50.
+4. **The Healthspan reference**, `referenceVo2max(age, sex)`, is the 50th-percentile column (since scoring version 19; it was the 75th, see `healthspan.md`), linear between decade midpoints (25, 35 … 75), flat below 25, and past 75 continued with the 65 → 75 slope down to a floor of 15 mL/kg/min (`vo2maxAtPercentileExtended`; FRIEND has no row above 70–79). A decade step would make Pulse Age jump by about 1.5 years on a decade birthday. Fitness level itself keeps the published decade rows, so the two disagree between decade midpoints. Someone exactly at the Healthspan reference reads anywhere from about the 37th to the 66th percentile depending on age, and on a decade birthday their percentile jumps by 18–29 points (largest for women turning 30: 37 → 66) with no change in fitness.
 
 ## Inputs
 
 | Input | Unit | Notes |
 |---|---|---|
-| `vo2max` | mL O₂·kg⁻¹·min⁻¹ | U10 picks the value with Healthspan's source rule: the latest `run-vo2-max` within 90 days, otherwise the latest `daily-vo2-max`. |
+| `vo2max` | mL O₂·kg⁻¹·min⁻¹ | `scoreFitness` (`src/server/pipeline/scores.ts`) picks the latest `run-vo2-max` within 90 days, otherwise the latest `daily-vo2-max` of any age. This is its own rule: since scoring version 19 Healthspan blends run and daily values over 6 months instead (`healthspan.md`). |
 | `age` | years | Fractional is fine. |
 | `sex` | `"male"` or `"female"` | FRIEND publishes only these two. |
 
@@ -61,7 +61,7 @@ This is Kaminsky et al. 2015, Table 2, "Men/Women from FRIEND": 7,783 maximal tr
 |---|---|---|
 | `FRIEND_TREADMILL`, `FRIEND_PERCENTILES` | Table 2 | cited: Kaminsky 2015 |
 | `fitnessLevelConfig.categoryFloors` | 20 / 40 / 60 / 80 | *tunable* (spec) |
-| `fitnessLevelConfig.referencePercentile` | 75 | *tunable* (spec); must be one of the table's columns |
+| `fitnessLevelConfig.referencePercentile` | 50 | *tunable* (spec); must be one of the table's columns |
 
 ## Worked examples
 

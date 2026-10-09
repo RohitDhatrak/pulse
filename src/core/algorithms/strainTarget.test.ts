@@ -131,6 +131,36 @@ describe("strainTarget", () => {
     expect(target({ priorLoad: sparse }).base).toBeCloseTo(S(200), 10);
   });
 
+  it("after 8 light weeks, a beginner's sessions are the target from the start (version 25: held at 1.1 × the light days for 32 days)", () => {
+    const light = Array(56).fill(10);
+    const training = pattern([100, 10, 100, 10, 100, 100, 10], 70);
+    const baseAfter = (days: number) => target({ priorLoad: [...light, ...training.slice(0, days)] }).base;
+    expect(baseAfter(3)).toBeCloseTo(S(10), 10); // two sessions in 28 days: still under the 90th percentile
+    for (const days of [7, 14, 28, 32, 33, 60]) expect(baseAfter(days)).toBeCloseTo(S(100), 10);
+    expect(S(11).toFixed(1)).toBe("5.9"); // where version 25 held it
+  });
+
+  it("the limit needs 4 earlier sessions at today's level: 3 don't limit, 4 do", () => {
+    const now = pattern([200, 9, 200, 9, 200, 200, 9]);
+    const earlierWith = (n: number) => Array.from({ length: 28 }, (_, i) => (i % 7 === 0 && i / 7 < n ? 100 : 9));
+    expect(target({ priorLoad: [...earlierWith(3), ...now] }).base).toBeCloseTo(S(200), 10);
+    expect(target({ priorLoad: [...earlierWith(4), ...now] }).base).toBeCloseTo(S(110), 10);
+    expect(c.minEarlierSessions).toBe(4);
+  });
+
+  it("earlier loads under 30 % of today's session aren't sessions: light days never hold the target down", () => {
+    // Four earlier 50s are under 0.3 × 200 = 60, so nothing limits; four 60s are sessions, so the limit is 66.
+    const now = pattern([200, 9, 200, 9, 200, 200, 9]);
+    const earlier = (v: number) => Array.from({ length: 28 }, (_, i) => (i % 7 === 0 ? v : 9));
+    expect(target({ priorLoad: [...earlier(50), ...now] }).base).toBeCloseTo(S(200), 10);
+    expect(target({ priorLoad: [...earlier(60), ...now] }).base).toBeCloseTo(S(66), 10);
+  });
+
+  it("a 4-week break with the band on, back at the same level: no dip after the return", () => {
+    const loads = [...pattern([118, 9, 118, 9, 118, 118, 9], 84), ...Array(28).fill(9), ...pattern([118, 9, 118, 9, 118, 118, 9], 63)];
+    for (let d = 112 + 10; d <= loads.length; d++) expect(target({ priorLoad: loads.slice(0, d) }).base, `day +${d - 112}`).toBeCloseTo(S(118), 10);
+  });
+
   it("ACWR above 1.3 caps the top at your typical session and keeps the width", () => {
     const loads = pattern(PROFILES["moderate 4×118"]);
     const free = target({ priorLoad: loads, recovery: 85, acwr: 1.3 });

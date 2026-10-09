@@ -85,7 +85,7 @@ export async function getSleep(day: string, ctx: QueryCtx): Promise<SleepVM> {
     { ...stat("timeInBed", "Time in bed", (r) => r.sleep?.main?.inBedMin, "min"), direction: "neutral" as const },
     { ...stat("wakeEvents", "Wake events", (r) => r.sleep?.main?.wakeEvents, undefined), direction: "down" as const },
     { ...stat("resp", "Respiratory rate", (r) => r.metrics?.respBpm, "rpm", undefined, vitalReason(row, isToday)), direction: "neutral" as const },
-    { ...stat("debt", "Sleep debt", (r) => (r.sleep?.main ? r.sleep.debtMin : null), "min"), direction: "down" as const },
+    { ...stat("debt", "Sleep debt", (r) => (r.sleep?.main || r.sleep?.awakeAllNight ? r.sleep.debtMin : null), "min"), direction: "down" as const },
   ];
 
   const plan = planVM(ctx, row, isToday);
@@ -102,7 +102,7 @@ export async function getSleep(day: string, ctx: QueryCtx): Promise<SleepVM> {
     hoursVsNeed,
     details,
     debtTrend: {
-      points: trendPoints(rows, day, (r) => (r.sleep?.main ? r.sleep.debtMin / 60 : null)),
+      points: trendPoints(rows, day, (r) => (r.sleep?.main || r.sleep?.awakeAllNight ? r.sleep.debtMin / 60 : null)),
     },
     planner: plan.value ? ok({ ...plan.value, weekdayWake: !plan.value.weekend }) : (plan as Metric<never>),
   };

@@ -4,17 +4,17 @@
 // Gompertz doubling time. The method follows noop's VitalityEngine.kt; the curves and the gates are ours.
 // Since SCORING_VERSION 14: a missing input counts as a typical person of your age and sex (it used to scale the
 // others up by 9 / n), and steps and zones 1–3, which measure the same activity, count once: the larger penalty.
-// Since SCORING_VERSION 19 (docs/handoff/pulse-age-issues.md): the reference is a person who meets health guidelines
+// Since SCORING_VERSION 19 (docs/algorithms/healthspan.md § Why version 19): the reference is a person who meets health guidelines
 // (it was a fit person, so almost nobody scored younger); run and daily VO2max are blended by count; activity curves
 // apply to rolling 7-day windows; no result before 14 days of activity data; strength is unknown until a workout is
 // logged; and the strength, sleep, lean-mass, SRI and resting-HR curves were corrected.
 import { isoEpochDay } from "../scoring/baselines";
 import { piecewiseLinear, referenceVo2max, vo2maxAtPercentileExtended, type Knots, type Sex } from "./fitnessLevel";
 
-/** One day's inputs. A null or absent field means no data that day. */
 /** Google exercise types that count as strength minutes (pipeline) and the strength icon (queries). */
 export const STRENGTH_TYPES = /STRENGTH|WEIGHT|CROSSFIT|CALISTHENICS/;
 
+/** One day's inputs. A null or absent field means no data that day. */
 export interface HealthspanDay {
   /** yyyy-MM-dd */
   day: string;
@@ -127,6 +127,25 @@ export const healthspanConfig = {
   vo2maxRunPrior: 3,
   ageWindowDays: 180,
   paceWindowDays: 30,
+  /**
+   * Pace's 30-day window (version 28): an activity input with fewer days than this keeps its 6-month term, as the
+   * 6-month window needs `minActivityDays`. One worn day used to become the month's weekly activity, so a month of
+   * night-only wear swung Pace from 0.7 to 2.7 with habits unchanged.
+   */
+  paceMinActivityDays: 14,
+  /**
+   * From the gate up, the 30-day activity term is pulled toward the 6-month one with weight
+   * [n / (n + k)] / [30 / (30 + k)] for n days, capped at 1 (version 28): a fully worn month counts in full, 14 days
+   * at 0.57, 20 at 0.75. A partly worn month's 7-day windows are noisy; plain n / (n + k) also damped real changes.
+   */
+  paceShrinkDays: 60,
+  /**
+   * Strength's ln HR is weighted n / (n + this) for n logged strength workouts in the 6 months (version 29). The
+   * reference (40 min/week) is the curve's nadir, so the term can only add years, and every worn day after the first
+   * log counts as 0 without one: a single logged session added about 1.5 years, then fell away overnight 180 days
+   * later. One log now counts 11 %, a weekly habit (26) 76 %. 4 left one log at +0.3; 12 hid a low, logged habit.
+   */
+  strengthLogPrior: 8,
   /** Activity curves are applied per trailing window of this many days, then averaged (version 19). */
   activityWindowDays: 7,
   /** A rolling window needs at least this many days with the input. */
@@ -221,6 +240,8 @@ export interface HealthspanContribution {
   /** Strength with no workout logged in the 6 months: unknown, so 0 years (version 19). Days before the first logged
    * workout are left out once there is one. */
   unlogged?: true;
+  /** Strength: workouts logged in the 6 months, which weight the term n / (n + strengthLogPrior) (version 29). */
+  strengthLogs?: number;
 }
 
 export interface HealthspanResult {
@@ -241,11 +262,16 @@ export interface HealthspanResult {
   provisional: boolean;
   /** True until the data spans the full 6-month window. */
   paceProvisional: boolean;
+  /** Days in the last 30 with zone data; under `paceMinActivityDays`, Pace leaves activity at its 6-month value. */
+  paceActivityDays: number;
+  /** Strength workouts logged in the 6 months (version 29). */
+  strengthLogs: number;
 }
 
 /** One window's terms: the displayed value and the ln HR against the reference, before weights. */
-type Term = { value: number; lnHazard: number; unlogged?: true };
-type Terms = Partial<Record<HealthspanInput, Term>>;
+/** `days`: the activity days behind an activity term (for Pace's 30-day gate and shrinkage). */
+type Term = { value: number; lnHazard: number; unlogged?: true; days?: number };
+export type Terms = Partial<Record<HealthspanInput, Term>>;
 
 const mean = (xs: (number | null | undefined)[]): number | undefined => {
   const v = xs.filter((x): x is number => x != null && Number.isFinite(x));
@@ -321,9 +347,37 @@ function windowTerms(days: (HealthspanDay & { e: number })[], from: number, to: 
     const all = [...byDay.values()];
     const value = key === "steps" ? all.reduce((a, b) => a + b, 0) / all.length : (all.reduce((a, b) => a + b, 0) / all.length) * 7;
     // Too few days for any whole window: the plain window mean, as before.
-    t[key] = { value, lnHazard: windows ? sum / windows : at(key, key === "steps" ? Math.min(value, ctx.stepsCap) : value) };
+    const lnHazard = windows ? sum / windows : at(key, key === "steps" ? Math.min(value, ctx.stepsCap) : value);
+    // Strength counts in proportion to how much has been logged: a few logs are a weak sign of a habit (version 29).
+    const weight = key === "strength" ? ctx.strengthLogs / (ctx.strengthLogs + cfg.strengthLogPrior) : 1;
+    t[key] = { value, lnHazard: lnHazard * weight, days: byDay.size };
   }
   return t;
+}
+
+/**
+ * Pace's 30-day activity terms (version 28): under `paceMinActivityDays` days an input keeps its 6-month term (or is
+ * left out of both windows if it has none); from there it is shrunk toward the 6-month term, fully worn counting in
+ * full. Other inputs pass through.
+ */
+export function paceActivity(long: Terms, short: Terms): Terms {
+  const cfg = healthspanConfig;
+  const out: Terms = { ...short };
+  for (const key of ACTIVITY) {
+    const s = short[key];
+    const l = long[key];
+    if (!s || s.unlogged || s.days == null) continue;
+    if (s.days < cfg.paceMinActivityDays) {
+      if (l) out[key] = l;
+      else delete out[key];
+      continue;
+    }
+    if (!l) continue;
+    const k = cfg.paceShrinkDays;
+    const w = Math.min(1, s.days / (s.days + k) / (cfg.paceWindowDays / (cfg.paceWindowDays + k)));
+    out[key] = { ...s, lnHazard: l.lnHazard + w * (s.lnHazard - l.lnHazard) };
+  }
+  return out;
 }
 
 type Ctx = {
@@ -336,6 +390,8 @@ type Ctx = {
   vo2: { offset: number; weight: number; runMean: number | null };
   /** Epoch day of the first logged strength workout up to today, or null: none, so strength is unknown. */
   strengthFrom: number | null;
+  /** Strength workouts logged in the 6 months: the term's weight is n / (n + strengthLogPrior) (version 29). */
+  strengthLogs: number;
 };
 
 /**
@@ -350,7 +406,14 @@ function deltaAge(t: Terms, ctx: Ctx) {
   const contributions = all.map((key): HealthspanContribution => {
     const term = t[key];
     if (term) {
-      return { key, value: term.value, reference: ctx.ref[key], years: term.lnHazard * toYears, ...(term.unlogged && { unlogged: true as const }) };
+      return {
+        key,
+        value: term.value,
+        reference: ctx.ref[key],
+        years: term.lnHazard * toYears,
+        ...(term.unlogged && { unlogged: true as const }),
+        ...(key === "strength" && !term.unlogged && { strengthLogs: ctx.strengthLogs }),
+      };
     }
     // A typical VO2max stands in for the person's unknown true value, so it counts at full weight.
     const x = key === "steps" ? Math.min(ctx.typical[key], ctx.stepsCap) : ctx.typical[key];
@@ -410,10 +473,11 @@ export function healthspan(days: HealthspanDay[], profile: HealthspanProfile, as
     // Strength minutes come only from logged workouts: none in 6 months means unknown, not "never lifts"; and days
     // before the first logged one are unknown too.
     strengthFrom: six.some((d) => (d.strengthMin ?? 0) > 0) ? Math.min(...dated.filter((d) => (d.strengthMin ?? 0) > 0).map((d) => d.e)) : null,
+    strengthLogs: six.filter((d) => (d.strengthMin ?? 0) > 0).length,
   };
   const long = windowTerms(six, sixFrom, today, ctx);
   // A term with no data lately keeps its 6-month value, so both windows are scored alike.
-  const short = { ...long, ...windowTerms(thirty, thirtyFrom, today, ctx) };
+  const short = { ...long, ...paceActivity(long, windowTerms(thirty, thirtyFrom, today, ctx)) };
   const a = deltaAge(long, ctx);
   const b = deltaAge(short, ctx);
   if (!a || !b) return null;
@@ -434,5 +498,7 @@ export function healthspan(days: HealthspanDay[], profile: HealthspanProfile, as
     activityDays,
     provisional: withData.length < cfg.minDays,
     paceProvisional: today - first + 1 < cfg.ageWindowDays,
+    paceActivityDays: thirty.filter((d) => d.zone13Min != null).length,
+    strengthLogs: ctx.strengthLogs,
   };
 }

@@ -40,7 +40,8 @@ export const hardOrLateConfig = {
  * Whether yesterday's training explains a strained night (the illness signal's `hardOrLateWorkout`, version 23).
  * Hard: at least `hardWorkoutStrainPoints` Day Strain points above your typical session (`priorLoads`: the days
  * before). Late: a logged workout of `lateWorkoutMinMin`+ minutes ending within `lateWorkoutHours` of `bedtime`.
- * Narrow on purpose: it dampens the illness signal, so an ordinary training day must not count.
+ * Meant to be narrow, since it dampens the illness signal: an ordinary training day should not count. The late rule
+ * has no intensity condition, so it fires after every evening session of 30+ minutes (docs/algorithms/health-monitor.md).
  */
 export function hardOrLateWorkout(a: {
   load: number | null;

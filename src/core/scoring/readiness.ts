@@ -2,7 +2,9 @@
 // evaluateWithTrainingLoad wrapper from ReadinessTrainingLoad.kt. Not ported: the memo cache and copy ids.
 // Pulse's own (SCORING_VERSION 10): ACWR, monotony and CTL/ATL run on linear TRIMP (`load`), not on the log-mapped
 // Effort; the ACWR windows are calendar days ending today; "ramping down" is informational. Why:
-// docs/algorithms/training-load.md.
+// docs/algorithms/training-load.md. Since SCORING_VERSION 27, a chronic load under `acwrChronicFloor` gives no ratio
+// ("light load") unless acute ÷ the floor still shows a jump: the ratio of two near-zero means is noise, and one walk
+// read "spiking".
 import { foldHistory, isoEpochDay, isUsable, readinessHRVLnCfg, restingHRCfg } from "./baselines";
 import { readiness as readinessConfidence } from "./confidence";
 import { evaluate as evaluateTrainingLoad, standardConfig, type TrainingLoadConfig, type TrainingLoadResult } from "./trainingLoad";
@@ -34,7 +36,8 @@ export type ReadinessDetail =
 export type ReadinessEvidence =
   | { kind: "metricVsBaseline"; value: number; baseline: number; decimals: number; unit: "ms" | "bpm" | "rpm" }
   | { kind: "monotony"; value: number }
-  | { kind: "trainingLoad"; acute: number; chronic: number };
+  /** `floor`: set when chronic was under `acwrChronicFloor` and the ratio is acute ÷ floor (version 27). */
+  | { kind: "trainingLoad"; acute: number; chronic: number; floor?: number };
 
 export interface ReadinessSignal {
   key: ReadinessSignalKey;
@@ -46,12 +49,27 @@ export interface ReadinessSignal {
 export interface Readiness {
   level: ReadinessLevel;
   signals: ReadinessSignal[];
-  /** Acute:chronic workload ratio on TRIMP, or null without enough load history. */
+  /**
+   * Acute:chronic workload ratio on TRIMP, or null without enough load history or on a light load. Under the chronic
+   * floor it is acute ÷ the floor, kept only when that is a jump (≥ 1.3).
+   */
   acwr: number | null;
+  /** Chronic load under `acwrChronicFloor` and no jump: too little load to compare weeks (version 27). */
+  lightLoad: boolean;
   /** Foster monotony over the last week, or null. */
   monotony: number | null;
   confidence: ScoreConfidence;
 }
+
+/**
+ * Chronic load (mean TRIMP a day over 28 days) under which the plain ratio isn't used (version 27). About 3.5 h a week
+ * of easy walking, under the guideline 150 min of moderate activity. Below it acute ÷ chronic is two near-zero means:
+ * one 40-TRIMP walk after weeks of rest read "spiking" for every simulated person. 20 still called a new daily walk
+ * "spiking" 67 % of the time; 40 hid a 3×/week 80-TRIMP trainer. docs/algorithms/training-load.md § Why version 27.
+ */
+export const acwrChronicFloor = 30;
+/** Under the floor, acute ÷ floor is kept from here up: "building fast" (1.3) or "spiking" (1.5). */
+export const lightLoadJump = 1.3;
 
 export const baselineWindow = 30;
 export const minBaseline = 7;
@@ -154,7 +172,7 @@ function synthesize(signals: ReadinessSignal[], hasHistory: boolean): ReadinessL
 export function evaluate(days: ReadinessDay[], today: string | null = null): Readiness {
   const sorted = [...days].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
   const latest = today != null ? sorted.find((d) => d.day === today) : sorted.at(-1);
-  if (!latest) return { level: "insufficient", signals: [], acwr: null, monotony: null, confidence: "calibrating" };
+  if (!latest) return { level: "insufficient", signals: [], acwr: null, lightLoad: false, monotony: null, confidence: "calibrating" };
   const history = sorted.filter((d) => d.day < latest.day);
   const recent = history.slice(-baselineWindow);
   const signals: ReadinessSignal[] = [];
@@ -186,13 +204,21 @@ export function evaluate(days: ReadinessDay[], today: string | null = null): Rea
   const acuteLoads = pick(lastDays(acuteWindow), (d) => d.load);
   const chronicLoads = pick(lastDays(chronicWindow), (d) => d.load);
   let acwr: number | null = null;
+  let lightLoad = false;
   let monotony: number | null = null;
   if (chronicLoads.length >= minChronic && acuteLoads.length >= minAcute) {
     const acute = mean(acuteLoads) as number;
     const chronic = mean(chronicLoads) as number;
-    if (chronic > 0) {
+    if (chronic >= acwrChronicFloor) {
       acwr = acute / chronic;
       signals.push(acwrSignal(acwr, acute, chronic));
+    } else if (acute / acwrChronicFloor >= lightLoadJump) {
+      // A light load that jumped in absolute terms: still building fast or spiking.
+      acwr = acute / acwrChronicFloor;
+      const signal = acwrSignal(acwr, acute, chronic);
+      signals.push({ ...signal, evidence: { kind: "trainingLoad", acute, chronic, floor: acwrChronicFloor } });
+    } else {
+      lightLoad = true;
     }
     const sd = sampleSD(acuteLoads);
     if (sd != null && sd > monotonySdEpsilon * Math.max(1, Math.abs(acute))) {
@@ -205,7 +231,7 @@ export function evaluate(days: ReadinessDay[], today: string | null = null): Rea
 
   const level = synthesize(signals, history.length > 0 || acwr != null);
   const confidence = readinessConfidence(level !== "insufficient", pick(recent, (d) => d.hrv).length, baselineWindow);
-  return { level, signals, acwr, monotony, confidence };
+  return { level, signals, acwr, lightLoad, monotony, confidence };
 }
 
 /** Readiness plus CTL/ATL/TSB over the same rows; training load never feeds the readiness level. */

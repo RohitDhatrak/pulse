@@ -723,7 +723,7 @@ The only place that branches on data state. Every metric on every screen renders
 ```ts
 type ReasonCode =
   | "calibrating" | "no_hrv_last_night" | "awaiting_sleep_sync"
-  | "insufficient_hr_data" | "band_not_worn" | "no_data";
+  | "insufficient_hr_data" | "band_not_worn" | "no_sleep" | "light_load" | "no_data";
 type Metric<T> = {
   value: T | null;
   reason: ReasonCode | null;
@@ -1205,6 +1205,8 @@ Purpose: copy and icon for every reason code. The single source of reason copy i
 | `awaiting_sleep_sync` | `RefreshCw` | Waiting for sleep | Waiting for last night's sleep to sync | Empty track |
 | `insufficient_hr_data` | `Activity` | Not enough data | Not enough heart-rate data | Empty track |
 | `band_not_worn` | `Watch` | Not worn | No data: band not worn | Empty track |
+| `no_sleep` | `Moon` | Up all night | No sleep: you were up all night | Empty track. Scoring version 25: no sleep session, but the band was worn through 00:00–06:00 with heart rate above resting and steps. Sleep Performance and the night's vitals show it; Recovery shows `no_hrv_last_night`; the night counts as 0 h in sleep debt |
+| `light_load` | `Feather` | Light load | Too little training load to compare weeks | Empty track. Scoring version 27: the 28-day load averages under 30 TRIMP a day and this week isn't a jump (under 1.3 × 30), so there is no ACWR. Fitness' training-load card and Reports' training balance show it |
 | `stale_baseline` (tag) | none | tag "Baseline stale" | Your baseline has 14 nights or more missing. Scores firm up as new nights arrive. | The number with a "Baseline stale" tag |
 | `updated` (tag) | none | tag "Updated" | Updated after a late sync added data. | The number with an "Updated" tag |
 | `no_data` (and any unknown code) | none | -- | No data | A muted `--` |
@@ -1782,11 +1784,11 @@ Shell: `DetailShell title="Sleep" dateSwitcher={{ mode: "day" }} info={How Sleep
 | secondary 1 | SectionShell `card` "Hours vs. need" | value `7:12` (stat value tile role) + " of 8:24 needed" (stat unit); need breakdown rows (caption-size rows with `font-numeric` values): "Baseline need 8:00", "Yesterday's strain +0:12", "Sleep debt +0:12", "Naps −0:00" | calibrating under 7 nights: "Your need settles after 7 nights. Using 8:00 until then." |
 | secondary 2 | SectionShell `card` "Details" with KeyStatRow rows | "Time in bed" `h:mm`, "Wake events" integer, "Respiratory rate" rpm, "Sleep debt" `h:mm` | per-row reason |
 | secondary 3 | SectionShell `card` "Sleep debt" + TrendChart `colorBy="sleep"` (hours of debt, bars, W/M/6M) | n/a | TrendChart empty |
-| secondary 4 | SectionShell `card` "Tonight's sleep" (`id="planner"`) | the three goals as rows: "Peak" `22:10` caption "100% of need", "Perform" `22:58` "85%", "Get by" `23:46` "70%"; then "Typical wake" `06:45` (weekday / weekend caption "Weekday wake time"); caption "Need tonight: 8:24" | calibrating: "Sleep Planner needs 7 nights to learn your wake time." |
+| secondary 4 | SectionShell `card` "Tonight's sleep" (`id="planner"`) | the three goals as rows: "Peak" `22:10` caption "100% of need", "Perform" `22:58` "85%", "Get by" `23:46` "70%"; then "Typical wake" `06:45` (weekday / weekend caption "Weekday wake time"); caption "Need tonight: 8:24". Each goal's caption is the share of need it delivers (`needPct`): its share, or less when time in bed is capped (scoring version 24). Then the plan's notes as captions: when recent efficiency is under 85%, "You've been awake in bed for a good part of recent nights. These bedtimes plan for 85% of your time in bed asleep. Going to bed earlier usually adds time awake, not sleep."; when capped, "Time in bed is capped at 10 h for your age." | calibrating: "Sleep Planner needs 7 nights to learn your wake time." |
 
 Info sheet "How Sleep works": "Sleep Performance compares the sleep you got with the sleep you needed, adjusted for consistency, efficiency and restorative sleep. Your need is your personal baseline plus extra for yesterday's strain and any sleep debt, minus naps." Second paragraph: "Sleep consistency is the Sleep Regularity Index: how closely your sleep and wake times match from one day to the next, over the last 7 days."
 
-Info sheet "Tonight's sleep": "Bedtimes are worked back from your typical wake time and how efficiently you sleep. Peak gets you 100% of tonight's need, Perform 85%, Get by 70%."
+Info sheet "Tonight's sleep": "Bedtimes are worked back from your typical wake time and how efficiently you sleep (never planned below 85%). Peak gets you 100% of tonight's need, Perform 85%, Get by 70%. Time in bed is capped for your age."
 
 Phone, 390:
 

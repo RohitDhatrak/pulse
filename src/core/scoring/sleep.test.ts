@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  allNighterConfig,
+  awakeAllNight,
   creditedSleepMin,
   debtSeries,
   defaultSleepNeedHours,
@@ -7,6 +9,7 @@ import {
   ledger,
   maxNeedHours,
   needQuantile,
+  nightSummary,
   personalizedNeedHours,
   populationNeedFloorHours,
   rest,
@@ -221,11 +224,20 @@ describe("SleepDebtTest", () => {
     expect(l.nights.map((n) => n.deltaMin)).toEqual([-120, 60, -60]);
   });
 
-  it("skips no-data nights", () => {
-    const l = ledger([["2026-06-01", 480], ["2026-06-02", null], ["2026-06-03", 0], ["2026-06-04", 420]], 8);
+  it("skips no-data (null) nights", () => {
+    const l = ledger([["2026-06-01", 480], ["2026-06-02", null], ["2026-06-04", 420]], 8);
     expect(l.nightCount).toBe(2);
     expect(l.balanceMin).toBeCloseTo(-33, EPS);
     expect(l.nights.map((n) => n.day)).toEqual(["2026-06-01", "2026-06-04"]);
+  });
+
+  it("counts a 0 as a night without sleep (SCORING_VERSION 25; noop skipped it like null)", () => {
+    // 480 → 0; 0 → 0.55 × 480 = 264; 420 → 0.55 × (480 + 264 − 420) = 178.2.
+    const l = ledger([["2026-06-01", 480], ["2026-06-02", null], ["2026-06-03", 0], ["2026-06-04", 420]], 8);
+    expect(l.nightCount).toBe(3);
+    expect(l.nights.map((n) => n.day)).toEqual(["2026-06-01", "2026-06-03", "2026-06-04"]);
+    expect(l.balanceMin).toBeCloseTo(-178.2, EPS);
+    expect(debtSeries([["2026-06-01", 480], ["2026-06-03", 0]], 8).at(-1)).toEqual(["2026-06-03", 264]);
   });
 
   it("the window cap keeps the most recent 14", () => {
@@ -313,5 +325,53 @@ describe("sleepConsistency (1 − CV)", () => {
     expect(sleepConsistency([8, 8, 8])).toBe(1);
     expect(sleepConsistency([8, 0, 8])).toBeNull();
     expect(sleepConsistency([1, 1, 20])).toBe(0);
+  });
+});
+
+describe("a night spent awake (SCORING_VERSION 25)", () => {
+  const night = { hrMinutes: 340, medianHr: 70, steps: 400 };
+  const awake = (over: Partial<typeof night> = {}, restingHr: number | null = 58, sessionOverlapsNight = false) =>
+    awakeAllNight({ night: { ...night, ...over }, restingHr, sessionOverlapsNight });
+
+  it("needs the band worn, HR above resting and steps, each at its edge", () => {
+    expect(allNighterConfig).toMatchObject({ nightMinutes: 360, wornMin: 300, hrAboveRest: 5, minSteps: 100 });
+    expect(awake()).toBe(true);
+    expect(awake({ hrMinutes: 300 })).toBe(true);
+    expect(awake({ hrMinutes: 299 })).toBe(false);
+    expect(awake({ medianHr: 63 })).toBe(true);
+    expect(awake({ medianHr: 62.9 })).toBe(false);
+    expect(awake({ steps: 100 })).toBe(true);
+    expect(awake({ steps: 99 })).toBe(false);
+  });
+
+  it("any sleep session touching 00:00–06:00 rules it out, and so do missing inputs", () => {
+    expect(awake({}, 58, true)).toBe(false);
+    expect(awake({}, null)).toBe(false);
+    expect(awake({ medianHr: null as unknown as number })).toBe(false);
+    expect(awakeAllNight({ night: null, restingHr: 58, sessionOverlapsNight: false })).toBe(false);
+  });
+
+  it("nightSummary reads only the first 360 minutes: worn minutes, their median HR, and steps", () => {
+    const hr = [...Array(100).fill(null), ...Array(130).fill(60), ...Array(130).fill(80), ...Array(1080).fill(150)];
+    const steps = [...Array(359).fill(1), 50, ...Array(1080).fill(500)];
+    expect(nightSummary(hr, steps)).toEqual({ hrMinutes: 260, medianHr: 70, steps: 409 });
+    expect(nightSummary([], [])).toEqual({ hrMinutes: 0, medianHr: null, steps: 0 });
+  });
+
+  it("credits a night spent awake as 0 plus yesterday's naps; otherwise no main sleep is still no data", () => {
+    expect(creditedSleepMin(null, 45, { awakeAllNight: true })).toBe(45);
+    expect(creditedSleepMin(null, 0, { awakeAllNight: true })).toBe(0);
+    expect(creditedSleepMin(null, 45)).toBeNull();
+    expect(creditedSleepMin(0, 45)).toBeNull();
+    expect(creditedSleepMin(420, 30, { awakeAllNight: true })).toBe(450);
+  });
+
+  it("debt is now monotonic in sleep: an all-nighter costs more than a 1 h night (version 24: it cost nothing)", () => {
+    const after = (slept: number | null) => ledger([["2026-06-01", 450], ["2026-06-02", slept]], 7.5).magnitudeMin;
+    expect(after(60)).toBeCloseTo(214.5, EPS);
+    expect(after(0)).toBeCloseTo(247.5, EPS);
+    expect(after(null)).toBe(0);
+    const curve = Array.from({ length: 9 }, (_, h) => after(h * 60));
+    for (let h = 1; h < curve.length; h++) expect(curve[h]).toBeLessThanOrEqual(curve[h - 1]);
   });
 });

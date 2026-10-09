@@ -4,7 +4,9 @@ import type { Db } from "../db";
 import { dailyMetrics, dailyScores, dailyValues, healthRecords } from "../db/schema";
 import { SEED_DAYS } from "../sources/seed/scenario";
 import { copyDb, ctxFor, dayAt, seeded, USER } from "../testing";
-import { getHealthspan, getMonitor, vo2maxCaption } from "./health";
+import { getFitness, getHealthspan, getMonitor, vo2maxCaption } from "./health";
+import { getReport } from "./reports";
+import { rows, sql } from "../db";
 
 let db: Db;
 beforeAll(async () => {
@@ -77,7 +79,8 @@ describe("getHealthspan (SCORING_VERSION 19)", () => {
     expect(vm.result.value).not.toBeNull();
     const vo2 = vm.contributors.find((c) => c.key === "vo2max")!;
     expect(vo2.caption).toMatch(/^From \d+ runs and daily estimates$/);
-    expect(vm.contributors.find((c) => c.key === "strength")!.caption).toBeUndefined();
+    // Logged, so not "Not logged"; under 24 logs since version 29 it names the count (next describe).
+    expect(vm.contributors.find((c) => c.key === "strength")!.caption).not.toMatch(/^Not logged/);
   });
 
   it("strength never logged reads 'Not logged', not as a shortfall", async () => {
@@ -99,5 +102,40 @@ describe("getHealthspan (SCORING_VERSION 19)", () => {
     const h = row.h as { reason: string; activityDays: number };
     expect(h.reason).toBe("calibrating");
     expect(vm.result).toMatchObject({ value: null, reason: "calibrating", nightsLeft: Math.max(1, 14 - h.activityDays) });
+  });
+});
+
+describe("a light training load (SCORING_VERSION 27)", () => {
+  it("the Fitness training-load metric says 'light load', not 'calibrating', when the day has no ratio for that reason", async () => {
+    expect((await getFitness(ctxFor(db))).trainingLoad.value).not.toBeNull(); // the seed's chronic load is 44–155 a day
+    const db2 = await copyDb(db);
+    await db2.execute(sql`update daily_scores set training_load = training_load || '{"acwr": null, "lightLoad": true}'::jsonb where user_id = ${USER} and day = ${today}`);
+    expect((await getFitness(ctxFor(db2))).trainingLoad).toMatchObject({ value: null, reason: "light_load" });
+  });
+
+  it("a report that ends on a light load shows 'light load' for its training balance", async () => {
+    const [{ period }] = await rows<{ period: string }>(db, sql`select period from reports where user_id = ${USER} order by period desc limit 1`);
+    const db2 = await copyDb(db);
+    await db2.execute(sql`update reports set data = data || '{"trainingBalance": null, "lightLoad": true}'::jsonb where user_id = ${USER} and period = ${period}`);
+    expect((await getReport(period, ctxFor(db2)))!.trainingBalance).toMatchObject({ value: null, reason: "light_load" });
+  });
+});
+
+describe("Pace's activity days (SCORING_VERSION 28)", () => {
+  it("the Healthspan view model carries how many of the last 30 days had activity data", async () => {
+    const r = (await getHealthspan(today, ctxFor(db))).result.value!;
+    expect(r.paceActivityDays).toBeGreaterThanOrEqual(14);
+    expect(r.paceActivityDays).toBeLessThanOrEqual(30);
+  });
+});
+
+describe("the strength caption (SCORING_VERSION 29)", () => {
+  it("names how many strength workouts are logged while that's under 24, since the term counts in proportion", async () => {
+    const vm = await getHealthspan(today, ctxFor(db));
+    const [row] = await db.select({ h: dailyScores.healthspan }).from(dailyScores).where(and(eq(dailyScores.userId, USER), eq(dailyScores.day, vm.asOf)));
+    const logs = (row.h as { strengthLogs: number }).strengthLogs;
+    expect(logs).toBeGreaterThan(0);
+    expect(logs).toBeLessThan(24); // the seed logs about one a week
+    expect(vm.contributors.find((x) => x.key === "strength")!.caption).toBe(`Based on ${logs} logged strength workouts in 6 months: it counts more fully as you log more.`);
   });
 });

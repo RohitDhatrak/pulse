@@ -55,6 +55,10 @@ flowchart TB
      - late: a logged workout of 30+ minutes ending within 2 h of last night's sleep.
 
      It is named in the copy as "yesterday's hard or late workout", not as something you logged.
+   - **An illness tag logged the day before overrides everything** (`alreadyUnwell`, from the journal's `illness`
+     tag). Once the baseline is trusted, the level is "alreadyUnwell" whatever the score, and the other confounders
+     don't apply. The copy is "Rest up - you logged feeling unwell", adding "and your numbers agree" when the score
+     reaches mild with at least one signal. Before the baseline is trusted it stays quiet, like any other night.
 
 ## Inputs
 
@@ -63,7 +67,7 @@ flowchart TB
 | `days` | rows, oldest first | The last row is the night shown. Fields: `rhr` (bpm), `hrv` (ms), `resp` (breaths/min), `spo2` (%) and `skinTempDev` (°C). |
 | `skinTempDev` | °C | `nightly_temp_c` minus Google's `baselineTemperatureCelsius` (its 30-night median), else minus Pulse's causal skin-temperature baseline: the same deviation Recovery and the illness signal use. |
 | `ranges` | per vital | Google's ranges for last night (step 0); a vital without one keeps Pulse's. |
-| `journal` | confounders | `alcohol`, `sauna`, `travelPhaseJump` and so on, passed to the illness signal, which then reports "suppressed" instead of "raised". |
+| `journal` | context | From yesterday's journal tags and training (`scores.ts`): `alcohol`, `sauna`, `travelPhaseJump` (the travel tag) and `hardOrLateWorkout` dampen the illness signal and report "suppressed" instead of "raised"; `alreadyUnwell` (the illness tag) replaces the result (step 6). |
 
 **Which RHR.** The same resting HR as Recovery and the illness signal: Google's `daily-resting-heart-rate`, and `sessionRestingHR` only on a day Google has none.
 
@@ -242,8 +246,12 @@ absorbed it.
 - **The cost:** a real illness whose night follows a flagged session is not raised that night (it is caught on later
   nights in at least 80% of cases; a test). That's why "hard" means 2+ Day Strain points over your typical session.
 - **On the demo data no day reaches that.** Its double-session days peak at about 1.8, and no workout ends within 2.8 h
-  of bed, so ordinary training never dampens the signal. A test moves one workout late on a copy of the database and
-  checks the suppression end to end.
+  of bed, so on the demo data ordinary training never dampens the signal. A test moves one workout late on a copy of
+  the database and checks the suppression end to end.
+- **It is narrow only for that training pattern.** The late rule has no intensity condition: every logged workout of
+  30+ minutes ending within 2 h of bed counts. Someone who trains in the evening has the signal dampened after each
+  such session. The hard rule compares with your typical session, so someone who trains rarely, or whose sessions
+  vary a lot, can pass 2 points on an ordinary-for-them day. On those nights a real illness reads "suppressed".
 
 **Also tested, and held: "flag only after two nights in a row"** (fix #16). It only pays off if Google's ranges are
 narrow, and it costs mild-illness detection:

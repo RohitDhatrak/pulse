@@ -48,7 +48,7 @@ flowchart TB
    - On a night without sleep data it equals Recovery.
    - Before version 20, E₀ used the shown Recovery, so last night's sleep counted twice (see "Why version 20").
 2. **Each minute** *m* from wake until `until`:
-   - **Inside a nap:** E += k₄. Nothing else applies.
+   - **Inside a nap:** E += k₄. Nothing else applies. A nap is the whole session, so awake minutes in bed recharge too, and there is no cap on a nap's length.
    - **Otherwise:**
      - E −= k₀, the basal drain of being awake.
      - E −= k₁ × w(m), where w(m) is the Edwards zone weight, 0–5, of the minute's mean HR (`strain.zoneWeight`, by Karvonen %HRR).
@@ -71,12 +71,12 @@ flowchart TB
 |---|---|---|
 | `start` | unix seconds | Local midnight; the same minute grid as `stress()`. |
 | `wake` | unix seconds | The main sleep's end. |
-| `until` | unix seconds | Tonight's main-sleep start once known, else now (for today), else the day's end. |
+| `until` | unix seconds | Tonight's main-sleep start, if it begins before midnight. Otherwise the day's last heart-rate sample + 60 s (capped at midnight), on any day, today or past; with no heart rate, midnight. So a sleep that starts after midnight never sets `until`, and a past day where the band came off early ends at the removal, not at midnight. |
 | `recoveryWithoutSleep` | 0–100 | Today's Recovery from its body signals only (`recovery.withoutSleep`). Without a Recovery, the pipeline gives the Energy Bank a reason code. |
 | `sleepPerformance` | 0–100 | Last night's sleep performance. |
 | `load` | zone weight 0–5 per minute, or null | `minuteLoad(minuteMeanHr(hr, start, end), restingHR, maxHR)`, with the same resting HR and HRmax as Strain. |
 | `stress` | 0–3 per minute, or null | `stress(...).minutes`. |
-| `naps` | `{ start, end }[]` | Non-main sleep sessions after wake. |
+| `naps` | `{ start, end }[]` | Non-main sleep sessions after wake: the session's start and end, so every minute in bed recharges, asleep or not. |
 | `workouts` | `{ start, end, label }[]` | Optional; only for drain labels. |
 
 ## Constants
