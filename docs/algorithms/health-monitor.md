@@ -43,7 +43,18 @@ flowchart TB
      the Health Monitor only.
 4. **Status.** The value is `low` below the range, `high` above it, and `in_range` otherwise. It is `no_data` when last night has no value or the baseline is not usable (fewer than 4 accepted nights, or stale).
 5. **Counts.** `inRange` is the number of `in_range` vitals, shown as "N of 5". `flagged` is the number that are high or low.
-6. **Illness.** `illness.illnessFromDays(days, journal)` runs over the same rows. It z-scores RHR, HRV, skin temperature and respiration against the 30 prior nights, and it is quiet until 14 of those nights have RHR or HRV. SpO2 is not one of its signals.
+6. **Illness.** `illness.illnessFromDays(days, journal)` runs over the same rows.
+   - It z-scores RHR, HRV, skin temperature and respiration against 30 prior nights.
+   - *Since version 23* those 30 nights **skip the 3 just before last night** (`illnessSkipNights`), so a running
+     illness doesn't enter its own baseline.
+   - It is quiet until 14 nights in that window have RHR or HRV (17 nights of history).
+   - SpO2 is not one of its signals.
+   - **Confounders** dampen the score ×0.45 and mark it "suppressed": alcohol, sauna or travel logged the day before,
+     and *since version 23* **yesterday's hard or late workout**, detected by `load.hardOrLateWorkout`:
+     - hard: 2+ Day Strain points over your typical session of the 28 days before;
+     - late: a logged workout of 30+ minutes ending within 2 h of last night's sleep.
+
+     It is named in the copy as "yesterday's hard or late workout", not as something you logged.
 
 ## Inputs
 
@@ -197,6 +208,64 @@ drops 40–44%.
 
 **On the seed:** at most 2 ordinary nights flag SpO2, and the illness peak still does.
 
+## Why version 23: the illness signal faded during an illness, and hard workouts read as illness
+
+**How it was tested.** A nightly-vitals simulator: 30 people for each of 4 profiles (smooth; typical; a noisy wrist
+with heavy-tailed nights; a cycling woman with a luteal phase of skin +0.35 °C and resting HR +2.5). Nights carry
+realistic variation (persistence 0.5, 5–15% missing) and events:
+- alcohol;
+- hard training;
+- a very hard or late session (resting HR +6, HRV −30%);
+- an altitude trip;
+- full, mild and slow illnesses (full: resting HR +8, HRV −25%, respiration +1.5, skin +0.6 °C, SpO2 −2).
+
+Effect sizes are assumptions. Everything ran through the real `healthMonitor()` and `illnessFromDays()`.
+
+**1. The signal faded.** The window held the sick nights themselves, so by night 4 of a full illness the baseline had
+absorbed it.
+
+| Full illness | v22 | Skip 3 nights (v23) | Skip 6 |
+|---|---|---|---|
+| Sick nights reading mild or more | 33% | **54%** | 56% |
+| From night 4 on | 22% | **54%** | 61% |
+| Illnesses ever "raised" | 57% | **87%** | 87% |
+| Mild illness ever mild or more | 27% | 33% | 33% |
+| False: healthy nights / altitude trip / untagged alcohol | 0 / 13 / 17% | 0 / 22 / 17% | 0 / 21 / 13% |
+
+- The altitude rise is real strain, and a travel tag suppresses it.
+- 3 nights was chosen: 6 was no better and delays trust by 3 more nights.
+- The real v23 code reproduces the 3-night column exactly.
+
+**2. Hard or late workouts read as illness.** `hardOrLateWorkout` existed in the engine but was never set.
+- After a very hard or late session the signal read mild **42%** of the time and raised 15–18%. With the context:
+  **0%**.
+- **The cost:** a real illness whose night follows a flagged session is not raised that night (it is caught on later
+  nights in at least 80% of cases; a test). That's why "hard" means 2+ Day Strain points over your typical session.
+- **On the demo data no day reaches that.** Its double-session days peak at about 1.8, and no workout ends within 2.8 h
+  of bed, so ordinary training never dampens the signal. A test moves one workout late on a copy of the database and
+  checks the suppression end to end.
+
+**Also tested, and held: "flag only after two nights in a row"** (fix #16). It only pays off if Google's ranges are
+narrow, and it costs mild-illness detection:
+
+| | One night (now) | Two in a row |
+|---|---|---|
+| Healthy nights flagged, Google-like ranges (30-night mean ± 2 SD, modelled) | 20% | 4% |
+| Healthy nights flagged, Pulse's ranges | 4% | 1% |
+| Full illness caught | 97–100% | 80–100%, about 1 night later |
+| Mild illness caught, Google-like ranges | 87% | 50% |
+| Mild illness caught, Pulse's ranges | 47% | 13% |
+
+- **The wider of Google's and Pulse's ranges** brings false alarms to 3% with the same loss in mild-illness detection
+  (37% by night 3).
+- **Decide once a real Fitbit account shows how wide Google's ranges are.** With the model, 18–22% of healthy nights
+  show a flag.
+
+**Checked and fine:**
+- no baseline contamination in the 2 weeks after an illness (1% flagged vs 2% without);
+- a new user's first two weeks are quiet (1%);
+- the luteal phase doesn't flag with Pulse's ranges (3%; skin temperature 10% with the modelled Google range).
+
 ## Tests (`healthMonitor.test.ts`)
 
 - `rangeSigmas` is 2.5. On a long history +2.2σ is in range and +2.6σ is flagged, high and low.
@@ -215,6 +284,20 @@ drops 40–44%.
   one vital and in at least 75 % of people two.
 - The seeded illness peak flags resting HR and SpO2, and the illness signal is raised.
 - In `pipeline.test.ts`: Google's skin-temperature range stays ± 2 of its SD.
+- *Version 23:*
+  - **`illness.test.ts`:** the 3 skipped nights don't change the score; trust needs 17 nights of history; the workout
+    copy.
+  - **`load.test.ts`:** the hard (2 vs 1.9 points) and late (1 h 50 vs 2 h 10; 30 vs 25 min) boundaries.
+  - **`illness.sim.test.ts`:**
+    - ≥ 45% of sick nights from night 4 read mild (v22: 22%);
+    - ≥ 80% of illnesses raised (57%);
+    - healthy nights quiet;
+    - a very hard session ≥ 30% mild without the context and 0% with it;
+    - an illness after a flagged session is still raised later.
+  - **`pipeline.test.ts`:**
+    - no seed training day counts as hard;
+    - on a copy, a workout moved late makes an illness-like next night "suppressed" with the workout reason, while
+      after a rest day it's "raised".
 
 ## Sources
 

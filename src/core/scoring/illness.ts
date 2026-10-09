@@ -14,6 +14,12 @@ export const disclaimerTail = "On-device estimate - not a diagnosis.";
 /** V5HealthSignals: trailing nights for the rolling z baseline, and the minimum before a z is trusted. */
 export const illnessBaselineWindow = 30;
 export const illnessMinBaselineNights = 14;
+/**
+ * Nights just before last night left out of the window (SCORING_VERSION 23). Without the gap, a running illness's own
+ * nights entered its baseline and the signal faded: from night 4 of a full illness only 22 % of nights read mild
+ * (54 % with the gap), and 43 % of illnesses never read raised (13 %). See docs/algorithms/health-monitor.md.
+ */
+export const illnessSkipNights = 3;
 
 export type IllnessSignalKey = "restingHR" | "skinTemp" | "hrv" | "respiration";
 
@@ -101,9 +107,13 @@ export function evaluate(
   const signalsPhrase = firedSignals.length === 0 ? "Some signals are up" : firedSignals.join(", ");
 
   if (suppressedBy.length > 0) {
-    const copy =
-      `Some signals are up (${signalsPhrase}), but you logged ${joinReasons(suppressedBy)} - likely that, ` +
-      `not illness. ${disclaimerTail}`;
+    // A hard or late workout is detected from your data, not logged, so it is named on its own (version 23).
+    const logged = suppressedBy.filter((s) => s !== "a hard or late workout");
+    const parts = [
+      ...(logged.length ? [`the ${joinReasons(logged)} you logged`] : []),
+      ...(context.hardOrLateWorkout ? ["yesterday's hard or late workout"] : []),
+    ];
+    const copy = `Some signals are up (${signalsPhrase}), likely from ${parts.join(" and ")}, not illness. ${disclaimerTail}`;
     return result(score * confounderDampen, "suppressed", copy, suppressedBy);
   }
 
@@ -148,11 +158,12 @@ function zAgainst(value: number | null | undefined, window: (number | null | und
 const hasAnyVital = (d: IllnessDay) => d.rhr != null || d.hrv != null || d.skinTempDev != null || d.resp != null;
 
 /**
- * The illness read for the newest of `days` (oldest first), each signal z-scored against the 30 rows before
- * it. Trusted once the RHR or HRV signal alone has 14 nights in that window.
+ * The illness read for the newest of `days` (oldest first), each signal z-scored against the 30 rows before it,
+ * leaving out the `illnessSkipNights` rows just before it. Trusted once the RHR or HRV signal alone has 14 nights in
+ * that window.
  */
 export function illnessFromDays(days: IllnessDay[], journal: Omit<IllnessContext, "baselineTrusted"> = {}): IllnessResult & { baselineTrusted: boolean } {
-  const prior = days.slice(0, -1).slice(-illnessBaselineWindow);
+  const prior = days.slice(0, Math.max(0, days.length - 1 - illnessSkipNights)).slice(-illnessBaselineWindow);
   const withVitals = prior.filter(hasAnyVital);
   const baselineTrusted =
     withVitals.filter((d) => d.rhr != null).length >= illnessMinBaselineNights ||

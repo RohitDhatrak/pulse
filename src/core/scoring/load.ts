@@ -26,3 +26,33 @@ export function strainPointsAbove(todayLoad: number | null, session: number | nu
   if (todayLoad == null || session == null || !(session > 0)) return 0;
   return Math.max(0, loadToStrain(todayLoad) - loadToStrain(session));
 }
+
+export const hardOrLateConfig = {
+  /** Day Strain points beyond your typical session that make a day hard (version 23; *tunable*). */
+  hardWorkoutStrainPoints: 2,
+  /** A workout ending this close to bedtime is late. */
+  lateWorkoutHours: 2,
+  /** …if it lasted at least this many minutes. */
+  lateWorkoutMinMin: 30,
+};
+
+/**
+ * Whether yesterday's training explains a strained night (the illness signal's `hardOrLateWorkout`, version 23).
+ * Hard: at least `hardWorkoutStrainPoints` Day Strain points above your typical session (`priorLoads`: the days
+ * before). Late: a logged workout of `lateWorkoutMinMin`+ minutes ending within `lateWorkoutHours` of `bedtime`.
+ * Narrow on purpose: it dampens the illness signal, so an ordinary training day must not count.
+ */
+export function hardOrLateWorkout(a: {
+  load: number | null;
+  priorLoads: number[];
+  workouts: { start: number; end: number }[];
+  /** That night's main-sleep start, unix seconds, or null. */
+  bedtime: number | null;
+}): boolean {
+  const c = hardOrLateConfig;
+  if (strainPointsAbove(a.load, typicalSession(a.priorLoads)) >= c.hardWorkoutStrainPoints) return true;
+  if (a.bedtime == null) return false;
+  return a.workouts.some(
+    (w) => w.end - w.start >= c.lateWorkoutMinMin * 60 && w.end <= a.bedtime! && a.bedtime! - w.end <= c.lateWorkoutHours * 3600,
+  );
+}

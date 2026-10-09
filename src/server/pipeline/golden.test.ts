@@ -488,6 +488,30 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.still_hr": "280d884a01803ce9",
     "intraday_series.stress": "ceafceaf08ce8343",
     "reports": "d4b20308c61bdbea",
+  },  // 23: the illness signal's window skips the 3 nights before last night, and yesterday's hard or late workout is a
+  // confounder. Moved: health_monitor, the version stamp and strain's key.
+  23: {
+    "daily_scores.scoring_version": "e5852ab4c03c2755",
+    "daily_scores.strain": "dfd3b153b1baa669",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "18c29349167fe9f7",
+    "daily_scores.sleep": "82e3b4ff7229d2b8",
+    "daily_scores.training_load": "e8004f82b9305a58",
+    "daily_scores.strain_target": "a70cc076e96b17e2",
+    "daily_scores.sleep_planner": "1e4416c535fcefe8",
+    "daily_scores.energy_bank": "0ecbe39c9d378191",
+    "daily_scores.stress": "6c70d849f7ab1d7e",
+    "daily_scores.health_monitor": "1f1fef4812d4ca09",
+    "daily_scores.healthspan": "e4f64a3e9259b139",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "fba2b406ac2befd1",
+    "intraday_series.energy_bank": "5f1ddc4782a31061",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "280d884a01803ce9",
+    "intraday_series.stress": "ceafceaf08ce8343",
+    "reports": "d4b20308c61bdbea",
   },
 };
 

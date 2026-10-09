@@ -55,8 +55,11 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * 2σ above the daytime baseline is not folded into it. The Energy Bank reads the corrected stress.
  * 22: the Health Monitor's SpO2 is low at 2 points below your own normal (or its 2.5σ range, if narrower) or below a 92 %
  * safety floor, not below a fixed 95 % (which flagged most ordinary nights for people whose normal is 94–96 %).
+ * 23: the illness signal's 30-night window skips the 3 nights before last night (a running illness entered its own
+ * baseline and faded), and yesterday's hard (2+ Day Strain points over your typical session) or late (ending within
+ * 2 h of sleep) workout is passed as a confounder.
  */
-export const SCORING_VERSION = 22;
+export const SCORING_VERSION = 23;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */

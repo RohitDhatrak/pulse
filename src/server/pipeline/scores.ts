@@ -21,7 +21,7 @@ import type { ReportDay } from "@/core/algorithms/reports";
 import { sleepPlan, type SleepPlan } from "@/core/algorithms/sleepPlanner";
 import { sleepRegularityIndex, sriConsistency, sriDisplay } from "@/core/algorithms/sleepRegularity";
 import { strainTarget } from "@/core/algorithms/strainTarget";
-import { typicalSession } from "@/core/scoring/load";
+import { hardOrLateWorkout, typicalSession } from "@/core/scoring/load";
 import { stress } from "@/core/algorithms/stress";
 import { type Data, r1, round, type Segment, type Session, touching } from "./data";
 import type {
@@ -478,7 +478,24 @@ export function scoreEnergyBank(
 
 // ── Health Monitor (nightly rows, oldest first) ──────────────────────────────
 
-export function scoreHealthMonitor(f: Fold, d: Day, inputs: Inputs, rec: RecoveryRow): HealthMonitorRow {
+/**
+ * Whether yesterday's training explains last night (version 23): far beyond your typical session, or a workout ending
+ * shortly before last night's sleep. `readinessRows` already holds today (training load is scored first).
+ */
+function yesterdayHardOrLate(data: Data, f: Fold, d: Day): boolean {
+  const yesterday = addDays(d.day, -1);
+  const rows = f.readinessRows;
+  const i = rows.findLastIndex((r) => r.day === yesterday);
+  if (i < 0) return false;
+  return hardOrLateWorkout({
+    load: rows[i].load ?? null,
+    priorLoads: rows.slice(Math.max(0, i - 28), i).flatMap((r) => (r.load != null ? [r.load] : [])),
+    workouts: (data.exercisesByDay.get(yesterday) ?? []).map((e) => ({ start: e.startTs, end: e.endTs })),
+    bedtime: d.mainSession?.startTs ?? null,
+  });
+}
+
+export function scoreHealthMonitor(data: Data, f: Fold, d: Day, inputs: Inputs, rec: RecoveryRow): HealthMonitorRow {
   const { hrv, rhr, resp, skinTempDev } = rec.inputs;
   const spo2 = d.dm?.spo2Pct ?? null;
   f.monitorRows.push({ day: d.day, rhr, hrv, resp, spo2, skinTempDev });
@@ -494,6 +511,7 @@ export function scoreHealthMonitor(f: Fold, d: Day, inputs: Inputs, rec: Recover
           sauna: inputs.tagOn(yesterday, "sauna"),
           travelPhaseJump: inputs.tagOn(yesterday, "travel"),
           alreadyUnwell: inputs.tagOn(yesterday, "illness"),
+          hardOrLateWorkout: yesterdayHardOrLate(data, f, d),
         }, googleRanges(d)),
       };
 }

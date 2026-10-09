@@ -168,7 +168,7 @@ This is a rule-based level, not a 0–100 score.
   - Fewer than 2 firing signals, or a score below 25: quiet.
   - Score below 50: mild.
   - Otherwise: raised.
-- **Confounders**: a journal entry for alcohol, stress, sauna, a hard or late workout, or travel multiplies the score by 0.45 and marks the result "suppressed".
+- **Confounders**: a journal entry for alcohol, stress, sauna, a hard or late workout, or travel multiplies the score by 0.45 and marks the result "suppressed". *Since scoring version 23 the hard or late workout is detected (2+ Day Strain points over your typical session, or a workout ending within 2 h of sleep), not logged; see `health-monitor.md`.*
 - **Trust gate**: the engine stays quiet until the window holds 14 nights of RHR or HRV.
 - Everything is evaluated on a single night.
 

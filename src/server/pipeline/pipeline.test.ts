@@ -1,5 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { type Db, rows, sql } from "../db";
+import { dailyMetrics } from "../db/schema";
+import { and, eq } from "drizzle-orm";
 import {
   type HealthMonitorRow,
   type HealthspanRow,
@@ -16,6 +18,7 @@ import {
 import { healthspanWornAwakeMin } from "./scores";
 import { energyStart } from "@/core/algorithms/energyBank";
 import { healthspanConfig } from "@/core/algorithms/healthspan";
+import { hardOrLateWorkout, typicalSession } from "@/core/scoring/load";
 import { logisticK, logisticScore, logisticZ0, sleepPerfScale, wHRV, wResp, wRHR, wSkinTemp, wSleep } from "@/core/scoring/recovery";
 import { journalImpactConfig } from "@/core/algorithms/journalImpact";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
@@ -605,5 +608,49 @@ describe("SpO2 on the seed (SCORING_VERSION 22)", () => {
     const outside = allDays.filter((d, i) => (i < 118 || i > 125) && statusOf(d) === "low");
     expect(outside.length).toBeLessThanOrEqual(2);
     expect([119, 120, 121, 122].some((i) => statusOf(dayAt(i)) === "low")).toBe(true);
+  });
+});
+
+describe("the illness signal's workout context on the seed (SCORING_VERSION 23)", () => {
+  type S1 = { trimp: number | null };
+  const loads = () => allDays.map((d) => js<S1>("strain", d)?.trimp ?? null);
+
+  it("ordinary training doesn't count as hard: none of the seed's days reach 2 Day Strain points over its typical session", () => {
+    // The seed's hardest days (its training block's double sessions) sit at most about 1.8 points above.
+    const l = loads();
+    let training = 0;
+    for (let i = 28; i < l.length; i++) {
+      const prior = l.slice(i - 28, i).filter((v): v is number => v != null);
+      const session = typicalSession(prior);
+      if (l[i] == null || session == null) continue;
+      if (l[i]! >= 0.3 * session) training++;
+      expect(hardOrLateWorkout({ load: l[i], priorLoads: prior, workouts: [], bedtime: null })).toBe(false);
+    }
+    expect(training).toBeGreaterThan(40);
+  });
+
+  it("an illness-like night after a late workout reads 'suppressed' with the workout reason; after a rest day, 'raised'", async () => {
+    const copy = await copyDb(db);
+    // A seeded workout, moved to end an hour before that night's main sleep (a late session).
+    const [ex] = await rows<{ id: string; day: string }>(copy, sql`select id, to_char(day, 'YYYY-MM-DD') as day from exercises where user_id = ${USER} and day between ${dayAt(60)} and ${dayAt(100)} order by start_ts limit 1`);
+    const exDay = allDays.indexOf(ex.day);
+    const [sleep] = await rows<{ s: number }>(copy, sql`select start_ts s from sleep_sessions where user_id = ${USER} and is_main and day = ${dayAt(exDay + 1)}`);
+    await copy.execute(sql`update exercises set start_ts = ${Number(sleep.s) - 3600 - 45 * 60}, end_ts = ${Number(sleep.s) - 3600} where user_id = ${USER} and id = ${ex.id}`);
+    // A rest day well away from it for the control.
+    const l = loads();
+    let rest = -1;
+    for (let i = 40; i < 110; i++) if (Math.abs(i - exDay) > 3 && l[i] != null && l[i]! < 20) { rest = i; break; }
+    const strain = async (i: number) => {
+      const m = metrics.get(dayAt(i + 1))!;
+      await copy.update(dailyMetrics).set({ rhrBpm: Number(m.rhr_bpm) + 12, hrvMs: Number(m.hrv_ms) * 0.55, respBpm: Number(m.resp_bpm) + 2.5 }).where(and(eq(dailyMetrics.userId, USER), eq(dailyMetrics.day, dayAt(i + 1))));
+      await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(i)}), (${USER}, ${dayAt(i + 1)}) on conflict do nothing`);
+    };
+    await strain(exDay);
+    await strain(rest);
+    await recompute(copy, OPTS);
+    type Hm = { illness: { level: string; suppressedBy: string[] } };
+    const ill = async (i: number) => (await rows<{ h: Hm }>(copy, sql`select health_monitor h from daily_scores where user_id = ${USER} and day = ${dayAt(i)}`))[0].h.illness;
+    expect(await ill(exDay + 1)).toMatchObject({ level: "suppressed", suppressedBy: ["a hard or late workout"] });
+    expect((await ill(rest + 1)).level).toBe("raised");
   });
 });

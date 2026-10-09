@@ -4,6 +4,7 @@ import {
   evaluate,
   type IllnessDay,
   illnessFromDays,
+  illnessSkipNights,
   type IllnessInputs,
   joinReasons,
   kZToScore,
@@ -126,9 +127,11 @@ describe("V5HealthSignalsTest (illness half)", () => {
     expect(r.copy).toBe("Still learning your baseline - keeping an eye out.");
   });
 
-  it("fourteen nights for one illness signal are trusted", () => {
-    const history = range(14).map((o) => day(o, { rhr: 54 + (o % 3) }));
-    expect(illnessFromDays([...history, day(14, { rhr: 64 })]).baselineTrusted).toBe(true);
+  it("fourteen nights for one illness signal are trusted (version 23: in the window that skips the 3 latest)", () => {
+    // noop trusts 14 nights before last night; with the 3-night gap that takes 17 nights of history.
+    const history = range(17).map((o) => day(o, { rhr: 54 + (o % 3) }));
+    expect(illnessFromDays([...history, day(17, { rhr: 64 })]).baselineTrusted).toBe(true);
+    expect(illnessFromDays([...history.slice(1), day(17, { rhr: 64 })]).baselineTrusted).toBe(false);
   });
 
   it("temperature alone never trusts the illness baseline", () => {
@@ -143,5 +146,31 @@ describe("V5HealthSignalsTest (illness half)", () => {
     expect(r.baselineTrusted).toBe(true);
     expect(r.level).toBe("raised");
     expect(r.firedSignals).toEqual(["RHR up", "HRV down", "respiration up"]);
+  });
+});
+
+describe("SCORING_VERSION 23: the window skips the nights just before, and a hard or late workout explains a night", () => {
+  const day = (offset: number, v: Omit<IllnessDay, "day"> = {}): IllnessDay => ({ day: new Date(Date.UTC(2026, 0, 1 + offset)).toISOString().slice(0, 10), ...v });
+  const steady = (n: number) => Array.from({ length: n }, (_, o) => day(o, { rhr: 54 + (o % 3), hrv: 60 + (o % 3) * 2, resp: 14 + (o % 2) * 0.4 }));
+
+  it("the 3 nights before last night are not in its baseline", () => {
+    const base = steady(30);
+    const sick = { rhr: 64, hrv: 45, resp: 17 };
+    const clean = illnessFromDays([...base, day(30, sick)]);
+    // Three already-sick nights just before: version 22 folded them in and the same night read quieter.
+    const withSick = illnessFromDays([...base.slice(3), day(27, sick), day(28, sick), day(29, sick), day(30, sick)]);
+    expect(illnessSkipNights).toBe(3);
+    expect(withSick.score).toBeCloseTo(illnessFromDays([...base.slice(3), ...base.slice(27, 30), day(30, sick)]).score, 9);
+    expect(withSick.level).toBe(clean.level);
+    expect(withSick.level).toBe("raised");
+  });
+
+  it("a hard or late workout dampens the score and says so, without 'you logged'", () => {
+    const r = evaluate(classic, { hardOrLateWorkout: true }, labels);
+    expect(r.level).toBe("suppressed");
+    expect(r.copy).toContain("yesterday's hard or late workout");
+    expect(r.copy).not.toContain("you logged");
+    const both = evaluate(classic, { hardOrLateWorkout: true, alcohol: true }, labels);
+    expect(both.copy).toContain("the alcohol you logged and yesterday's hard or late workout");
   });
 });
