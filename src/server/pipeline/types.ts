@@ -74,8 +74,18 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * shrunk toward the 6-month term by 3n / (n + 60), full at 30 days: one worn day used to swing Pace from 0.7 to 2.7.
  * 29: Pulse Age's strength term is weighted n / (n + 8) for n strength workouts logged in 6 months: one logged session
  * added about 1.5 years (every later worn day counted as 0), then fell away overnight 180 days later.
+ * 30: Recovery's baselines and sleep centre hold (don't fold) the second and later nights of a run of illness-ward
+ * nights (HRV down and resting HR up, (−z_HRV + z_RHR) / 2 ≥ 1), up to 21 in a row: folding every night absorbed an
+ * illness, so the week after read 82 % green after a 21-night one (32 % before).
+ * 31: a main sleep without stages scores its restorative part at your usual (the median of the last 28 staged nights,
+ * from 5), or leaves it out and renormalises with fewer: deep and REM counted as 0 cost 9–16 points.
+ * 32: baselines (with hard-outlier rejection) take a robust first week: the centre and spread are a trimmed estimate
+ * over the first 8 accepted values, so one early glitch can't inflate the spread for weeks (sd(z) 0.28 → 0.91 in week 2
+ * after a 180 ms night 3). The illness hold acts only once a baseline is past its first week.
+ * 33: 7 hard-rejected values in a row on one side restart a baseline from them: after a real step bigger than the gate
+ * (a new device, a beta-blocker) every night was rejected and the baseline stayed at the old normal for good.
  */
-export const SCORING_VERSION = 29;
+export const SCORING_VERSION = 33;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
@@ -130,6 +140,11 @@ export type Stage1Activity = {
 export type RecoveryRow = {
   value: number | null;
   /**
+   * Tonight's values were not folded into the baselines or the sleep centre: the second or later night of a run of
+   * illness-ward nights (SCORING_VERSION 30, `nextHold`), so a sickness isn't absorbed into "normal".
+   */
+  heldBaseline: boolean;
+  /**
    * The same Recovery from its body signals only (its sleep term left out), for the Energy Bank's start, which adds
    * sleep performance itself (SCORING_VERSION 20). Null when `value` is; equal to it on a night without sleep data.
    */
@@ -179,6 +194,11 @@ export type SleepRow = {
    * night as 0 plus naps, and `reason` is "no_sleep".
    */
   awakeAllNight: boolean;
+  /**
+   * Where the restorative part of `performance` came from (version 31): the night's stages, your usual (the median of
+   * recent staged nights, for a night without stages), or left out (too few staged nights to know). Null without one.
+   */
+  restorative: "measured" | "usual" | "omitted" | null;
   /** Main sleep plus yesterday's naps, the debt ledger's night; 0 + naps after a night spent awake. */
   creditedMin: number | null;
   debtMin: number;

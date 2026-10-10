@@ -15,8 +15,11 @@ import {
   rest,
   restFromTotals,
   restorativeTargetShare,
+  restorativeScore,
   round1,
   sleepConsistency,
+  minUsualRestorativeNights,
+  usualRestorativeNights,
   wConsistency,
   wDuration,
   wEfficiency,
@@ -373,5 +376,39 @@ describe("a night spent awake (SCORING_VERSION 25)", () => {
     expect(after(null)).toBe(0);
     const curve = Array.from({ length: 9 }, (_, h) => after(h * 60));
     for (let h = 1; h < curve.length; h++) expect(curve[h]).toBeLessThanOrEqual(curve[h - 1]);
+  });
+});
+
+describe("a night without stages (SCORING_VERSION 31)", () => {
+  const H = 3600;
+  // The audit's night: 7 h asleep, 90 % efficiency, need 7.5 h, consistency 0.8; staged with 1 h deep and 1.6 h REM.
+  const dur = (7 / 7.5) * 100;
+  const staged = rest(7 * H, 0.9, 1.0 * H, 1.6 * H, 7.5, 0.8)!;
+
+  it("restorativeScore is the same component rest() always used", () => {
+    expect(restorativeScore(1.0 * H, 1.6 * H, 7 * H)).toBeCloseTo((2.6 / 7 / 0.5) * 100 * 1, 10);
+    expect(staged).toBeCloseTo(Math.round((0.5 * dur + 0.2 * 90 + 0.2 * restorativeScore(H, 1.6 * H, 7 * H) + 0.1 * 80) * 100) / 100, 10);
+    expect(staged).toBeCloseTo(87.5, 0);
+  });
+
+  it("with your usual restorative component it scores as that, by hand; with your own usual it matches the staged night", () => {
+    expect(rest(7 * H, 0.9, null, null, 7.5, 0.8, { usualRestorative: 70 })).toBeCloseTo(Math.round((0.5 * dur + 0.2 * 90 + 0.2 * 70 + 0.1 * 80) * 100) / 100, 10);
+    expect(rest(7 * H, 0.9, null, null, 7.5, 0.8, { usualRestorative: restorativeScore(H, 1.6 * H, 7 * H) })).toBeCloseTo(staged, 6);
+    // Version 30 scored deep and REM as 0: about 15 points lower.
+    expect(staged - rest(7 * H, 0.9, 0, 0, 7.5, 0.8)!).toBeGreaterThan(14);
+  });
+
+  it("with no usual it leaves the restorative part out and renormalises the other three", () => {
+    expect(rest(7 * H, 0.9, null, null, 7.5, 0.8)).toBeCloseTo(Math.round(((0.5 * dur + 0.2 * 90 + 0.1 * 80) / 0.8) * 100) / 100, 10);
+    expect(rest(7 * H, 0.9, H, null, 7.5, 0.8)).toBe(rest(7 * H, 0.9, null, null, 7.5, 0.8)); // either one missing
+  });
+
+  it("a known 0 is measured, not missing: deep 0 and REM 0 still score 0 restorative", () => {
+    expect(rest(7 * H, 0.9, 0, 0, 7.5, 0.8, { usualRestorative: 70 })).toBeCloseTo(Math.round((0.5 * dur + 0.2 * 90 + 0.1 * 80) * 100) / 100, 10);
+  });
+
+  it("the usual is the median of the last 28 staged nights, from 5 of them", () => {
+    expect(usualRestorativeNights).toBe(28);
+    expect(minUsualRestorativeNights).toBe(5);
   });
 });

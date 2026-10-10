@@ -3,13 +3,13 @@
 // stage2.ts calls them in a fixed order, which the pushes depend on.
 import type { ReasonCode } from "@/lib/reasons";
 import { addDays, fractionalYears, localMidnight, localMinutes, wholeYears } from "../time";
-import { deviation, isTrusted, isUsable, sigma } from "@/core/scoring/baselines";
+import { deviation, illnessWardZ, isTrusted, isUsable, nextHold, noHold, sigma } from "@/core/scoring/baselines";
 import { chargeDrivers, type ChargeDriver } from "@/core/scoring/drivers";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
 import { evaluateWithTrainingLoad, type ReadinessDay } from "@/core/scoring/readiness";
 import { gatedRecovery, minBaselineNights, personalSleepCentre } from "@/core/scoring/recovery";
-import { allNighterConfig, awakeAllNight, creditedSleepMin, hypnogramMetrics, ledger, minNeedNights, personalizedNeedHours, rest } from "@/core/scoring/sleep";
-import { toStrainScale } from "@/core/scoring/strain";
+import { allNighterConfig, awakeAllNight, creditedSleepMin, hypnogramMetrics, ledger, minNeedNights, minUsualRestorativeNights, personalizedNeedHours, rest, restorativeScore, usualRestorativeNights } from "@/core/scoring/sleep";
+import { percentile, toStrainScale } from "@/core/scoring/strain";
 import { foldableStillMedian, foldDaytimeBaseline } from "@/core/scoring/stressBase";
 import type { BaselineState } from "@/core/scoring/types";
 import { energyBank, energyBankConfig } from "@/core/algorithms/energyBank";
@@ -71,6 +71,10 @@ export const newFold = () => ({
   /** Each prior night's sleepPerf (0–1; Sleep Performance, else efficiency), oldest first, for the personal sleep
    * centre. Pushed whether or not Recovery could score that night. */
   sleepPerfs: [] as number[],
+  /** Each staged main sleep's restorative component (0–100), oldest first, for unstaged nights (version 31). */
+  restoratives: [] as number[],
+  /** The illness hold's run of illness-ward nights and how many of it were held (version 30). */
+  hold: noHold,
   /** Each prior day's median still-minute HR (stress().stillMedianHr), oldest first. */
   stillMedians: [] as (number | null)[],
   reportRows: [] as ReportDay[],
@@ -156,10 +160,17 @@ export function scoreSleep(data: Data, inputs: Inputs, f: Fold, d: Day, tz: stri
   const needHours = personalizedNeedHours(recentNights, d.age.whole);
   const sri = sleepRegularity(data, inputs.cached, day, tz);
   const consistency = sriConsistency(sri);
+  // A night without stages takes your usual restorative component, the median of recent staged nights (version 31);
+  // scoring deep and REM as 0 cost 9–16 points.
+  const staged = main != null && main.deepMin != null && main.remMin != null;
+  const recentRestorative = f.restoratives.slice(-usualRestorativeNights).sort((a, b) => a - b);
+  const usualRestorative = recentRestorative.length >= minUsualRestorativeNights ? percentile(recentRestorative, 50) : null;
   const performance =
     main && main.asleepMin > 0
-      ? rest(main.asleepMin * 60, main.efficiency, (main.deepMin ?? 0) * 60, (main.remMin ?? 0) * 60, needHours, consistency)
+      ? rest(main.asleepMin * 60, main.efficiency, staged ? main.deepMin! * 60 : null, staged ? main.remMin! * 60 : null, needHours, consistency, { usualRestorative })
       : null;
+  if (main && staged && main.asleepMin > 0) f.restoratives.push(restorativeScore(main.deepMin! * 60, main.remMin! * 60, main.asleepMin * 60));
+  const restorative: SleepRow["restorative"] = performance == null ? null : staged ? "measured" : usualRestorative != null ? "usual" : "omitted";
   const yesterdayNaps = (data.sessionsByDay.get(addDays(day, -1)) ?? []).filter((s) => !s.isMain);
   const awake = !mainSession && wasAwakeAllNight(data, f, d);
   const creditedMin = creditedSleepMin(main?.asleepMin ?? null, yesterdayNaps.reduce((a, s) => a + (s.asleepMin ?? 0), 0), { awakeAllNight: awake });
@@ -181,6 +192,7 @@ export function scoreSleep(data: Data, inputs: Inputs, f: Fold, d: Day, tz: stri
     performance,
     needHours,
     needNights: Math.min(recentNights.length, 28),
+    restorative,
     awakeAllNight: awake,
     creditedMin,
     debtMin,
@@ -235,7 +247,11 @@ export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
   const sleepPerf = sleep.performance != null ? sleep.performance / 100 : main ? main.efficiency : null;
   // Your usual night from the prior nights only (0.85 until 7 exist); today's joins after scoring.
   const sleepCentre = personalSleepCentre(f.sleepPerfs);
-  if (sleepPerf != null) f.sleepPerfs.push(sleepPerf);
+  // Version 30: the second and later nights of an illness-ward run are held out of the baselines (folded in stage 2)
+  // and the sleep centre, so a sickness isn't absorbed into "normal".
+  const { hold: heldBaseline, ...hold } = nextHold(f.hold, illnessWardZ(hrv, rhr, hrvB, rhrB));
+  f.hold = hold;
+  if (sleepPerf != null && !heldBaseline) f.sleepPerfs.push(sleepPerf);
   const stale = (
     [
       ["hrv", hrvB],
@@ -292,6 +308,7 @@ export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
   if (value != null) f.recoveries.push(value);
   return {
     value,
+    heldBaseline,
     withoutSleep,
     reason,
     ...(nightsLeft !== undefined && { nightsLeft }),

@@ -6,14 +6,20 @@ import {
   foldHistory,
   freshestCarried,
   hrvCfg,
+  type HoldState,
+  illnessHold,
+  illnessWardZ,
   isoEpochDay,
   isTrusted,
   isUsable,
   lambda,
   metricCfg,
+  nextHold,
   nightsSinceNewestValidNight,
+  noHold,
   recentHrvCoverage,
   respCfg,
+  restartAfterRejections,
   restingHRCfg,
   rollingMeanSD,
   sigma,
@@ -37,24 +43,23 @@ describe("plan scenarios", () => {
     expect(isTrusted(foldHistory(repeat(50, 14), hrvCfg))).toBe(true);
   });
 
-  it("young regime: half-life 3, spread × 2.5 clamp, no hard reject", () => {
+  it("young regime (version 32): an early outlier is trimmed, not folded; the rest is the kept values' mean", () => {
     const young = foldHistory(repeat(50, 4), hrvCfg); // baseline 50, spread at the 5 ms floor
     expect(young).toMatchObject({ baseline: 50, spread: 5, nValid: 4 });
-    // 80 is 6× spread away: past the hard gate, but young, so it folds at the fast centre half-life.
+    // 80: the median is 50 and the MAD is floored at 2.5, so anything beyond 4 × 1.4826 × 2.5 = 14.8 is trimmed.
     const s = update(young, 80, hrvCfg);
+    expect(s).toMatchObject({ nValid: 5, baseline: 50, spread: 5, early: [50, 50, 50, 50, 80] });
+    // Version 31's young regime (the re-fold mode keeps it) folded it at the fast centre half-life.
     const lb = 1 - 0.5 ** (1 / earlyHalfLifeB);
-    const ls = 1 / 4; // the spread is still a running mean: 1/n beats the 21-night λ
-    expect(s.nValid).toBe(5);
-    expect(s.baseline).toBeCloseTo(50 + 30 * lb, 12);
-    expect(s.spread).toBeCloseTo(Math.max(5, ls * Math.abs(80 - s.baseline) + (1 - ls) * 5), 12);
-    // Clamp widens to ±3 × 2.5 × spread = ±37.5 while young.
-    expect(update(young, 100, hrvCfg).baseline).toBeCloseTo(50 + 37.5 * lb, 12);
+    expect(update(young, 80, hrvCfg, false).baseline).toBeCloseTo(50 + 30 * lb, 12);
+    expect(update(young, 100, hrvCfg, false).baseline).toBeCloseTo(50 + 37.5 * lb, 12); // ±3 × 2.5 × spread clamp
   });
 
   it("after 8 nights a value 6× spread away is rejected and leaves the baseline unchanged", () => {
     const settled = foldHistory(repeat(50, 8), hrvCfg);
     const s = update(settled, 80, hrvCfg);
-    expect(s).toEqual({ ...settled, nightsSinceUpdate: 0 });
+    // Since version 33 it also starts a run of rejections (7 in a row restart the baseline).
+    expect(s).toEqual({ ...settled, nightsSinceUpdate: 0, rejected: { side: 1, values: [80] } });
     // The window-fold mode (Readiness) folds it instead, clamped at ±3 × spread.
     const lb = lambda(hrvCfg.halfLifeB);
     expect(update(settled, 80, hrvCfg, false).baseline).toBeCloseTo(lb * 65 + (1 - lb) * 50, 12);
@@ -116,7 +121,6 @@ describe("early spread", () => {
     }
     return { sigma: sig / runs, sdZ: Math.sqrt(zRaw / runs), sdZShrunk: Math.sqrt(zShrunk / runs) };
   };
-  const lb3 = lambda(earlyHalfLifeB);
   const ls21 = lambda(hrvCfg.halfLifeS);
 
   it("learns a true HRV wobble of 10 ms by night 7, not the 5 ms floor", () => {
@@ -140,7 +144,9 @@ describe("early spread", () => {
       for (const n of [7, 14, 30]) {
         const { sdZ, sdZShrunk } = simulate(c, n);
         expect(sdZShrunk, `n=${n}`).toBeGreaterThan(0.85);
-        expect(sdZShrunk, `n=${n}`).toBeLessThan(1.1);
+        // Version 32's robust first week estimates σ from the 7 values themselves, a little noisier at night 7 for a
+        // large wobble (1.11 for HRV 15 ms); within 1.1 from night 14.
+        expect(sdZShrunk, `n=${n}`).toBeLessThan(n === 7 ? 1.15 : 1.1);
         expect(sdZShrunk, `n=${n}`).toBeLessThan(sdZ);
       }
     });
@@ -151,22 +157,18 @@ describe("early spread", () => {
     expect(simulate({ cfg: restingHRCfg, mu: 55, sd: 1 }, 30).sigma).toBeCloseTo(1.253 * restingHRCfg.floorSpread, 1);
   });
 
-  it("the floor seed drops out on night 2: the spread is that night's deviation alone", () => {
-    // Night 2's centre moves λ(3) of the way to 70; the floor seed gets weight 1 − 1/1 = 0.
-    expect(foldHistory([50, 70], hrvCfg).spread).toBeCloseTo(20 * (1 - lb3), 12);
+  it("the floor seed drops out on night 2: the spread comes from the two values alone", () => {
+    // Version 32: centre 60, mean deviation 10, × √(2 / 1) for a sample this small.
+    const s = foldHistory([50, 70], hrvCfg);
+    expect(s.baseline).toBe(60);
+    expect(s.spread).toBeCloseTo(10 * Math.SQRT2, 12);
   });
 
-  it("the spread is the plain mean of the absolute deviations over the first nights", () => {
-    // Hand fold of 50, 70, 40, 60 (young: centre half-life 3, ±7.5 × spread Winsor band, so nothing clamps).
-    const b2 = 50 + lb3 * (70 - 50);
-    const d2 = Math.abs(70 - b2);
-    const b3 = b2 + lb3 * (40 - b2);
-    const d3 = Math.abs(40 - b3);
-    const b4 = b3 + lb3 * (60 - b3);
-    const d4 = Math.abs(60 - b4);
+  it("over the first nights the centre is the kept values' mean and the spread their mean deviation, small-sample corrected", () => {
+    // 50, 70, 40, 60: median 55, MAD 10, nothing trimmed. Centre 55; deviations 5, 15, 15, 5 → 10 × √(4 / 3).
     const s = foldHistory([50, 70, 40, 60], hrvCfg);
-    expect(s.baseline).toBeCloseTo(b4, 12);
-    expect(s.spread).toBeCloseTo((d2 + d3 + d4) / 3, 12);
+    expect(s.baseline).toBe(55);
+    expect(s.spread).toBeCloseTo(10 * Math.sqrt(4 / 3), 12);
   });
 
   it("the floor still binds on each night of the running mean", () => {
@@ -413,5 +415,123 @@ describe("VitalCarryStalenessTest", () => {
     expect(freshestCarried([["2026-07-30", 15.6], ["2026-08-12", 14.1]], "2026-08-13", 7)?.[1]).toBe(14.1);
     expect(freshestCarried([["2026-08-13", 14.1]], "2026-08-13", 7)?.[1]).toBe(14.1);
     expect(freshestCarried([], "2026-08-13")).toBeNull();
+  });
+});
+
+describe("the illness hold (SCORING_VERSION 30)", () => {
+  const step = (zs: (number | null)[]) => {
+    let s: HoldState = noHold;
+    return zs.map((z) => {
+      const n = nextHold(s, z);
+      s = { run: n.run, held: n.held };
+      return n.hold;
+    });
+  };
+
+  it("holds from the second illness-ward night of a run, not the first", () => {
+    expect(illnessHold).toEqual({ zOn: 1.0, minRun: 2, maxNights: 21 });
+    expect(step([1.2])).toEqual([false]);
+    expect(step([1.2, 1.0, 3])).toEqual([false, true, true]);
+    expect(step([0.99, 1.5])).toEqual([false, false]);
+  });
+
+  it("a night under the threshold, or one that can't be measured, breaks the run", () => {
+    expect(step([1.5, 1.5, 0.5, 1.5, 1.5])).toEqual([false, true, false, false, true]);
+    expect(step([1.5, 1.5, null, 1.5])).toEqual([false, true, false, false]);
+  });
+
+  it("holds at most 21 nights in a row, so a lasting change is still absorbed; a new run starts over", () => {
+    const long = step(Array(30).fill(2));
+    expect(long.filter(Boolean)).toHaveLength(21);
+    expect(long.slice(0, 23)).toEqual([false, ...Array(21).fill(true), false]);
+    expect(long.slice(23).some(Boolean)).toBe(false);
+    expect(step([...Array(30).fill(2), 0, 2, 2])).toEqual([...long, false, false, true]);
+  });
+
+  it("illnessWardZ: HRV down and resting HR up against usable baselines, else null", () => {
+    const hrvB = foldHistory(Array.from({ length: 30 }, (_, i) => 50 + (i % 5) - 2), hrvCfg);
+    const rhrB = foldHistory(Array.from({ length: 30 }, (_, i) => 58 + (i % 3) - 1), restingHRCfg);
+    const z = illnessWardZ(40, 64, hrvB, rhrB)!;
+    expect(z).toBeCloseTo((-deviation(40, hrvB).z + deviation(64, rhrB).z) / 2, 12);
+    expect(z).toBeGreaterThan(1);
+    expect(illnessWardZ(null, 64, hrvB, rhrB)).toBeNull();
+    expect(illnessWardZ(40, 64, foldHistory([50, 51], hrvCfg), rhrB)).toBeNull(); // not usable yet
+    // Version 32: usable but still young (under 8 nights) is not enough either.
+    expect(illnessWardZ(40, 64, foldHistory([50, 52, 48, 51, 49, 50, 52], hrvCfg), rhrB)).toBeNull();
+    expect(illnessWardZ(40, 64, foldHistory([50, 52, 48, 51, 49, 50, 52, 49], hrvCfg), rhrB)).not.toBeNull();
+  });
+});
+
+describe("the robust first week (SCORING_VERSION 32)", () => {
+  it("one glitch among the first nights is trimmed: centre and spread come from the normal nights (version 31: spread about 22)", () => {
+    const xs = [50, 52, 48, 180, 51, 49, 50];
+    const s = foldHistory(xs, hrvCfg);
+    expect(s.baseline).toBeCloseTo((50 + 52 + 48 + 51 + 49 + 50) / 6, 12);
+    expect(s.spread).toBe(hrvCfg.floorSpread); // the six normal nights barely vary
+    expect(foldHistory(xs, hrvCfg, false).spread).toBeGreaterThan(15); // the plain young regime
+  });
+
+  it("a glitch on the very first night doesn't become the seed", () => {
+    const s = foldHistory([150, 50, 52, 49], hrvCfg);
+    expect(s.baseline).toBeCloseTo((50 + 52 + 49) / 3, 12);
+    expect(foldHistory([150, 50, 52, 49], hrvCfg, false).baseline).toBeGreaterThan(80);
+  });
+
+  it("keeps at most 8 early values, and from night 9 the EWMA takes over without them", () => {
+    const xs = [50, 60, 40, 55, 45, 52, 48, 51];
+    expect(foldHistory(xs, hrvCfg).early).toEqual(xs);
+    const after = update(foldHistory(xs, hrvCfg), 53, hrvCfg);
+    expect(after.early).toBeUndefined();
+    expect(after.nValid).toBe(9);
+    const s8 = foldHistory(xs, hrvCfg);
+    const lb = lambda(hrvCfg.halfLifeB);
+    expect(after.baseline).toBeCloseTo(lb * 53 + (1 - lb) * s8.baseline, 12);
+  });
+
+  it("missing and out-of-range nights don't enter the early values", () => {
+    expect(foldHistory([50, null, 60, 999, 40], hrvCfg).early).toEqual([50, 60, 40]);
+  });
+
+  it("the re-fold mode (no hard gate; Readiness) keeps version 31's young regime and stores nothing", () => {
+    const s = foldHistory([50, 70, 40, 60], hrvCfg, false);
+    expect(s.early).toBeUndefined();
+    expect(s.baseline).not.toBe(55);
+  });
+});
+
+describe("a run of hard rejections restarts the baseline (SCORING_VERSION 33)", () => {
+  const settled = () => foldHistory(repeat(50, 20), hrvCfg); // centre 50, spread at the 5 ms floor: the gate is ±25
+  const fold = (s: BaselineState, xs: (number | null)[], reject = true) => xs.reduce<BaselineState>((st, v) => update(st, v, hrvCfg, reject), s);
+
+  it("7 values in a row beyond the gate on one side: a fresh baseline from them (version 32 stayed at 50)", () => {
+    expect(restartAfterRejections).toBe(7);
+    const six = fold(settled(), repeat(120, 6));
+    expect(six).toMatchObject({ baseline: 50, nValid: 20, rejected: { side: 1, values: repeat(120, 6) } });
+    const seven = update(six, 120, hrvCfg);
+    expect(seven).toEqual(foldHistory(repeat(120, 7), hrvCfg));
+    expect(seven).toMatchObject({ baseline: 120, nValid: 7, status: "provisional" });
+    expect(seven.rejected).toBeUndefined();
+  });
+
+  it("an accepted value clears the run", () => {
+    const s = fold(settled(), [...repeat(120, 6), 51]);
+    expect(s.rejected).toBeUndefined();
+    expect(update(s, 120, hrvCfg).rejected).toEqual({ side: 1, values: [120] });
+  });
+
+  it("a rejection on the other side starts a new run", () => {
+    expect(fold(settled(), [...repeat(120, 6), 10]).rejected).toEqual({ side: -1, values: [10] });
+  });
+
+  it("missing and out-of-range nights inside the run don't break it", () => {
+    const s = fold(settled(), [120, 120, null, 120, 999, 120, 120, null, 120]);
+    expect(s.rejected?.values).toHaveLength(6);
+    expect(update(s, 120, hrvCfg)).toMatchObject({ baseline: 120, nValid: 7 });
+  });
+
+  it("the re-fold mode (Readiness) never restarts, and the stale rule is unchanged", () => {
+    expect(fold(settled(), repeat(120, 10), false).nValid).toBe(30);
+    const s = fold(settled(), repeat(120, 3));
+    expect(s.nightsSinceUpdate).toBe(0); // a rejected night still counts as seen
   });
 });

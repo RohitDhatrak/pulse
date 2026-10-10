@@ -2,7 +2,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../db";
 import { mergeSamples } from "../samples";
 import { copyDb, ctxFor, dayAt, seeded, USER } from "../testing";
-import { getSleep } from "./sleep";
+import { getSleep, UNSTAGED_OMITTED, UNSTAGED_USUAL } from "./sleep";
+import { sql } from "../db";
 
 let db: Db;
 beforeAll(async () => {
@@ -99,5 +100,18 @@ describe("getSleep", () => {
   it("the short-sleep streak builds sleep debt", async () => {
     const debt = async (i: number) => (await getSleep(dayAt(i), ctxFor(db))).details.find((s) => s.key === "debt")!.metric.value!;
     expect(await debt(172)).toBeGreaterThan((await debt(167)) + 60);
+  });
+});
+
+describe("the note for a night without stages (SCORING_VERSION 31)", () => {
+  it("is empty on a staged night, and says how an unstaged night was scored", async () => {
+    const day = dayAt(100);
+    expect((await getSleep(day, ctxFor(db))).performanceNote).toBeNull();
+    const db2 = await copyDb(db);
+    const set = (v: string) => db2.execute(sql`update daily_scores set sleep = sleep || ${JSON.stringify({ restorative: v })}::jsonb where user_id = ${USER} and day = ${day}`);
+    await set("usual");
+    expect((await getSleep(day, ctxFor(db2))).performanceNote).toBe(UNSTAGED_USUAL);
+    await set("omitted");
+    expect((await getSleep(day, ctxFor(db2))).performanceNote).toBe(UNSTAGED_OMITTED);
   });
 });

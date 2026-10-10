@@ -72,6 +72,18 @@ flowchart TB
    - From night 31 on, 1/n < λ_S, and it is the same 21-night EWMA as before. The handover is continuous: the weight
      on new nights only falls.
 
+7. **The robust first week** (*since version 32*, only when hard-outlier rejection is on). While young (`nValid ≤ 8`
+   after this night), steps 4–6 are replaced by a trimmed estimate over the accepted values so far (kept in `early`):
+   - m = their median; MAD = max(median |x − m|, floorSpread ÷ 2);
+   - keep the values within 4 × 1.4826 × MAD of m (`earlyTrimSigma`);
+   - centre = the mean of the kept values;
+   - spread = max(floorSpread, their mean |x − centre| × √(k ÷ (k − 1))) for k kept values. The factor corrects the
+     small-sample shortfall of deviations from a sample's own mean.
+
+   From night 9 the EWMA (steps 4–6) and the hard gate continue from that state, and `early` is dropped. Readiness'
+   re-fold (rejection off) keeps the plain young regime: it re-folds every day, so the robust phase there would move
+   readiness daily for no reason.
+
 `foldHistory(values)` runs `update` over nights oldest first. A day's scores use the state folded from earlier nights
 only (AGENTS.md, Causality).
 
@@ -174,6 +186,138 @@ On the 180-day seed:
 - After about day 67, Recovery is within 0.4 points of before on average.
 - Recovery bands (green / yellow / red) go from 62 / 80 / 28 to 61 / 85 / 24.
 
+## Why version 33: a large real step locked the baseline for good
+
+**The mechanism.** Past its first week a baseline rejects any value more than 5 spreads from its centre
+(`hardOutlierK`). That gate is about ±33 ms for HRV and about ±10 bpm for a resting HR whose spread sits near its
+2 bpm floor. After a real step bigger than the gate, almost every night is rejected, so nothing is learned. A
+rejected night still resets `nightsSinceUpdate`, so the baseline never turns stale either. Recovery and the Health
+Monitor stayed pinned to the old normal for good. Steps near the gate weren't locked but crept: the nights that
+happened to fall inside slowly pulled the centre across over 1–2 months.
+
+**How it was tested.** The real `update()` and `deviation()`; 60 simulated people per case, 90 normal nights, then a
+lasting step. The measure: nights after the step until a week's median |z| is at most 1.
+
+| Lasting step | Version 32 | Restart after 5 | **after 7** | after 10 |
+|---|---|---|---|---|
+| HRV +60 ms (a new device) | **never** | 10 | **12** | 15 |
+| Resting HR −18 bpm (a beta-blocker) | **never** | 10 | **12** | 15 |
+| HRV +45 ms | 52 | 11 | **13** | 18 |
+| Resting HR −14 bpm | 34 | 11 | **14** | 25 |
+| Steps inside the gate (HRV −30, resting HR +12) | 22–26 | unchanged | **unchanged** | unchanged |
+
+**False restarts** (no real step), per person-year:
+- heavy-tailed noise, t(3), for HRV and resting HR: 0 at any N;
+- a severe 10-night illness (resting HR +12) folded every night: 0.35 / **0.15** / 0.03 at N = 5 / 7 / 10.
+
+**Why 7 everywhere (the owner's choice).**
+- In Recovery, the version 30 illness hold skips those nights before they reach `update`, so an illness doesn't
+  count toward a restart.
+- The Health Monitor folds every night, so a severe illness can restart its ranges in about 15 % of cases. Its
+  ranges then widen as a young baseline's do.
+- A separate N of 10 for the Monitor was weighed against one simpler rule.
+
+**Why staleness is unchanged.** A rejected night still counts as seen. The restart releases a lock within about
+2 weeks, and "stale" keeps meaning "no data", not "data far from normal".
+
+**On the seed** nothing restarts (no lasting step), so only the version stamp moved.
+
+**End to end on a copy of the seed** (a test), resting HR is 18 bpm lower from day 120, and Google's resting-HR
+ranges are cleared so the Monitor uses Pulse's own:
+- two weeks later Recovery's resting-HR baseline is within 3 bpm of the new level;
+- the Monitor's range holds the new values;
+- with the restart disabled the baseline stayed at the old level (56.4 bpm).
+
+## Why version 32: one early glitch muted Recovery for weeks
+
+**The problem.** While young (the first 8 accepted nights):
+- the centre adapted fast;
+- the spread was the plain running mean of each night's absolute deviation from the **raw** value;
+- the hard-outlier gate was off.
+
+So one wild but in-range value early on (a loose band, a fever on night 2) inflated the spread, and every later z
+was shrunk for weeks: Recovery sat mid-scale with no reds and few greens through a new user's first month or two. A
+glitch on night 1 became the seed itself.
+
+**How it was tested.** The real `update()` and `deviation()`; 500 simulated people per row. sd(z) over nights
+7–14 / 15–30 / 31–60 should be about 1 (about 0.47 for a low-HRV user sitting on the spread floor, as before):
+
+| Case | Version 31 | **Version 32** |
+|---|---|---|
+| HRV 50 ± 8, no glitch | 0.89 / 0.94 / 0.99 | 0.90 / 0.95 / 0.99 |
+| HRV 40 ± 14 (a large wobble) | 1.01 / 0.98 / 1.01 | 1.03 / 1.00 / 1.00 |
+| HRV night 3 = 130 / 180 ms | 0.38 / 0.28 (nights 7–14) | **0.91 / 0.91** |
+| HRV night 3 = 90 ms, or an 8 ms dropout | 0.58 / 0.57 | **0.86 / 0.85** (near the trim edge, sometimes kept; mean z ±0.10) |
+| HRV night 1 = 150 ms (the seed itself) | **0.13** / 0.22 / 0.38 | **0.90 / 0.94 / 0.99** |
+| HRV night 6 = 150 ms | 0.34 / 0.53 / 0.73 | 0.90 / 0.94 / 0.99 |
+| Resting HR 55 ± 2.5, night 3 = 90 bpm | 0.31 / 0.52 / 0.72 | 0.80 / 0.86 / 0.92 |
+| Resting HR 60 ± 5 | 1.00 / 1.00 / 1.01 | 1.02 / 1.00 / 1.01 |
+
+**Options tested:**
+- **Capping only the spread's deviation** (at 3 × the young spread, or 3 × the spread) helped by about half (0.48–0.66
+  in nights 7–14 after a 180 ms glitch). The glitch still dragged the fast-adapting young centre, and a night-1
+  glitch is the seed itself.
+- **A trimmed estimate over the first week fixes both.** 4σ rather than 3σ, so a large real wobble keeps its tails
+  (3σ read it 16 % wide in nights 7–14).
+
+**The small-sample correction.** Without it the robust spread under-read σ by about 12 % at night 7 (the existing
+"σ within 10 % of the truth" test failed). With it σ is within 10 % at nights 7, 14, 30 and 60. For a large wobble
+the next night's z has an sd of 1.11 at night 7, a little noisier than version 31's 1.06, because σ now comes from 7
+values; the test's bound for night 7 is 1.15.
+
+**The illness hold waits for a mature baseline.** The tighter first week let two low first-week nights in the seed
+read as an illness-ward run, which held night 7 and delayed the first Recovery to day 9. So `illnessWardZ` needs both
+baselines past their first 8 nights.
+
+**On the seed** (no early glitch) Recovery moves by at most 0.41 points in days 7–29 and about 0.01 after day 60.
+Strain and sleep are unchanged, and the same three illness nights are held. Stress and the Health Monitor move
+slightly through their baselines' first weeks. Parity is re-recorded.
+
+**End to end on a copy of the seed** (a test), night 3's HRV is set to 180 ms. Recovery's HRV z over days 8–30
+keeps more than 85 % of the seed's spread; with the robust week bypassed it kept 48 %.
+
+## Why version 30: an illness was absorbed into "normal"
+
+**The problem.** Every night was folded into Recovery's baselines (14-night half-life), and only values more than
+5 spreads away were rejected. So an illness became part of "normal":
+- it faded from red as it went on (96 % red over 5 nights, 71 % over 21);
+- the week after read unusually well recovered: **51 / 62 / 82 % green** after a 5 / 10 / 21-night illness, against
+  32 % before.
+
+That invites hard training straight after being sick.
+
+**How it was tested.** The audit's pipeline mirror (score with the prior baselines, then fold), with switchable
+fold policies; its "version 29" mode matched the original on every night. The setup:
+- 100 people per case;
+- illness: HRV −30 %, resting HR +7, respiration +1.5, skin +0.6 °C, sleep −8 points;
+- "mild" is half that;
+- a training block: HRV −12 %, resting HR +3;
+- a lasting real drop (a medicine, altitude): HRV −22 %, resting HR +4, from night 100 on.
+
+| | Version 29 | **Version 30** |
+|---|---|---|
+| Healthy: mean / % green / % red | 56.0 / 33 / 18 | 55.5 / 33 / 19 |
+| Week after a 5 / 10 / 21-night illness, % green (32 before) | 51 / 62 / 82 | **36 / 37 / 41** |
+| During a 21-night illness, % red | 71 | 95 |
+| Week after a mild 10-night illness, % green | 48 | 41 |
+| Week after a 21-night training block, mean | 66.1 | 63.4 |
+| Lasting drop: mean in weeks 5–6 / 8–9 / 12–13 (55 before) | 50.1 / 54.3 / 54.8 | 43.1 / 50.2 / 52.9 |
+
+**Options rejected:**
+- **Holding any single night with zc ≥ 1:** ordinary low nights get dropped, so a healthy person reads lower
+  (mean 56 → 50.4).
+- **A slower half-life (28):** still 64 % green after a 21-night illness, and real changes adapt slower.
+- **Folding illness-ward nights at a quarter weight:** worse on both counts.
+- **A 14-night cap:** let the end of a 21-night illness back in (53 % green after).
+- **zc ≥ 1.25:** weaker (47 % after 21 nights).
+- **A one-night delay, to also hold a run's first night:** 2–4 points better, for a baseline that lags a night.
+
+**The cost.** A lasting real drop takes about two weeks longer to be absorbed. The 21-night cap bounds that.
+
+**On the seed** its 7-night illness holds 3 nights. The week after averages 60.2 instead of 63.0 (the same 2 green
+days), fading to under 1 point within a month. Strain and sleep are unchanged; Recovery's consumers (Strain Target,
+the Energy Bank, journal impact, reports) move with it.
+
 ## Constants
 
 | Constant | Value | Kind |
@@ -204,6 +348,9 @@ An HRV baseline after 7 nights of 50, 62, 44, 58, 47, 55, 41 ms (sample SD 7.66 
 - Version 8: σ = 6.55 ms, so a night at 40 ms reads z = −1.48.
 - Version 9: σ = 7.92 ms, close to the 7.66 ms sample SD, so the raw z = −1.22. With the shrink (× 7/9), z = **−0.95**.
 - A night at 60 ms reads +1.57 in version 8 and **+1.01** in version 9.
+- *Version 32* (the robust first week): after the 7 nights the centre is their mean, 51.00, and the spread
+  6.79 (nothing is trimmed), so σ = 8.51 ms. A night at 40 ms reads a raw z of −1.29, **−1.01** with the shrink; at
+  60 ms **+0.82**. Night by night the centre runs 50, 56, 52, 53.5, 52.2, 52.67, 51.
 
 ## Edge rules
 
@@ -218,11 +365,28 @@ An HRV baseline after 7 nights of 50, 62, 44, 58, 47, 55, 41 ms (sample SD 7.66 
 
   So a low-HRV user's Recovery moves about half as much as a typical user's for the same relative change.
 - **Rejected outliers and gaps** never advance the running-mean count (tests).
+- **A glitch in the first week** (*since version 32*) is trimmed out of the robust first-week estimate if it's more
+  than 4σ (by MAD) from the median of the early values. Nearer than that it is kept, at a smaller cost.
+- **Held nights** (*since version 30*, `nextHold`, `illnessHold`). Recovery's four baselines (HRV, resting HR,
+  respiration, skin temperature) and its sleep centre skip a night that continues a run of **illness-ward** nights:
+  - a night is illness-ward when zc = (−z_HRV + z_RHR) ÷ 2, against the prior baselines, is at least 1.0;
+  - from the second night of a run on, the night is held: the state stays exactly as it was, staleness included;
+  - at most 21 nights in a row are held, so a lasting change is still absorbed after that;
+  - a night under 1.0, or one that can't be measured (no HRV or RHR, or a baseline not yet usable or, since version
+    32, still in its first 8 nights), ends the run;
+  - the Recovery row's `heldBaseline` says whether that night was held.
 - **A rejected outlier counts as "seen" for staleness.** It resets `nightsSinceUpdate` to 0 (`update`), just as an
-  accepted night does. So after a large real step (more than 5 spreads, `hardOutlierK`; for example a new device, a
-  new medicine or a move to altitude), every later night is rejected, the baseline keeps its old centre, and it
-  **never turns stale**, so the stale rule never releases it. It stays wrong until the baseline is reset. Gaps and
-  out-of-range values do advance `nightsSinceUpdate`.
+  accepted night does; gaps and out-of-range values advance it. So a baseline that keeps rejecting nights never turns
+  stale; the restart rule below releases it instead.
+- **A run of hard rejections restarts the baseline** (*since version 33*, `restartAfterRejections` = 7). Rejected
+  values are kept in `rejected` while they fall on the same side of the centre:
+  - an accepted value clears the run; a rejection on the other side starts a new one;
+  - missing or out-of-range nights leave it as it is (a device change often comes with gaps);
+  - at 7, the baseline is replaced by `foldHistory` of those 7 values: a fresh baseline through the robust first week
+    (nValid 7, provisional).
+
+  A large real step (a new device, a medicine, a move to altitude) is followed in about 2 weeks instead of never. The
+  re-fold mode (Readiness) never restarts.
 - **A constant history** stays on the floor, and z stays finite.
 - **`zSpread` with `nValid` 0** uses n = 1, so it is finite. No consumer scores an unusable baseline anyway.
 

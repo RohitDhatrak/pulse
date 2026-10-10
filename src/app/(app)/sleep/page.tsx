@@ -40,17 +40,21 @@ export default async function SleepPage({ searchParams }: PageProps<"/sleep">) {
       dateSwitcher={{ mode: "day", placement: "header" }}
       notch
       hero={
-        <ScoreDial
-          variant="sleep"
-          size="lg"
-          value={p.value}
-          reason={p.reason}
-          nightsLeft={p.nightsLeft}
-          provisional={p.provisional}
-          tags={p.tags}
-          // Same cut-offs as the sleep insight: optimal from 85%, sufficient from 70% (server/queries/sleep.ts).
-          status={p.value === null ? undefined : p.value >= 85 ? "optimal" : p.value >= 70 ? "sufficient" : "poor"}
-        />
+        <div className="flex flex-col items-center gap-2">
+          <ScoreDial
+            variant="sleep"
+            size="lg"
+            value={p.value}
+            reason={p.reason}
+            nightsLeft={p.nightsLeft}
+            provisional={p.provisional}
+            tags={p.tags}
+            // Same cut-offs as the sleep insight: optimal from 85%, sufficient from 70% (server/queries/sleep.ts).
+            status={p.value === null ? undefined : p.value >= 85 ? "optimal" : p.value >= 70 ? "sufficient" : "poor"}
+          />
+          {/* A night without stages (scoring version 31). */}
+          {vm.performanceNote && <p className={cn(CAPTION, "max-w-72 text-center")}>{vm.performanceNote}</p>}
+        </div>
       }
       summary={
         <Card className="gap-0 px-4 py-1 ring-0">

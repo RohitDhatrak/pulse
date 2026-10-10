@@ -69,6 +69,10 @@ export interface BaselineState {
   nValid: number;
   nightsSinceUpdate: number;
   status: BaselineStatus;
+  /** The accepted values while young (≤ earlyAdaptNights), for the robust first week (SCORING_VERSION 32). */
+  early?: number[];
+  /** The current run of hard-rejected values on one side of the centre; 7 in a row restart the baseline (version 33). */
+  rejected?: { side: 1 | -1; values: number[] };
 }
 
 export interface Deviation {

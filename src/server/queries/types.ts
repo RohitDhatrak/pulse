@@ -246,6 +246,8 @@ export type SleepVM = {
   day: string;
   isToday: boolean;
   performance: Metric<number>;
+  /** Why a night without stages scored as it did (scoring version 31), or null. */
+  performanceNote: string | null;
   summary: KeyStat[];
   insight: string | null;
   /** null: a session without stages (Hypnogram empty copy). */

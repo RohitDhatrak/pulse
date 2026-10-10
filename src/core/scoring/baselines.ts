@@ -72,15 +72,76 @@ const state = (baseline: number, spread: number, nValid: number, nightsSinceUpda
 const inRange = (v: number | null, cfg: MetricCfg): v is number => v != null && cfg.minVal <= v && v <= cfg.maxVal;
 
 /**
+ * The robust first week (SCORING_VERSION 32): while young, the centre is the mean of the early values within this many
+ * σ (1.4826 × MAD) of their median, and the spread their mean absolute deviation. The young regime's running mean of
+ * raw deviations, with the hard gate off, let one early glitch inflate the spread for weeks (sd(z) 0.28 in week 2 after
+ * a 180 ms night 3; 0.13 after a glitchy first night). 3σ trimmed too much of a high-wobble person's real tail.
+ * docs/algorithms/baselines.md § Why version 32.
+ */
+export const earlyTrimSigma = 4;
+
+/**
+ * Hard-rejected values in a row, on the same side of the centre, that restart a baseline (SCORING_VERSION 33). Past the
+ * first week a value more than `hardOutlierK` spreads away is rejected, and a rejected night still counts as seen, so
+ * after a real step bigger than the gate (a new device, a beta-blocker) every night was rejected and the baseline
+ * stayed at the old normal for good. A run of 7 is taken as a real change: the baseline restarts from those values
+ * through the robust first week, back within |z| ≤ 1 in about 12–14 nights. Heavy-tailed noise never made such a run;
+ * a severe 10-night illness did in 15 % of cases where every night is folded (the Health Monitor; Recovery's illness
+ * hold skips those nights). docs/algorithms/baselines.md § Why version 33.
+ */
+export const restartAfterRejections = 7;
+
+const median = (xs: number[]): number => {
+  const a = [...xs].sort((x, y) => x - y);
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+};
+
+/**
  * Fold one nightly value. null or out-of-range skips and holds; a hard outlier (once settled) is seen but
- * not folded; otherwise a Winsorized EWMA centre and an EWMA-abs-dev spread.
- * `rejectHardOutliers = false` is the trailing-window re-fold mode (Readiness).
+ * not folded; otherwise a Winsorized EWMA centre and an EWMA-abs-dev spread. While young (the first
+ * `earlyAdaptNights` accepted values, when the hard gate is off) the centre and spread are a trimmed estimate over
+ * those values instead (version 32).
+ * `rejectHardOutliers = false` is the trailing-window re-fold mode (Readiness), which keeps the plain young regime.
  */
 export function update(
   prev: BaselineState | null,
   value: number | null,
   cfg: MetricCfg,
   rejectHardOutliers = true,
+): BaselineState {
+  const next = updateCore(prev, value, cfg, rejectHardOutliers);
+  if (!rejectHardOutliers) return next;
+  const accepted = next.nValid > (prev?.nValid ?? 0);
+  if (!accepted) {
+    // Hard-rejected: in range, settled and too far. A run of them on one side is a real step (version 33).
+    if (prev && inRange(value, cfg) && prev.nValid >= earlyAdaptNights && Math.abs(value - prev.baseline) > hardOutlierK * prev.spread) {
+      const side = value > prev.baseline ? 1 : -1;
+      const values = prev.rejected?.side === side ? [...prev.rejected.values, value] : [value];
+      if (values.length >= restartAfterRejections) return foldHistory(values, cfg);
+      return { ...next, ...(prev.early && { early: prev.early }), rejected: { side, values } };
+    }
+    // A missing or out-of-range night keeps the early values and any run of rejections.
+    return { ...next, ...(prev?.early && { early: prev.early }), ...(prev?.rejected && { rejected: prev.rejected }) };
+  }
+  if (next.nValid > earlyAdaptNights) return next;
+  const early = [...(prev?.early ?? []), value!];
+  const m = median(early);
+  const mad = Math.max(median(early.map((x) => Math.abs(x - m))), cfg.floorSpread / 2);
+  const kept = early.filter((x) => Math.abs(x - m) <= earlyTrimSigma * 1.4826 * mad);
+  const centre = kept.reduce((a, b) => a + b, 0) / kept.length;
+  // Deviations from the sample's own mean run short by √((n − 1) / n): corrected, so σ at night 7 is unbiased.
+  const k = kept.length;
+  const meanDev = kept.reduce((a, x) => a + Math.abs(x - centre), 0) / k;
+  const spread = Math.max(cfg.floorSpread, k > 1 ? meanDev * Math.sqrt(k / (k - 1)) : meanDev);
+  return { ...next, baseline: centre, spread, early };
+}
+
+function updateCore(
+  prev: BaselineState | null,
+  value: number | null,
+  cfg: MetricCfg,
+  rejectHardOutliers: boolean,
 ): BaselineState {
   const lb = lambda(cfg.halfLifeB);
   const ls = lambda(cfg.halfLifeS);
@@ -119,6 +180,39 @@ export function update(
   const effLs = Math.max(ls, 1.0 / prev.nValid);
   const newSpread = Math.max(cfg.floorSpread, effLs * absDev + (1.0 - effLs) * prev.spread);
   return state(newBaseline, newSpread, prev.nValid + 1, 0);
+}
+
+/**
+ * Illness hold (SCORING_VERSION 30): Recovery's baselines skip a night that continues a run of illness-ward nights, so a
+ * sickness isn't absorbed into "normal". Folding every night made the week after a 21-night illness read 82 % green
+ * (32 % before it) and the illness itself fade from red. A night is illness-ward when zc = (−z_HRV + z_RHR) / 2 against
+ * the prior baselines is at least `zOn`; the second night of a run on is held, at most `maxNights` in a row, so a
+ * lasting change is still absorbed. Holding single nights biased healthy people (mean 56 → 50); a cap of 14 let a
+ * 21-night illness back in. docs/algorithms/baselines.md § Why version 30.
+ */
+export const illnessHold = { zOn: 1.0, minRun: 2, maxNights: 21 };
+
+export type HoldState = { run: number; held: number };
+export const noHold: HoldState = { run: 0, held: 0 };
+
+/** The next hold state for a night's illness-ward composite (null: not measurable, which breaks a run). */
+export function nextHold(prev: HoldState, zc: number | null): HoldState & { hold: boolean } {
+  const c = illnessHold;
+  const run = zc != null && zc >= c.zOn ? prev.run + 1 : 0;
+  const held = run === 0 ? 0 : prev.held;
+  const hold = run >= c.minRun && held < c.maxNights;
+  return { run, held: hold ? held + 1 : held, hold };
+}
+
+/**
+ * zc = (−z_HRV + z_RHR) / 2 against usable baselines past their first week, or null when either is missing, not usable
+ * or still young (version 32: the robust first week is tighter, and two low first-week nights held the seed's day 7,
+ * delaying its first Recovery; a young baseline's z is too uncertain to call a run illness-ward).
+ */
+export function illnessWardZ(hrv: number | null | undefined, rhr: number | null | undefined, hrvB: BaselineState | null, rhrB: BaselineState | null): number | null {
+  if (hrv == null || rhr == null || !hrvB || !rhrB || !isUsable(hrvB) || !isUsable(rhrB)) return null;
+  if (hrvB.nValid < earlyAdaptNights || rhrB.nValid < earlyAdaptNights) return null;
+  return (-deviation(hrv, hrvB).z + deviation(rhr, rhrB).z) / 2;
 }
 
 /** Replay nightly values oldest first; null is a missing night. */

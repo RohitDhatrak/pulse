@@ -83,6 +83,15 @@ export const deepShareTarget = 0.13;
 export const deepFloorFactor = 0.5;
 /** Used when no consistency signal is supplied (noop adds a neutral term, it does not renormalize). */
 export const NEUTRAL_CONSISTENCY = 0.5;
+/**
+ * A night without sleep stages (SCORING_VERSION 31) is scored with the median restorative component of the last
+ * `usualRestorativeNights` staged main sleeps, given at least `minUsualRestorativeNights`; with fewer, the restorative
+ * weight is left out and the rest renormalised. Scoring deep and REM as 0 cost 9–16 points; renormalising credited
+ * older people with a young person's restorative sleep (+9); your own median was within 0.3 on average
+ * (docs/algorithms/sleep-need.md § Why version 31).
+ */
+export const usualRestorativeNights = 28;
+export const minUsualRestorativeNights = 5;
 
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
 
@@ -111,31 +120,43 @@ export function personalizedNeedHours(nightlyHours: number[], age: number | null
   return Math.min(Math.max(q, floor), maxNeedHours);
 }
 
+/** The restorative component, 0–100: (deep + REM) share against 50 %, scaled down when deep is under 13 %. */
+export function restorativeScore(deepSeconds: number, remSeconds: number, asleepSeconds: number): number {
+  const restorativeShare = (deepSeconds + remSeconds) / asleepSeconds;
+  const deepAdequacy = clamp(deepSeconds / asleepSeconds / deepShareTarget, 0.0, 1.0);
+  const deepFactor = deepFloorFactor + (1.0 - deepFloorFactor) * deepAdequacy;
+  return Math.min(100.0, (restorativeShare / restorativeTargetShare) * 100.0) * deepFactor;
+}
+
 /**
  * Rest composite in [0, 100] (2 dp), or null with no asleep time.
  * @param efficiency asleep / in-bed in [0, 1].
+ * @param deepSeconds, remSeconds null when the night has no stages (version 31): the restorative component is then
+ * `opts.usualRestorative` if given, else left out and the other weights renormalised.
  * @param consistency sleep regularity in [0, 1]; null → NEUTRAL_CONSISTENCY.
  */
 export function rest(
   asleepSeconds: number,
   efficiency: number,
-  deepSeconds: number,
-  remSeconds: number,
+  deepSeconds: number | null,
+  remSeconds: number | null,
   sleepNeedHours: number | null = null,
   consistency: number | null = null,
+  opts: { usualRestorative?: number | null } = {},
 ): number | null {
   if (asleepSeconds <= 0.0) return null;
   const asleepHours = asleepSeconds / 3600.0;
   const needHours = Math.max(sleepNeedHours ?? defaultSleepNeedHours, 0.1);
   const durationScore = Math.min(100.0, (asleepHours / needHours) * 100.0);
   const efficiencyScore = clamp(efficiency * 100.0, 0.0, 100.0);
-  const restorativeShare = (deepSeconds + remSeconds) / asleepSeconds;
-  const deepAdequacy = clamp(deepSeconds / asleepSeconds / deepShareTarget, 0.0, 1.0);
-  const deepFactor = deepFloorFactor + (1.0 - deepFloorFactor) * deepAdequacy;
-  const restorativeScore = Math.min(100.0, (restorativeShare / restorativeTargetShare) * 100.0) * deepFactor;
   const consistencyScore = clamp((consistency ?? NEUTRAL_CONSISTENCY) * 100.0, 0.0, 100.0);
+  const restorative =
+    deepSeconds != null && remSeconds != null ? restorativeScore(deepSeconds, remSeconds, asleepSeconds) : (opts.usualRestorative ?? null);
+  // The same order of terms as before version 31, so a staged night scores to the bit as it did.
   const weighted =
-    wDuration * durationScore + wEfficiency * efficiencyScore + wRestorative * restorativeScore + wConsistency * consistencyScore;
+    restorative != null
+      ? wDuration * durationScore + wEfficiency * efficiencyScore + wRestorative * restorative + wConsistency * consistencyScore
+      : (wDuration * durationScore + wEfficiency * efficiencyScore + wConsistency * consistencyScore) / (wDuration + wEfficiency + wConsistency);
   return Math.round(weighted * 100.0) / 100.0;
 }
 

@@ -21,7 +21,7 @@ flowchart LR
   NEED --> FC["Recovery forecast: planned sleep ÷ need"]
 ```
 
-## Formula (since scoring version 15; unchanged through version 25)
+## Formula (since scoring version 15; unchanged through version 31)
 
 1. Take the main-sleep hours of the 28 nights before the scored night. Nights of 0 or less are ignored.
 2. With fewer than 7 nights, the need is `max(7.5, floor)`.
@@ -165,6 +165,54 @@ is unchanged.
 **End to end on a copy of the seed** (a test), one night's session is deleted and up-and-about HR and steps written
 over 00:00–06:00. That day reads `no_sleep`, its debt matches the ledger and rises by more than 150 min, and the next
 day carries it. The control (session deleted, sleeping HR left) stays a night without data.
+
+## Sleep Performance on a night without stages (scoring version 31)
+
+Sleep Performance (`rest()`, `src/core/scoring/sleep.ts`) is 0.5 duration + 0.2 efficiency + 0.2 restorative + 0.1
+consistency. The restorative part, `restorativeScore`, is the (deep + REM) share against 50 %, scaled down when deep
+is under 13 %.
+
+**When Fitbit doesn't stage a main sleep** (`stagesStatus` not SUCCEEDED, so deep and REM are null):
+- if at least **5** of the last **28** staged main sleeps have a restorative component, the night takes their
+  **median**: your usual (`usualRestorativeNights`, `minUsualRestorativeNights`);
+- with fewer, the restorative weight is left out and the other three are renormalised (÷ 0.8).
+
+The Sleep row's `restorative` says which: "measured", "usual" or "omitted". The Sleep page then notes under the dial
+"No sleep stages last night: restorative sleep counted at your usual." or "…: scored on duration, efficiency and
+consistency."
+
+A deep or REM total that is known to be 0 is measured, not missing.
+
+### Why version 31
+
+**The problem.** The pipeline passed missing deep and REM to `rest()` as 0, so an unstaged night scored 0
+restorative and lost 9–16 points. A missing measurement was scored as a terrible one. Through `sleepPerf` that also
+lowered the personal sleep centre Recovery is scored against (audit R11), which raised every staged night's Recovery,
+and it reached the Energy Bank start, journal outcomes and reports.
+
+**How it was tested.** 200 simulated people per group, each with their own deep and REM shares and 28 staged nights
+behind them. Each test night was scored with its real stages (the truth), then as if unstaged. Short, fragmented
+3–4.5 h nights, which Fitbit often can't stage, were included. Estimate − truth:
+
+| Method | Young (deep 17 %): bias / MAE | Middle (13 %) | Older (8 %) | Short nights, MAE |
+|---|---|---|---|---|
+| Version 30 (deep = REM = 0) | −15.8 / 15.8 | −13.1 / 13.1 | −8.9 / 8.9 | 8.8–15.9 |
+| Leave it out and renormalise | +2.4 / 3.1 | +5.0 / 5.2 | +9.2 / 9.2 | 3.2–4.4 |
+| A fixed restorative of 75 | −0.8 / 2.7 | +1.9 / 3.2 | +6.1 / 6.3 | 2.7–6.3 |
+| **Your median of recent staged nights** | **0.3 / 1.6** | **0.2 / 1.8** | **−0.1 / 2.0** | **1.6–2.0** |
+
+- **Renormalising**, which the research review suggested (`docs/research/sleep.md`), implicitly gives everyone a
+  restorative score equal to their other components. That credits older people with a young person's deep sleep
+  (+9).
+- **A fixed value** is wrong by age.
+- **The person's own median** is unbiased for every group, and stays within 2 points on short nights too.
+- Renormalising is kept only as the fallback when there's nothing personal to go on, and the page says so.
+
+**On the seed** every main sleep is staged, so no score moved; only the new `restorative` field ("measured") was
+added.
+
+**End to end on a copy of the seed** (a test), one night is unstaged. It reads "usual" and lands within 5 points of
+its staged score; version 30's rule lost more than 10. The next day's sleep centre moves by under 0.01.
 
 ## Constants
 

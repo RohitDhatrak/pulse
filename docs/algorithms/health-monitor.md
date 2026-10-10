@@ -41,6 +41,10 @@ flowchart TB
    - The reading carries `usual` (the centre), so the screen can say "Below your usual (95.8%)".
    - **Home** names SpO2 only below 92, or at least 3 points below your usual (`spo2NeedsHome`); smaller dips show on
      the Health Monitor only.
+   - *Since version 33* a lasting step bigger than the baseline's hard gate (a new device, a medicine) restarts it after 7
+     rejected nights in a row, so Pulse's range follows within about 2 weeks instead of flagging every night for good
+     ([baselines](baselines.md) § Why version 33). A severe illness of 7+ nights can restart a range too (about 15 % of
+     cases), since the Monitor folds every night.
 4. **Status.** The value is `low` below the range, `high` above it, and `in_range` otherwise. It is `no_data` when last night has no value or the baseline is not usable (fewer than 4 accepted nights, or stale).
 5. **Counts.** `inRange` is the number of `in_range` vitals, shown as "N of 5". `flagged` is the number that are high or low.
 6. **Illness.** `illness.illnessFromDays(days, journal)` runs over the same rows.

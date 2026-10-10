@@ -111,11 +111,14 @@ export async function stage2(db: Db, data: Data, opts: PipelineOptions) {
       fitness,
     });
 
-    // Fold today's nightly values into the baselines (after scoring today).
-    f.hrvB = update(f.hrvB, recovery.inputs.hrv, hrvCfg);
-    f.rhrB = update(f.rhrB, recovery.inputs.rhr, restingHRCfg);
-    f.respB = update(f.respB, recovery.inputs.resp, respCfg);
-    f.skinB = update(f.skinB, d.dm?.nightlyTempC ?? null, skinTempCfg);
+    // Fold today's nightly values into the baselines (after scoring today), unless the night is held as part of an
+    // illness-ward run (version 30): then the baselines stay as they were, staleness included.
+    if (!recovery.heldBaseline) {
+      f.hrvB = update(f.hrvB, recovery.inputs.hrv, hrvCfg);
+      f.rhrB = update(f.rhrB, recovery.inputs.rhr, restingHRCfg);
+      f.respB = update(f.respB, recovery.inputs.resp, respCfg);
+      f.skinB = update(f.skinB, d.dm?.nightlyTempC ?? null, skinTempCfg);
+    }
     f.prevAcwr = trainingLoad.acwr;
   }
   await flush();

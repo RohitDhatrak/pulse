@@ -22,12 +22,13 @@ import { hardOrLateWorkout, typicalSession } from "@/core/scoring/load";
 import { logisticK, logisticScore, logisticZ0, sleepPerfScale, wHRV, wResp, wRHR, wSkinTemp, wSleep } from "@/core/scoring/recovery";
 import { journalImpactConfig } from "@/core/algorithms/journalImpact";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
-import { ledger, personalizedNeedHours } from "@/core/scoring/sleep";
+import { ledger, personalizedNeedHours, rest } from "@/core/scoring/sleep";
 import { mergeSamples } from "../samples";
 import { trimpToStrain } from "@/core/scoring/strain";
 import { load } from "./data";
 import { stage1 } from "./stage1";
 import { seedPull } from "../sources/seed/generate";
+import { SCENARIO } from "../sources/seed/scenario";
 import { copyDb, ctxFor, DAY_S, dayAt, dump, freshDb, NOW, OPTS, seeded, TZ, PROFILE, USER } from "../testing";
 import { getSleep } from "../queries/sleep";
 import { reasonCopy } from "@/lib/reasons";
@@ -474,6 +475,108 @@ describe("ACWR on the seed (SCORING_VERSION 27)", () => {
   });
 });
 
+describe("the illness hold on the seed (SCORING_VERSION 30)", () => {
+  it("holds nights only inside the seed's illness, each after an illness-ward night, and never more than 21 in a row", () => {
+    const held = allDays.filter((day) => js<RecoveryRow>("recovery", day).heldBaseline);
+    expect(held.length).toBeGreaterThan(0);
+    for (const day of held) {
+      // A held night continues a run: the night before was illness-ward too, so it scored low.
+      const before = js<RecoveryRow>("recovery", addDays(day, -1)).value;
+      expect(before == null || before < 50, `${day}: the night before read ${before}`).toBe(true);
+    }
+    let run = 0;
+    for (const day of allDays) {
+      run = js<RecoveryRow>("recovery", day).heldBaseline ? run + 1 : 0;
+      expect(run).toBeLessThanOrEqual(21);
+    }
+    // Only the seed's illness nights are held.
+    const { start, end } = SCENARIO.illness;
+    for (const day of held) expect(day >= dayAt(start) && day <= dayAt(end), day).toBe(true);
+  });
+});
+
+describe("a main sleep without stages (SCORING_VERSION 31)", () => {
+  type Sleep = SleepRow & { restorative: string | null };
+  it("every seed night is staged, so every scored night's restorative part is measured", () => {
+    for (const day of allDays) {
+      const sl = js<Sleep>("sleep", day);
+      expect(sl.restorative).toBe(sl.performance == null ? null : "measured");
+    }
+  });
+
+  it("end to end: unstage one night; it scores near its staged value with your usual restorative sleep, and the centre barely moves", async () => {
+    const I = 100;
+    const copy = await copyDb(db);
+    const [main] = await rows<{ id: string }>(copy, sql`select id from sleep_sessions where user_id = ${USER} and is_main and day = ${dayAt(I)}`);
+    await copy.execute(sql`delete from sleep_segments where user_id = ${USER} and session_id = ${main.id}`);
+    await copy.execute(sql`update sleep_sessions set stages_status = 'FAILED', deep_min = null, light_min = null, rem_min = null where user_id = ${USER} and id = ${main.id}`);
+    await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(I)}), (${USER}, ${dayAt(I + 1)}) on conflict do nothing`);
+    await recompute(copy, OPTS);
+    const sleepOf = async (day: string) => (await rows<{ s: Sleep }>(copy, sql`select sleep s from daily_scores where user_id = ${USER} and day = ${day}`))[0].s;
+    const recOf = async (day: string) => (await rows<{ r: RecoveryRow }>(copy, sql`select recovery r from daily_scores where user_id = ${USER} and day = ${day}`))[0].r;
+    const before = js<Sleep>("sleep", dayAt(I));
+    const after = await sleepOf(dayAt(I));
+    expect(after.main!.staged).toBe(false);
+    expect(after.restorative).toBe("usual");
+    expect(Math.abs(after.performance! - before.performance!)).toBeLessThan(5);
+    // Version 30's rule (deep and REM as 0) on the same night lost far more.
+    const old = rest(after.main!.asleepMin * 60, after.main!.efficiency, 0, 0, after.needHours, after.consistency == null ? null : after.consistency / 100)!;
+    expect(before.performance! - old).toBeGreaterThan(10);
+    // The next day's sleep centre (Recovery's) hardly moves.
+    const centre = (r: RecoveryRow) => (r.inputs as { sleepCentre: number }).sleepCentre;
+    expect(Math.abs(centre(await recOf(dayAt(I + 1))) - centre(js<RecoveryRow>("recovery", dayAt(I + 1))))).toBeLessThan(0.01);
+  });
+});
+
+describe("the robust first week (SCORING_VERSION 32)", () => {
+  it("end to end: a 180 ms glitch on night 3 leaves Recovery's HRV z spread over days 8–30 within 15 % of the seed's", async () => {
+    const copy = await copyDb(db);
+    await copy.update(dailyMetrics).set({ hrvMs: 180 }).where(and(eq(dailyMetrics.userId, USER), eq(dailyMetrics.day, dayAt(2))));
+    await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(2)}) on conflict do nothing`);
+    await recompute(copy, OPTS);
+    const sd = (xs: number[]) => {
+      const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+      return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / xs.length);
+    };
+    const zs = async (d: Db) =>
+      (await rows<{ z: number | null }>(d, sql`select (recovery->>'hrvZ')::float8 z from daily_scores where user_id = ${USER} and day between ${dayAt(7)} and ${dayAt(29)} order by day`))
+        .map((r) => r.z)
+        .filter((z): z is number => z != null);
+    const seed = sd(await zs(db));
+    const glitched = sd(await zs(copy));
+    // Version 31 folded the glitch into the young spread: the same z spread fell by more than a third.
+    expect(glitched / seed).toBeGreaterThan(0.85);
+  });
+});
+
+describe("a lasting step restarts the baselines (SCORING_VERSION 33)", () => {
+  it("end to end: resting HR 18 bpm lower from day 120 is followed within 14 days by Recovery and the Health Monitor", async () => {
+    const copy = await copyDb(db);
+    // A beta-blocker from day 120 on. Google's resting-HR ranges are cleared, so the Monitor uses Pulse's baseline.
+    await copy.execute(sql`update daily_metrics set rhr_bpm = rhr_bpm - 18 where user_id = ${USER} and day >= ${dayAt(120)}`);
+    await copy.execute(sql`update daily_metrics set rhr_range_low = null, rhr_range_high = null where user_id = ${USER}`);
+    await copy.execute(sql`insert into intraday_dirty (user_id, day) select ${USER}, day from daily_metrics where user_id = ${USER} and day >= ${dayAt(118)} on conflict do nothing`);
+    await recompute(copy, OPTS);
+    const at = async (i: number) =>
+      (await rows<{ r: RecoveryRow; h: HealthMonitorRow; rhr: number }>(
+        copy,
+        sql`select s.recovery r, s.health_monitor h, m.rhr_bpm rhr from daily_scores s join daily_metrics m on m.user_id = s.user_id and m.day = s.day where s.user_id = ${USER} and s.day = ${dayAt(i)}`,
+      ))[0];
+    const before = (js<RecoveryRow>("recovery", dayAt(119)).baselines as { rhr: { mean: number } }).rhr.mean;
+    const later = await at(134);
+    const centre = (later.r.baselines as { rhr: { mean: number } }).rhr.mean;
+    // Version 32 rejected every night and stayed at the old level; now the baseline sits at the new one.
+    expect(centre).toBeLessThan(before - 15);
+    expect(Math.abs(centre - (before - 18))).toBeLessThan(3);
+    // The Monitor's resting-HR range holds the new values again.
+    const hm = later.h as Extract<HealthMonitorRow, { reason: null }>;
+    const rhrVital = hm.vitals.find((v) => v.key === "restingHr")!;
+    expect(rhrVital.rangeSource).toBe("pulse");
+    expect(rhrVital.range!.low).toBeLessThanOrEqual(later.rhr);
+    expect(rhrVital.range!.high).toBeGreaterThanOrEqual(later.rhr);
+  });
+});
+
 describe("Recovery's sleep centre on the seed (SCORING_VERSION 17)", () => {
   it("is 0.85 for the first 7 nights, then the mean of the prior 28 nights' sleepPerf", () => {
     const prior: number[] = [];
@@ -487,7 +590,8 @@ describe("Recovery's sleep centre on the seed (SCORING_VERSION 17)", () => {
       }
       expect(inputs.sleepCentre!).toBeGreaterThanOrEqual(0.4);
       expect(inputs.sleepCentre!).toBeLessThanOrEqual(1);
-      if (inputs.sleepPerf != null) prior.push(inputs.sleepPerf);
+      // Since version 30 a night held by the illness hold stays out of the centre.
+      if (inputs.sleepPerf != null && !js<RecoveryRow>("recovery", day).heldBaseline) prior.push(inputs.sleepPerf);
     }
   });
 });

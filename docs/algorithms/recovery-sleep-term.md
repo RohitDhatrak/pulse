@@ -23,7 +23,11 @@ the weights above are the ones in use.
   - Every night with a `sleepPerf` counts, including the efficiency fallback. That includes **nights Recovery did not
     score**: unstaged nights, nights without HRV and nights while the baseline calibrates (`scoreRecovery` pushes the
     value before deciding whether it can score). Unstaged nights score low on Sleep Performance, so they pull the
-    centre down a little.
+    centre down a little. *Since version 31* an unstaged night's Sleep Performance uses your usual restorative sleep
+    instead of 0, so it no longer biases the centre ([sleep-need](sleep-need.md)).
+  - *Since version 30* a night the illness hold holds (the second and later nights of an illness-ward run;
+    [baselines](baselines.md)) is left out of the centre too, so an illness's bad sleep doesn't make the nights
+    after it look good.
 - **The scale stays the fixed 0.12** (12 Sleep Performance points per unit). Only the centre is personal.
 - The centre is stored with each day as `recovery.inputs.sleepCentre`. The Recovery screen's sleep evidence shows it
   as the baseline.

@@ -5,6 +5,10 @@
 // (sleep need: median, adult floor 7 h): sleep and recovery moved by design; strain is byte-identical.
 // Re-recorded for SCORING_VERSION 17 (Recovery's sleep term centred on your own usual night): only recovery moved;
 // strain and sleep are byte-identical.
+// Re-recorded for SCORING_VERSION 30 (the illness hold): only recovery moved, from the seed's illness on (3 held nights,
+// then the week after 3–6 points lower, fading to under 1 point within a month); strain and sleep are byte-identical.
+// Re-recorded for SCORING_VERSION 32 (a robust first week for baselines): only recovery moved, by at most 0.41 points in
+// days 7–29 and about 0.01 after day 60 (the seed has no early glitch); strain and sleep are byte-identical.
 import { expect, it } from "vitest";
 import { rows, sql } from "../db";
 import { seeded, USER } from "../testing";

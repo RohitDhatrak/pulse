@@ -42,6 +42,10 @@ const restorativePct = (r: DayRow) => {
   return m && m.asleepMin > 0 && m.deepMin != null && m.remMin != null ? ((m.deepMin + m.remMin) / m.asleepMin) * 100 : null;
 };
 
+/** Under the Sleep Performance dial for a main sleep without stages (scoring version 31). */
+export const UNSTAGED_USUAL = "No sleep stages last night: restorative sleep counted at your usual.";
+export const UNSTAGED_OMITTED = "No sleep stages last night: scored on duration, efficiency and consistency.";
+
 /** Sleep `/sleep` for `day` (spec §7.5). */
 export async function getSleep(day: string, ctx: QueryCtx): Promise<SleepVM> {
   const today = todayOf(ctx);
@@ -94,6 +98,7 @@ export async function getSleep(day: string, ctx: QueryCtx): Promise<SleepVM> {
     day,
     isToday,
     performance,
+    performanceNote: s?.restorative === "usual" ? UNSTAGED_USUAL : s?.restorative === "omitted" ? UNSTAGED_OMITTED : null,
     summary,
     insight: insightOf(rows, day, ctx.timeZone),
     stages,
