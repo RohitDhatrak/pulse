@@ -1,11 +1,12 @@
-// Band heart rate and per-minute steps, stored as one row per user and UTC day (hr_days, steps_days): parallel
-// arrays of second-of-day offsets and values, sorted by offset. UTC buckets never move when the time zone changes.
+// Band heart rate, per-minute steps, and overnight HRV and SpO2 (tenths), stored as one row per user and UTC day
+// (hr_days, steps_days, hrv_days, spo2_days): parallel arrays of second-of-day offsets and values, sorted by offset.
+// UTC buckets never move when the time zone changes.
 import { and, between, eq } from "drizzle-orm";
 import { type Db, row, sql } from "./db";
-import { hrDays, stepsDays } from "./db/schema";
+import { hrDays, hrvDays, spo2Days, stepsDays } from "./db/schema";
 
-export type SampleTable = "hr" | "steps";
-const T = { hr: hrDays, steps: stepsDays } as const;
+export type SampleTable = "hr" | "steps" | "hrv" | "spo2";
+const T = { hr: hrDays, steps: stepsDays, hrv: hrvDays, spo2: spo2Days } as const;
 const DAY = 86_400;
 export const bucketOf = (ts: number) => Math.floor(ts / DAY);
 
@@ -37,6 +38,10 @@ export async function readSamples(db: Db, table: SampleTable, userId: number, lo
 /** Heart rate as the scorers want it. */
 export const readHr = async (db: Db, userId: number, lo: number, hi: number) =>
   (await readSamples(db, "hr", userId, lo, hi)).map((s) => ({ ts: s.ts, bpm: s.v }));
+
+/** Overnight HRV (ms) or SpO2 (%) samples, stored in tenths (version 35). */
+export const readTenths = async (db: Db, table: "hrv" | "spo2", userId: number, lo: number, hi: number) =>
+  (await readSamples(db, table, userId, lo, hi)).map((s) => ({ ts: s.ts, v: s.v / 10 }));
 
 /** The first and last sample time, or null with none. Reads only the first and last bucket's end offsets. */
 export async function sampleRange(db: Db, table: SampleTable, userId: number): Promise<{ min: number; max: number } | null> {

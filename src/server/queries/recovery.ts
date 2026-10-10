@@ -115,7 +115,8 @@ export function contributors(row: DayRow | undefined, isToday: boolean): Contrib
     },
     {
       key: "rhr",
-      label: "Resting heart rate",
+      // Version 35: Fitbit's non-REM heart rate once its own baseline is established.
+      label: inputs?.rhrSource === "sleep" ? "Sleeping heart rate" : "Resting heart rate",
       unit: "bpm",
       metric: metric("rhr", inputs?.rhr ?? row?.sessionRhr, missing),
       baseline: base(b?.rhr, usable(b?.rhr)),

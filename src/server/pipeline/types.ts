@@ -86,8 +86,12 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * (a new device, a beta-blocker) every night was rejected and the baseline stayed at the old normal for good.
  * 34: "count my data from" (Settings): days before a person's chosen date are left out of scoring entirely, so a device
  * switch (offered from the main sleeps' source) can start every baseline fresh. Earlier data stays stored.
+ * 35: Recovery, readiness, the Health Monitor and the illness signal score Fitbit's non-REM heart rate (the sleeping
+ * resting HR) against its own baseline once that baseline is trusted, else Google's daily resting HR against its own;
+ * the two never share a baseline (about 6 bpm apart). Strain's zones and Pulse Age keep Google's. Sleep rows carry the
+ * night's brief awakenings (Disturbances, shown only).
  */
-export const SCORING_VERSION = 34;
+export const SCORING_VERSION = 35;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
@@ -166,13 +170,29 @@ export type RecoveryRow = {
   /** The score gained a term after it was first shown. */
   updated: boolean;
   /** `sleepCentre`: your usual sleep performance (0–1) the sleep term was scored against (SCORING_VERSION 17). */
-  inputs: { hrv: number | null; rhr: number | null; resp: number | null; sleepPerf: number | null; sleepCentre?: number; skinTempDev: number | null };
+  inputs: {
+    hrv: number | null;
+    /** The resting HR Recovery scored: `sleepHr` once its baseline is established, else `dailyRhr` (version 35). */
+    rhr: number | null;
+    rhrSource?: RestingSource | null;
+    /** Fitbit's non-REM heart rate for the night, folded into its own baseline. */
+    sleepHr?: number | null;
+    /** Google's daily resting HR, else Pulse's sleep-session estimate, folded into the resting-HR baseline. */
+    dailyRhr?: number | null;
+    resp: number | null;
+    sleepPerf: number | null;
+    sleepCentre?: number;
+    skinTempDev: number | null;
+  };
   baselines: { hrv: BaselineSummary; rhr: BaselineSummary; resp: BaselineSummary; skinTemp: BaselineSummary };
   hrvZ: number | null;
   drivers: ChargeDriver[];
   forecast: RecoveryForecast | null;
   forecastNightsLeft: number;
 };
+
+/** Where Recovery's resting HR came from (version 35): Fitbit's non-REM heart rate, Google's daily value, or Pulse's session estimate. */
+export type RestingSource = "sleep" | "daily" | "session";
 
 export type SleepRow = {
   reason: ReasonCode | null;
@@ -190,6 +210,8 @@ export type SleepRow = {
     lightMin: number | null;
     efficiency: number;
     wakeEvents: number | null;
+    /** Fitbit's brief awakenings on a staged night (shown, not scored; version 35), else null. */
+    disturbances?: number | null;
   } | null;
   naps: { id: string; start: number; end: number; asleepMin: number }[];
   /** 0–100 */

@@ -59,6 +59,8 @@ const DAILY = {
     // The average is what Recovery's baseline uses; the deep-sleep RMSSD is stored beside it, never mixed in.
     hrvMs: num(o.averageHeartRateVariabilityMilliseconds),
     hrvDeepMs: num(o.deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds),
+    // The night's heart rate over non-REM sleep: Recovery's and the Health Monitor's resting HR when present (version 35).
+    nonRemHrBpm: num(o.nonRemHeartRateBeatsPerMinute),
   }),
   "daily-resting-heart-rate": (o: Obj): DailyValues => ({
     rhrBpm: num(o.beatsPerMinute),
@@ -180,6 +182,25 @@ export function mapHeartRate(points: unknown[]): Map<number, number> {
 }
 
 /**
+ * Overnight HRV (RMSSD, ms) or SpO2 (%) samples, unix second -> tenths (version 35), band only like heart rate.
+ * A repeated second keeps the last point; a value outside the type's plausible range is dropped.
+ */
+export function mapNightSamples(type: "heart-rate-variability" | "oxygen-saturation", points: unknown[]): Map<number, number> {
+  const [key, field, lo, hi] =
+    type === "heart-rate-variability"
+      ? (["heartRateVariability", "rootMeanSquareOfSuccessiveDifferencesMilliseconds", 1, 300] as const)
+      : (["oxygenSaturation", "percentage", 50, 100] as const);
+  const out = new Map<number, number>();
+  for (const p of points) {
+    if (platform(p) === "HEALTH_CONNECT") continue;
+    const ts = secs(at(p, `${key}.sampleTime.physicalTime`));
+    const v = num(at(p, `${key}.${field}`));
+    if (ts !== null && v !== null && v >= lo && v <= hi) out.set(ts, Math.round(v * 10));
+  }
+  return out;
+}
+
+/**
  * Steps per minute (minute-start unix second -> count), the maximum across sources: summing would
  * double-count a walk both the band and the phone saw. Only used for movement gating; daily totals
  * come from dailyRollUp. An interval longer than a minute is spread evenly over the minutes it touches.
@@ -216,6 +237,9 @@ const STAGES: Record<string, Stage> = { AWAKE: "awake", LIGHT: "light", DEEP: "d
 
 export type SessionRow = Omit<typeof sleepSessions.$inferInsert, "userId">;
 export type SegmentRow = { sessionId: string; startTs: number; endTs: number; stage: Stage };
+/** A brief awakening inside light or REM sleep (`sleep.shortAwakenings[]`), shown as a Disturbance (version 35). */
+export type AwakeningRow = { sessionId: string; startTs: number; endTs: number; stage: "light" | "rem" };
+const AWAKENING_STAGES: Record<string, AwakeningRow["stage"]> = { LIGHT: "light", REM: "rem" };
 export type ExerciseRow = Omit<typeof exercises.$inferInsert, "userId">;
 
 /** A point's stable id: its resource name, which survives a re-fetch, else type and start. */
@@ -235,11 +259,13 @@ const longest = (xs: SessionRow[]) =>
  * flags are an explicit `false` has no main sleep.
  *
  * Segments only for `stagesStatus` SUCCEEDED with a recognised stage list; any other session keeps
- * its summary minutes and gets no hypnogram.
+ * its summary minutes and gets no hypnogram. Brief awakenings likewise only on a staged session: proto3 omits an
+ * empty list, so a staged night without one had none. An awakening we can't read is skipped on its own.
  */
-export function mapSleep(points: unknown[], tz: string): { sessions: SessionRow[]; segments: SegmentRow[] } {
+export function mapSleep(points: unknown[], tz: string): { sessions: SessionRow[]; segments: SegmentRow[]; awakenings: AwakeningRow[] } {
   const sessions = new Map<string, { row: SessionRow; flag: unknown }>();
   const segments = new Map<string, SegmentRow[]>();
+  const awakenings = new Map<string, AwakeningRow[]>();
   for (const p of points) {
     const o = at(p, "sleep");
     const start = secs(at(o, "interval.startTime"));
@@ -286,6 +312,17 @@ export function mapSleep(points: unknown[], tz: string): { sessions: SessionRow[
       }
     }
     segments.set(id, [...segs.values()].sort((a, b) => a.startTs - b.startTs));
+
+    const wakes = new Map<number, AwakeningRow>(); // by start: the primary key
+    if (stagesStatus === "SUCCEEDED") {
+      for (const a of list(at(o, "shortAwakenings"))) {
+        const aStart = secs(at(a, "startTime"));
+        const aEnd = secs(at(a, "endTime"));
+        const stage = AWAKENING_STAGES[String(at(a, "type"))];
+        if (stage && aStart !== null && aEnd !== null && aEnd > aStart && aStart >= start && aEnd <= end) wakes.set(aStart, { sessionId: id, startTs: aStart, endTs: aEnd, stage });
+      }
+    }
+    awakenings.set(id, [...wakes.values()].sort((a, b) => a.startTs - b.startTs));
   }
 
   const byDay = new Map<string, { row: SessionRow; flag: unknown }[]>();
@@ -296,7 +333,7 @@ export function mapSleep(points: unknown[], tz: string): { sessions: SessionRow[
     const main = flagged.length ? longest(flagged) : unflagged ? longest(day.map((s) => s.row)) : undefined;
     if (main) main.isMain = true;
   }
-  return { sessions: [...sessions.values()].map((s) => s.row), segments: [...segments.values()].flat() };
+  return { sessions: [...sessions.values()].map((s) => s.row), segments: [...segments.values()].flat(), awakenings: [...awakenings.values()].flat() };
 }
 
 /** Exercises on their local start day. */

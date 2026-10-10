@@ -5,7 +5,9 @@ import { dailyMetrics, dailyScores, dailyValues, healthRecords } from "../db/sch
 import { SEED_DAYS } from "../sources/seed/scenario";
 import { copyDb, ctxFor, dayAt, seeded, USER } from "../testing";
 import { getFitness, getHealthspan, getMonitor, vo2maxCaption } from "./health";
+import { getRecovery } from "./recovery";
 import { getReport } from "./reports";
+import { getSleep } from "./sleep";
 import { rows, sql } from "../db";
 
 let db: Db;
@@ -64,6 +66,36 @@ describe("getMonitor measurements", () => {
     expect(m[3].average).toBeNull();
     const before = (await getMonitor(dayAt(160), ctxFor(db2))).measurements[2];
     expect(before.metric).toMatchObject({ value: null, reason: "no_data" });
+  });
+});
+
+describe("the sleeping heart rate and the overnight curves (SCORING_VERSION 35)", () => {
+  const metricsOn = async (day: string) => (await db.select().from(dailyMetrics).where(and(eq(dailyMetrics.userId, USER), eq(dailyMetrics.day, day))))[0];
+
+  it("once its baseline is trusted, the Monitor and Recovery show the sleeping heart rate, its trend that series alone", async () => {
+    const d = dayAt(150);
+    const m = await metricsOn(d);
+    const vm = await getMonitor(d, ctxFor(db));
+    const rhr = vm.vitals.find((v) => v.key === "restingHr")!;
+    expect(rhr).toMatchObject({ label: "Sleeping heart rate", metric: { value: m.nonRemHrBpm } });
+    // The 30-night trend is non-REM heart rates only: never a mix with Google's daily value.
+    const trendDays = rhr.trend.points.filter((p) => p.value !== null);
+    for (const p of trendDays.slice(-5)) expect(p.value).toBe((await metricsOn(p.day)).nonRemHrBpm);
+    const rec = (await getRecovery(d, ctxFor(db))).contributors.find((c) => c.key === "rhr")!;
+    expect(rec).toMatchObject({ label: "Sleeping heart rate", metric: { value: m.nonRemHrBpm } });
+    // Early on, before that baseline is trusted, Google's daily value under its usual name.
+    const early = (await getMonitor(dayAt(8), ctxFor(db))).vitals.find((v) => v.key === "restingHr")!;
+    expect(early).toMatchObject({ label: "Resting heart rate", metric: { value: (await metricsOn(dayAt(8))).rhrBpm } });
+  });
+
+  it("the HRV and SpO2 sheets carry last night's curve, the same as Sleep's; the others carry none", async () => {
+    const d = dayAt(150);
+    const vm = await getMonitor(d, ctxFor(db));
+    const sleep = await getSleep(d, ctxFor(db));
+    expect(vm.vitals.find((v) => v.key === "hrv")!.night).toEqual(sleep.nightHrv);
+    expect(vm.vitals.find((v) => v.key === "spo2")!.night).toEqual(sleep.nightSpo2);
+    expect(vm.vitals.filter((v) => v.night !== undefined).map((v) => v.key)).toEqual(["spo2", "hrv"]);
+    expect((await getMonitor(dayAt(156), ctxFor(db))).vitals.find((v) => v.key === "hrv")!.night).toMatchObject({ value: null });
   });
 });
 

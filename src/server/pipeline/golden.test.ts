@@ -783,6 +783,32 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.stress": "a33f4b1f9da388c5",
     "reports": "721e91c4289e73fb",
   },
+  // 35: Recovery, readiness, the Health Monitor and the illness signal score the sleeping heart rate (Fitbit's non-REM
+  // HR) against its own baseline once trusted; sleep rows carry Disturbances. Recovery and what reads it moved
+  // (training load, strain target, energy bank, health monitor, journal impact, reports); strain only by its key.
+  35: {
+    "daily_scores.scoring_version": "a9b1f080eecea71e",
+    "daily_scores.strain": "11b642bdcf10cea3",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "4c06cde43b8762a1",
+    "daily_scores.sleep": "47099c1ed36f49e0",
+    "daily_scores.training_load": "c3a9845a112f407c",
+    "daily_scores.strain_target": "2cd7000b83a102bd",
+    "daily_scores.sleep_planner": "4b65c030adc2879a",
+    "daily_scores.energy_bank": "0a4b9d62973de713",
+    "daily_scores.stress": "321b4141d194bc9f",
+    "daily_scores.health_monitor": "5b7c6c33313accbb",
+    "daily_scores.healthspan": "7d5bfef33f56df8c",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "e42699f0663801e9",
+    "intraday_series.energy_bank": "8408017cfc62c7e7",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "280d884a01803ce9",
+    "intraday_series.stress": "a33f4b1f9da388c5",
+    "reports": "2f2fccdd25f40e0f",
+  },
 };
 
 // Numbers are rounded to 10 significant digits first, so a last-ulp difference in Math between Node

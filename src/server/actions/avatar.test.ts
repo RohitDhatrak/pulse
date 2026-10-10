@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../db";
-import { exercises, journalEntries, oauthTokens } from "../db/schema";
+import { exercises, hrvDays, journalEntries, oauthTokens, sleepAwakenings, sleepSessions, spo2Days } from "../db/schema";
+import { writeSamples } from "../samples";
 import { avatarSrc, connectedGoogleEmail, forgetSyncedData, ownerName, setAvatar, setGoogleAccount, uploadedAvatar } from "../avatar";
 import { addUser, freshDb, USER } from "../testing";
 import { removeAvatar, uploadAvatar } from "./avatar";
@@ -69,8 +70,16 @@ describe("Google account", () => {
     await db.insert(exercises).values([ex(USER), ex(other)]);
     await db.insert(journalEntries).values({ userId: USER, day: "2026-09-01", tag: "alcohol", value: 1 });
     await setGoogleAccount(db, other, { email: "o@gmail.com", name: "Other", picture: PHOTO });
+    // Version 35's tables: overnight samples and a night's brief awakenings.
+    for (const u of [USER, other]) {
+      await writeSamples(db, "hrv", u, [{ ts: 1_790_000_000, v: 313 }]);
+      await writeSamples(db, "spo2", u, [{ ts: 1_790_000_000, v: 964 }]);
+      await db.insert(sleepSessions).values({ userId: u, id: "n", day: "2026-09-01", startTs: 1, endTs: 9, isMain: true, processed: true, source: "FITBIT" });
+      await db.insert(sleepAwakenings).values({ userId: u, sessionId: "n", startTs: 2, endTs: 3, stage: "light" });
+    }
     await forgetSyncedData(db, USER);
     expect(await db.select({ userId: exercises.userId }).from(exercises)).toEqual([{ userId: other }]);
+    for (const t of [hrvDays, spo2Days, sleepAwakenings]) expect(await db.select({ userId: t.userId }).from(t)).toEqual([{ userId: other }]);
     expect(await db.select().from(journalEntries)).toHaveLength(1);
     expect(await ownerName(db, USER)).toBeNull();
     expect(await avatarSrc(db, USER)).toBeNull();

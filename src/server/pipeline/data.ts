@@ -27,6 +27,8 @@ export type Metrics = {
   day: string;
   hrvMs: number | null;
   rhrBpm: number | null;
+  /** Fitbit's non-REM heart rate (version 35). */
+  nonRemHrBpm: number | null;
   respBpm: number | null;
   nightlyTempC: number | null;
   spo2Pct: number | null;
@@ -72,7 +74,7 @@ export async function load(db: Db, { userId, timeZone: tz, dataFrom }: PipelineO
   const [metrics, sessions, exercises, hrSpan] = await Promise.all([
     db
       .select({
-        day: m.day, hrvMs: m.hrvMs, rhrBpm: m.rhrBpm, respBpm: m.respBpm, nightlyTempC: m.nightlyTempC, spo2Pct: m.spo2Pct,
+        day: m.day, hrvMs: m.hrvMs, rhrBpm: m.rhrBpm, nonRemHrBpm: m.nonRemHrBpm, respBpm: m.respBpm, nightlyTempC: m.nightlyTempC, spo2Pct: m.spo2Pct,
         vo2maxDaily: m.vo2maxDaily, vo2maxRun: m.vo2maxRun, steps: m.steps, calories: m.calories, weightKg: m.weightKg,
         bodyFatPct: m.bodyFatPct, hrZones: m.hrZones, lightModerateMin: m.lightModerateMin, vigorousPeakMin: m.vigorousPeakMin,
         tempBaselineC: m.tempBaselineC, tempSdC: m.tempSdC, rhrRangeLow: m.rhrRangeLow, rhrRangeHigh: m.rhrRangeHigh,

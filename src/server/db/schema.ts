@@ -186,6 +186,33 @@ export const stepsDays = pgTable(
   (t) => [primaryKey({ columns: [t.userId, t.bucket] })],
 );
 
+/**
+ * Fitbit's overnight HRV samples (RMSSD, about every 5 minutes asleep) and SpO2 samples (about every minute), same
+ * layout as hr_days. Values are tenths (31.3 ms -> 313, 96.4 % -> 964) so a re-fetch compares exactly. Shown on Sleep and
+ * the Health Monitor; nothing scores them (version 35).
+ */
+export const hrvDays = pgTable(
+  "hrv_days",
+  {
+    userId: userId(),
+    bucket: integer("bucket").notNull(),
+    offsets: integer("offsets").array().notNull(),
+    values: smallint("values").array().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.bucket] })],
+);
+
+export const spo2Days = pgTable(
+  "spo2_days",
+  {
+    userId: userId(),
+    bucket: integer("bucket").notNull(),
+    offsets: integer("offsets").array().notNull(),
+    values: smallint("values").array().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.bucket] })],
+);
+
 export const dailyMetrics = pgTable(
   "daily_metrics",
   {
@@ -195,6 +222,8 @@ export const dailyMetrics = pgTable(
     hrvDeepMs: real("hrv_deep_ms"),
     rhrBpm: real("rhr_bpm"),
     rhrMethod: text("rhr_method"),
+    /** Fitbit's heart rate over the night's non-REM sleep (daily-heart-rate-variability), the sleeping resting HR (version 35). */
+    nonRemHrBpm: real("non_rem_hr_bpm"),
     respBpm: real("resp_bpm"),
     nightlyTempC: real("nightly_temp_c"),
     spo2Pct: real("spo2_pct"),
@@ -251,6 +280,25 @@ export const sleepSegments = pgTable(
     startTs: ts("start_ts").notNull(),
     endTs: ts("end_ts").notNull(),
     stage: text("stage", { enum: ["awake", "light", "deep", "rem"] }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.sessionId, t.startTs] }),
+    foreignKey({ columns: [t.userId, t.sessionId], foreignColumns: [sleepSessions.userId, sleepSessions.id] }).onDelete("cascade"),
+  ],
+);
+
+/**
+ * Fitbit's brief awakenings inside a sleep (`sleep.shortAwakenings[]`): moments of waking too short to stage as awake,
+ * each within light or REM sleep. They overlap the stage segments, hence their own table. Shown as Disturbances (version 35).
+ */
+export const sleepAwakenings = pgTable(
+  "sleep_short_awakenings",
+  {
+    userId: userId(),
+    sessionId: text("session_id").notNull(),
+    startTs: ts("start_ts").notNull(),
+    endTs: ts("end_ts").notNull(),
+    stage: text("stage", { enum: ["light", "rem"] }).notNull(),
   },
   (t) => [
     primaryKey({ columns: [t.userId, t.sessionId, t.startTs] }),
@@ -538,7 +586,7 @@ export const pushSubscriptions = pgTable(
 
 /** Tables holding a user's synced Google data and what was computed from it (cleared on a Google account switch). */
 export const SYNCED_TABLES = [
-  syncState, rawPayloads, hrDays, stepsDays, dailyMetrics, sleepSegments, sleepSessions, exercises, dailyValues,
+  syncState, rawPayloads, hrDays, stepsDays, hrvDays, spo2Days, dailyMetrics, sleepAwakenings, sleepSegments, sleepSessions, exercises, dailyValues,
   healthRecords, intradayDirty, dailyScores, intradaySeries, reports,
 ] as const;
 

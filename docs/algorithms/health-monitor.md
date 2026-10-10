@@ -73,9 +73,22 @@ flowchart TB
 | `ranges` | per vital | Google's ranges for last night (step 0); a vital without one keeps Pulse's. |
 | `journal` | context | From yesterday's journal tags and training (`scores.ts`): `alcohol`, `sauna`, `travelPhaseJump` (the travel tag) and `hardOrLateWorkout` dampen the illness signal and report "suppressed" instead of "raised"; `alreadyUnwell` (the illness tag) replaces the result (step 6). |
 
-**Which RHR.** The same resting HR as Recovery and the illness signal: Google's `daily-resting-heart-rate`, and `sessionRestingHR` only on a day Google has none.
+**Which RHR** (*since version 35*). The same resting HR as Recovery and the illness signal (`restingPair`,
+`docs/algorithms/baselines.md` § Why version 35):
+- **Fitbit's sleeping heart rate** (non-REM) once its own baseline is trusted. The tile then reads "Sleeping heart rate",
+  and its range and 30-night trend are that series alone.
+- **Before that**, or on a night without it, Google's `daily-resting-heart-rate`, else `sessionRestingHR`.
 
-**Unconfirmed.** The personal-range roll-ups are documented on `dailyRollUp` ("returned by default when rolling up data points from the `daily-resting-heart-rate` data type"), but the data types table lists only `list` for those two types. Until a real account syncs, it is not known whether Google answers, or whether each day's range covers that day. With no answer, the sync job records its error in Settings (Personal ranges) and Pulse's own range stays.
+The two are never mixed in one history.
+
+**Google's personal ranges never arrive.** A `dailyRollUp` on `daily-resting-heart-rate` or
+`daily-heart-rate-variability` answers `UNSUPPORTED_DATA_TYPE_ACTION` ("supported: list, reconcile"; checked on a real
+account 2026-10-03 and 2026-10-10). So the sync doesn't ask, and Pulse's own ranges are what real accounts see. The
+code path stays for the demo, which generates them.
+
+**Overnight curves** (*version 35*): the HRV and SpO2 sheets draw last night's samples (`hrv_days`, `spo2_days`),
+clipped to the main sleep, with the median (HRV, which equals Google's nightly value) or the low (SpO2) marked. They are
+shown only; nothing is scored from them.
 
 ## Constants
 

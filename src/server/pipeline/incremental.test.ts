@@ -2,7 +2,7 @@
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { type Db, rows, sql } from "../db";
-import { dailyMetrics, sleepSegments, sleepSessions } from "../db/schema";
+import { dailyMetrics, sleepAwakenings, sleepSegments, sleepSessions } from "../db/schema";
 import { lastRun, recompute, type RecoveryRow } from ".";
 import { seedPull } from "../sources/seed/generate";
 import { localMidnight } from "../time";
@@ -38,13 +38,15 @@ describe("incremental equals full on 220 days", () => {
     const at = (i: number) => new Date(Date.parse(first) + i * DAY_S * 1000).toISOString().slice(0, 10);
     const day = at(200);
 
-    // Hold back night 200: its session, stages and nightly metrics.
+    // Hold back night 200: its session, stages, brief awakenings and nightly metrics.
     const s = sleepSessions;
     const [session] = await late.select().from(s).where(and(eq(s.userId, USER), eq(s.day, day), eq(s.isMain, true)));
     const segments = await late.select().from(sleepSegments).where(and(eq(sleepSegments.userId, USER), eq(sleepSegments.sessionId, session.id)));
+    const awakenings = await late.select().from(sleepAwakenings).where(and(eq(sleepAwakenings.userId, USER), eq(sleepAwakenings.sessionId, session.id)));
+    expect(awakenings.length).toBeGreaterThan(0);
     const m = dailyMetrics;
     const [metrics] = await late
-      .select({ hrvMs: m.hrvMs, hrvDeepMs: m.hrvDeepMs, rhrBpm: m.rhrBpm, rhrMethod: m.rhrMethod, respBpm: m.respBpm, nightlyTempC: m.nightlyTempC, spo2Pct: m.spo2Pct })
+      .select({ hrvMs: m.hrvMs, hrvDeepMs: m.hrvDeepMs, rhrBpm: m.rhrBpm, rhrMethod: m.rhrMethod, nonRemHrBpm: m.nonRemHrBpm, respBpm: m.respBpm, nightlyTempC: m.nightlyTempC, spo2Pct: m.spo2Pct })
       .from(m)
       .where(and(eq(m.userId, USER), eq(m.day, day)));
     await late.delete(s).where(and(eq(s.userId, USER), eq(s.id, session.id)));
@@ -57,6 +59,7 @@ describe("incremental equals full on 220 days", () => {
     // The night syncs late: the source writes the rows (no HR changed, so nothing is marked dirty).
     await late.insert(s).values(session);
     if (segments.length) await late.insert(sleepSegments).values(segments);
+    await late.insert(sleepAwakenings).values(awakenings);
     await late.update(m).set(metrics).where(and(eq(m.userId, USER), eq(m.day, day)));
     await recompute(late, OPTS);
     // Only the days the night touches rerun stage 1: the morning it ended, and the evening before if it started then.

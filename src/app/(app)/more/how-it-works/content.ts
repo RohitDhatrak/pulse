@@ -28,7 +28,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
         ],
         rows: [
           { term: "Heart rate variability", detail: "Fitbit’s nightly HRV, in ms. Higher is better." },
-          { term: "Resting heart rate", detail: "Fitbit’s daily resting heart rate from Google, in bpm; the lowest 5-minute average during sleep only on a day Google has none. Lower is better." },
+          { term: "Resting heart rate", detail: "Fitbit’s sleeping heart rate (its non-REM heart rate) once 14\u00a0nights of it make a steady baseline; until then, and on a night without it, Fitbit’s daily resting heart rate from Google, or the lowest 5-minute average during sleep on a day Google has none. Each is compared only with its own history, never mixed. In bpm; lower is better." },
           { term: "Sleep performance", detail: "Last night’s Sleep Performance against your own average over the last 28\u00a0nights (85% until you have 7)." },
           { term: "Respiratory rate", detail: "Breaths per minute asleep, in rpm. Higher counts against you." },
           { term: "Skin temperature", detail: "Distance from Google’s skin-temperature baseline (your 30-night median), in °C; Pulse’s own baseline only when Google gives none. Either direction counts against you." },
@@ -172,6 +172,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
         ],
         paragraphs: [
           "Your sleep need is the median of your last 28\u00a0nights, at least 7\u00a0hours asleep (9 under 18) and at most 9.5. Until you have 7\u00a0nights, it is 7.5\u00a0hours.",
+          "The Sleep page also shows Disturbances: Fitbit’s brief awakenings, moments of waking too short to count as awake time, marked on the stage chart. They are shown, not scored. Last night’s overnight HRV and blood oxygen readings sit under the heart-rate chart.",
         ],
       },
       {
@@ -380,10 +381,10 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "What goes in",
         rows: [
-          { term: "Resting heart rate", detail: "Fitbit’s daily resting heart rate from Google, in bpm." },
-          { term: "Heart rate variability", detail: "Fitbit’s nightly HRV, in ms." },
+          { term: "Resting heart rate", detail: "Fitbit’s sleeping heart rate (non-REM) once it has 14\u00a0nights of history, shown as Sleeping heart rate; before that Fitbit’s daily resting heart rate from Google. In bpm." },
+          { term: "Heart rate variability", detail: "Fitbit’s nightly HRV, in ms. Its sheet also draws last night’s readings, about every 5\u00a0minutes asleep." },
           { term: "Respiratory rate", detail: "Breaths per minute asleep, in rpm." },
-          { term: "SpO2", detail: "Blood oxygen overnight, in %." },
+          { term: "SpO2", detail: "Blood oxygen overnight, in %. Its sheet also draws last night’s readings and marks the lowest." },
           { term: "Skin temperature", detail: "Last night against Google’s skin-temperature baseline, in °C." },
         ],
       },

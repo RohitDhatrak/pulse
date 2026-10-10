@@ -32,6 +32,7 @@ import type {
   HealthspanRow,
   PipelineOptions,
   RecoveryRow,
+  RestingSource,
   SleepPlannerRow,
   SleepRow,
   Stage1Activity,
@@ -51,20 +52,27 @@ export type Inputs = {
   stillHr: Pick<Map<string, (number | null)[]>, "get">;
   loadSeries: Pick<Map<string, (number | null)[]>, "get">;
   segments: Map<string, Segment[]>;
+  /** Brief awakenings per sleep session id (version 35); a staged session without an entry had none. */
+  awakenings: Map<string, number>;
   tagOn: (day: string, tag: string) => boolean;
 };
+
+/** A night's two resting-HR readings, kept apart so each series has its own history (version 35). */
+type RestingPair = { sleepHr: number | null; dailyRhr: number | null };
 
 /** State folded over the days before the current one (baselines before today's fold). */
 export type Fold = ReturnType<typeof newFold>;
 export const newFold = () => ({
   hrvB: null as BaselineState | null,
   rhrB: null as BaselineState | null,
+  /** Fitbit's non-REM heart rate, its own baseline (version 35): never folded with Google's daily resting HR. */
+  sleepHrB: null as BaselineState | null,
   respB: null as BaselineState | null,
   skinB: null as BaselineState | null,
   nights: [] as { day: string; hours: number }[],
   ledgerSeries: [] as [string, number | null][],
-  readinessRows: [] as ReadinessDay[],
-  monitorRows: [] as HealthMonitorDay[],
+  readinessRows: [] as (ReadinessDay & RestingPair)[],
+  monitorRows: [] as (HealthMonitorDay & RestingPair)[],
   hsRows: [] as HealthspanDay[],
   outcomes: [] as OutcomeDay[],
   recoveries: [] as number[],
@@ -87,7 +95,7 @@ export type Day = ReturnType<typeof dayOf>;
 export function dayOf(data: Data, inputs: Inputs, day: string, opts: PipelineOptions) {
   const cache = inputs.cached.get(day)!;
   const mainSession = data.mainOf.get(day);
-  const main = mainSession ? nightOf(mainSession, inputs.segments.get(mainSession.id)) : null;
+  const main = mainSession ? nightOf(mainSession, inputs.segments.get(mainSession.id), inputs.awakenings.get(mainSession.id) ?? 0) : null;
   return {
     day,
     start: data.dayStart(day),
@@ -109,7 +117,7 @@ export function dayOf(data: Data, inputs: Inputs, day: string, opts: PipelineOpt
 const summarize = (s: BaselineState | null): BaselineSummary =>
   s && { mean: s.baseline, sd: sigma(s), status: s.status, nValid: s.nValid };
 
-function nightOf(main: Session, segments: Segment[] | undefined): NonNullable<SleepRow["main"]> {
+function nightOf(main: Session, segments: Segment[] | undefined, awakenings: number): NonNullable<SleepRow["main"]> {
   const staged = main.stagesStatus === "SUCCEEDED" && !!segments?.length;
   const inBedS = Math.max(0, main.endTs - main.startTs);
   if (staged) {
@@ -132,6 +140,7 @@ function nightOf(main: Session, segments: Segment[] | undefined): NonNullable<Sl
       lightMin: h.lightMin,
       efficiency: h.efficiency,
       wakeEvents: h.disturbances,
+      disturbances: awakenings,
     };
   }
   const asleepMin = main.asleepMin ?? 0;
@@ -149,6 +158,7 @@ function nightOf(main: Session, segments: Segment[] | undefined): NonNullable<Sl
     lightMin: main.lightMin,
     efficiency: inBedS > 0 ? Math.min(1, (asleepMin * 60) / inBedS) : 0,
     wakeEvents: null,
+    disturbances: null,
   };
 }
 
@@ -234,14 +244,40 @@ function sleepRegularity(data: Data, cached: Map<string, Cached>, day: string, t
   return sleepRegularityIndex(sessions, windowStart, covered);
 }
 
+// ── Resting HR: which reading, against which baseline (version 35) ──
+
+/**
+ * The night's resting HR and the baseline to compare it with. Fitbit's non-REM heart rate (about 6 bpm under Google's
+ * daily resting HR on the owner's nights) has its own baseline and is used once that baseline is trusted (14 nights),
+ * or as soon as it is usable when Google's has no usable baseline either. Otherwise Google's daily value (else Pulse's
+ * session estimate) against the resting-HR baseline, as before. One value, one baseline: the two series never mix.
+ */
+export function restingPair(f: Pick<Fold, "rhrB" | "sleepHrB">, d: Pick<Day, "dm" | "cache">) {
+  const sleepHr = d.dm?.nonRemHrBpm ?? null;
+  const dailyRhr = d.dm?.rhrBpm ?? d.cache.sessionRhr;
+  const sB = f.sleepHrB;
+  const dailyUsable = !!f.rhrB && isUsable(f.rhrB);
+  if (sleepHr != null && sB && isUsable(sB) && (isTrusted(sB) || !dailyUsable)) {
+    return { rhr: sleepHr, baseline: sB, source: "sleep" as RestingSource, sleepHr, dailyRhr };
+  }
+  const source: RestingSource | null = d.dm?.rhrBpm != null ? "daily" : d.cache.sessionRhr != null ? "session" : null;
+  return { rhr: dailyRhr, baseline: f.rhrB, source, sleepHr, dailyRhr };
+}
+
+/** A history of nights with `rhr` set to the series tonight is scored on (never a mix of the two). */
+const onSeries = <R extends RestingPair & { rhr?: number | null }>(rows: R[], source: RestingSource | null | undefined): R[] =>
+  rows.map((r) => ({ ...r, rhr: source === "sleep" ? r.sleepHr : r.dailyRhr }));
+
 // ── Recovery (forecast filled in by forecastOf, once tonight's plan exists) ──
 
 export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
   const { dm, mainSession, main } = d;
-  const { hrvB, rhrB, respB, skinB } = f;
+  const { hrvB, respB, skinB } = f;
   const hrv = dm?.hrvMs ?? null;
-  // Google's daily resting HR first; Pulse's sleep-session estimate only on days Google has none.
-  const rhr = dm?.rhrBpm ?? d.cache.sessionRhr;
+  // Version 35: Fitbit's non-REM heart rate against its own baseline once established, else Google's daily resting HR
+  // (Pulse's sleep-session estimate on days Google has none) against the resting-HR baseline.
+  const pair = restingPair(f, d);
+  const { rhr, baseline: rhrB } = pair;
   const resp = dm?.respBpm ?? null;
   const skinTempDev = skinDeviation(d, skinB);
   const sleepPerf = sleep.performance != null ? sleep.performance / 100 : main ? main.efficiency : null;
@@ -316,7 +352,7 @@ export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
     stale,
     terms,
     updated,
-    inputs: { hrv, rhr, resp, sleepPerf, sleepCentre, skinTempDev },
+    inputs: { hrv, rhr, rhrSource: pair.source, sleepHr: pair.sleepHr, dailyRhr: pair.dailyRhr, resp, sleepPerf, sleepCentre, skinTempDev },
     baselines: { hrv: summarize(hrvB), rhr: summarize(rhrB), resp: summarize(respB), skinTemp: summarize(skinB) },
     hrvZ,
     drivers,
@@ -338,8 +374,9 @@ function skinDeviation(d: Day, skinB: BaselineState | null): number | null {
 export function scoreTrainingLoad(f: Fold, d: Day, rec: RecoveryRow): TrainingLoadRow {
   const { hrv, rhr, resp } = rec.inputs;
   // Linear TRIMP, not Effort: a worn day with too little HR is a measured 0, an unworn day has no load.
-  f.readinessRows.push({ day: d.day, hrv, rhr, resp, load: d.s1.trimp ?? (d.worn ? 0 : null) });
-  const { readiness, trainingLoad } = evaluateWithTrainingLoad(f.readinessRows, d.day);
+  f.readinessRows.push({ day: d.day, hrv, rhr, resp, load: d.s1.trimp ?? (d.worn ? 0 : null), sleepHr: rec.inputs.sleepHr ?? null, dailyRhr: rec.inputs.dailyRhr ?? rhr });
+  // The resting-HR signal compares tonight with the same series' history (version 35).
+  const { readiness, trainingLoad } = evaluateWithTrainingLoad(onSeries(f.readinessRows, rec.inputs.rhrSource), d.day);
   return {
     acwr: readiness.acwr,
     lightLoad: readiness.lightLoad,
@@ -539,7 +576,11 @@ function yesterdayHardOrLate(data: Data, f: Fold, d: Day): boolean {
 export function scoreHealthMonitor(data: Data, f: Fold, d: Day, inputs: Inputs, rec: RecoveryRow): HealthMonitorRow {
   const { hrv, rhr, resp, skinTempDev } = rec.inputs;
   const spo2 = d.dm?.spo2Pct ?? null;
-  f.monitorRows.push({ day: d.day, rhr, hrv, resp, spo2, skinTempDev });
+  f.monitorRows.push({ day: d.day, rhr, hrv, resp, spo2, skinTempDev, sleepHr: rec.inputs.sleepHr ?? null, dailyRhr: rec.inputs.dailyRhr ?? rhr });
+  const sleeping = rec.inputs.rhrSource === "sleep";
+  const ranges = googleRanges(d);
+  // Google's resting-HR range describes its daily value, not the sleeping heart rate.
+  if (sleeping) delete ranges.restingHr;
   const hasVitals = rhr != null || hrv != null || resp != null || d.dm?.spo2Pct != null || skinTempDev != null;
   const yesterday = addDays(d.day, -1);
   return !hasVitals
@@ -547,13 +588,13 @@ export function scoreHealthMonitor(data: Data, f: Fold, d: Day, inputs: Inputs, 
     : {
         reason: null,
         stale: rec.stale,
-        ...healthMonitor(f.monitorRows, {
+        ...healthMonitor(onSeries(f.monitorRows, rec.inputs.rhrSource), {
           alcohol: inputs.tagOn(yesterday, "alcohol"),
           sauna: inputs.tagOn(yesterday, "sauna"),
           travelPhaseJump: inputs.tagOn(yesterday, "travel"),
           alreadyUnwell: inputs.tagOn(yesterday, "illness"),
           hardOrLateWorkout: yesterdayHardOrLate(data, f, d),
-        }, googleRanges(d)),
+        }, ranges),
       };
 }
 

@@ -11,12 +11,13 @@ import {
   intradayDirty,
   oauthTokens,
   rawPayloads,
+  sleepAwakenings,
   sleepSegments,
   sleepSessions,
   stepsDays,
   syncState,
 } from "../../db/schema";
-import { readSamples, writeSamples } from "../../samples";
+import { readSamples, readTenths, writeSamples } from "../../samples";
 import { addUser, freshDb, USER } from "../../testing";
 import { RAW_RETENTION_DAYS } from "./client";
 import { recompute } from "../../pipeline";
@@ -50,6 +51,8 @@ const LIST_TYPES = [
   "exercise",
   "heart-rate",
   "steps",
+  "heart-rate-variability",
+  "oxygen-saturation",
 ];
 const camel = (s: string) => s.replace(/[-_](\w)/g, (_, c: string) => c.toUpperCase());
 const payload = (p: unknown, type: string) => at(p, camel(type)) as Obj;
@@ -185,6 +188,7 @@ describe("google sync", () => {
       hrvDeepMs: 47,
       rhrBpm: 57,
       rhrMethod: "WITH_SLEEP",
+      nonRemHrBpm: 56,
       respBpm: 14.2,
       nightlyTempC: 34.12,
       spo2Pct: 96.4,
@@ -369,6 +373,50 @@ describe("google sync", () => {
       advance(15 * 60_000);
       await source.pull(USER);
       expect((await counts()).hrSamples).toBe(5);
+    });
+  });
+
+  describe("overnight extras (version 35)", () => {
+    const night = (t: "hrv" | "spo2") => readTenths(db, t, USER, Date.parse("2026-09-30T00:00:00Z") / 1000, Date.parse("2026-10-03T00:00:00Z") / 1000);
+    const wakes = async () => (await db.select().from(sleepAwakenings)).map((w) => [w.sessionId.split("/").pop(), w.stage, w.endTs - w.startTs]);
+
+    it("HRV and SpO2 samples land in tenths, band only; a spot check is stored (clipped when shown); nothing is marked dirty for them", async () => {
+      const { source } = setup();
+      await source.pull(USER);
+      expect((await night("hrv")).map((s) => s.v)).toEqual([22.5, 25.1, 31.3, 28.4, 19.9, 24]); // HEALTH_CONNECT dropped
+      expect((await night("spo2")).map((s) => s.v)).toEqual([96.4, 95.1, 92.8, 97, 98.3, 96.6, 95.9, 93.8]);
+      expect(await state("hrv-samples")).toMatchObject({ lastError: null, backfillDaysDone: BACKFILL_DAYS });
+
+      // A changed sample replaces the stored one, and alone neither marks a day dirty nor reports a change.
+      await clearDirty();
+      (data["heart-rate-variability"][2] as { heartRateVariability: { rootMeanSquareOfSuccessiveDifferencesMilliseconds: number } }).heartRateVariability.rootMeanSquareOfSuccessiveDifferencesMilliseconds = 33.3;
+      expect(await source.pull(USER)).toEqual({ changed: false });
+      expect((await night("hrv"))[2].v).toBe(33.3);
+      expect(await dirtyDays()).toEqual([]);
+
+      // An empty answer keeps what is stored, as heart rate's does.
+      data["heart-rate-variability"] = [];
+      await source.pull(USER);
+      expect(await night("hrv")).toHaveLength(6);
+    });
+
+    it("brief awakenings are stored per session, replaced when they change (marking the night dirty), and go with a deleted night", async () => {
+      const { source } = setup();
+      await source.pull(USER);
+      expect(await wakes()).toEqual([
+        ["sleep-a", "rem", 60],
+        ["sleep-a", "light", 120],
+      ]);
+      await clearDirty();
+      const a = data.sleep[0] as { sleep: { shortAwakenings: unknown[] } };
+      a.sleep.shortAwakenings = a.sleep.shortAwakenings.slice(1);
+      await source.pull(USER);
+      expect(await wakes()).toEqual([["sleep-a", "light", 120]]);
+      expect(await dirtyDays()).toEqual(["2026-10-01"]);
+      // Fitbit deletes the night: its awakenings go with it.
+      data.sleep = data.sleep.slice(1);
+      await source.pull(USER);
+      expect(await wakes()).toEqual([]);
     });
   });
 

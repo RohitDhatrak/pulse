@@ -9,6 +9,7 @@ import { Skeleton, SkeletonText } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/shells/EmptyState"
 import { MetricState } from "@/components/shells/MetricState"
 import { HypnogramChart, HypnogramSkeleton } from "@/components/charts/Hypnogram"
+import { NightLineChart, type NightLine } from "@/components/charts/NightLineChart"
 import { SleepHrChart, SleepHrChartSkeleton, type SleepHr } from "@/components/charts/SleepHrChart"
 import { ReasonPlaceholder } from "./ReasonPlaceholder"
 import { CAPTION, DeltaMark, LABEL } from "./primitives"
@@ -19,6 +20,8 @@ export type SleepStagesNight = {
   wake: number
   segments: { stage: Stage; start: number; end: number }[]
   rows: { stage: Stage; label: string; pct: number; minutes: number; typical: [number, number] }[]
+  /** Fitbit's brief awakenings, marked on the hypnogram (scoring version 35). */
+  awakenings?: { stage: "light" | "rem"; start: number; end: number }[]
 }
 /** Time asleep in the main sleep and the prior 30 nights' mean, minutes. */
 export type SleepHours = { asleepMin: number; average: number | null; sd?: number }
@@ -27,6 +30,9 @@ export type SleepStagesProps = {
   /** The hero: no value means no night, and the whole card shows the reason. */
   hours: Metric<SleepHours> | undefined
   hr: Metric<SleepHr> | undefined
+  /** Overnight HRV and SpO2 (scoring version 35); each is left out when the night has none. */
+  hrv?: Metric<NightLine>
+  spo2?: Metric<NightLine>
   /** null: a night Fitbit did not stage. */
   data: Metric<SleepStagesNight> | null | undefined
 }
@@ -140,7 +146,7 @@ function Rows({ night, selected, onSelect }: { night: SleepStagesNight; selected
  * the reference app's "Last night's sleep" card (spec §7.5, §11 V8, R9): the hours hero, the overnight heart rate, then the stage
  * rows with hatched tracks. Choosing a stage lights its blocks on the tracks and its stretches on the heart-rate line.
  */
-export function SleepStages({ hours, hr, data }: SleepStagesProps) {
+export function SleepStages({ hours, hr, hrv, spo2, data }: SleepStagesProps) {
   const [selected, setSelected] = React.useState<Stage>("awake")
   const segments = data?.value?.segments
   const highlight = React.useMemo(() => (segments?.length ? segments.filter((g) => g.stage === selected) : undefined), [segments, selected])
@@ -158,6 +164,8 @@ export function SleepStages({ hours, hr, data }: SleepStagesProps) {
         <div className="space-y-4">
           <HoursHero h={h} />
           <SleepHrChart data={hr} highlight={highlight} />
+          {hrv?.value && <NightLineChart kind="hrv" night={hrv.value} />}
+          {spo2?.value && <NightLineChart kind="spo2" night={spo2.value} />}
           <div className="border-t border-border pt-4">
             <MetricState
               metric={data}

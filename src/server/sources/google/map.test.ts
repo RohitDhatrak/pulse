@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { mapDaily, mapExercises, mapExtra, mapHeartRate, mapHeight, mapRecords, mapRollup, mapSleep, mapStepsMinutes } from "./map";
+import { mapDaily, mapExercises, mapExtra, mapHeartRate, mapHeight, mapNightSamples, mapRecords, mapRollup, mapSleep, mapStepsMinutes } from "./map";
 
 const TZ = "Asia/Kolkata"; // UTC+5:30: a night's UTC date and its local wake day differ
 const fixture = (name: string): { dataPoints?: unknown[]; rollupDataPoints?: unknown[] } =>
@@ -12,8 +12,9 @@ const ts = (iso: string) => Date.parse(iso) / 1000;
 describe("daily mappers", () => {
   it("map each daily type's fields to daily_metrics columns, casting int64 strings", () => {
     expect(mapDaily("daily-heart-rate-variability", points("daily-heart-rate-variability"), TZ)).toEqual([
-      { day: "2026-10-02", hrvMs: 44.5, hrvDeepMs: 49.25 },
-      { day: "2026-10-01", hrvMs: 41.5, hrvDeepMs: 47 },
+      // The non-REM heart rate arrives as an int64 string (version 35).
+      { day: "2026-10-02", hrvMs: 44.5, hrvDeepMs: 49.25, nonRemHrBpm: 55 },
+      { day: "2026-10-01", hrvMs: 41.5, hrvDeepMs: 47, nonRemHrBpm: 56 },
     ]);
     expect(mapDaily("daily-resting-heart-rate", points("daily-resting-heart-rate"), TZ)).toContainEqual({
       day: "2026-10-01",
@@ -78,6 +79,30 @@ describe("intraday mappers", () => {
     expect(hr.size).toBe(5);
   });
 
+  it("overnight HRV and SpO2 samples (version 35): tenths, band only, a repeated second keeps the last, implausible dropped", () => {
+    const at = (iso: string) => ({ physicalTime: iso });
+    const hrvPoint = (iso: string, v: unknown, platform = "FITBIT") => ({ dataSource: { platform }, heartRateVariability: { sampleTime: at(iso), rootMeanSquareOfSuccessiveDifferencesMilliseconds: v } });
+    const hrv = mapNightSamples("heart-rate-variability", [
+      hrvPoint("2026-10-01T20:00:00Z", 31.3),
+      hrvPoint("2026-10-01T20:05:00Z", "27.46"),
+      hrvPoint("2026-10-01T20:05:00Z", 28.2), // the same second again: the last wins
+      hrvPoint("2026-10-01T20:10:00Z", 40, "HEALTH_CONNECT"),
+      hrvPoint("2026-10-01T20:15:00Z", 0),
+      hrvPoint("2026-10-01T20:20:00Z", 900),
+      { dataSource: { platform: "FITBIT" }, heartRateVariability: { sampleTime: at("2026-10-01T20:25:00Z") } },
+    ]);
+    expect([...hrv]).toEqual([
+      [ts("2026-10-01T20:00:00Z"), 313],
+      [ts("2026-10-01T20:05:00Z"), 282],
+    ]);
+    const spo2Point = (iso: string, v: number) => ({ dataSource: { platform: "FITBIT" }, oxygenSaturation: { sampleTime: at(iso), percentage: v } });
+    const spo2 = mapNightSamples("oxygen-saturation", [spo2Point("2026-10-01T20:00:00Z", 96.4), spo2Point("2026-10-01T20:01:00Z", 100), spo2Point("2026-10-01T20:02:00Z", 101), spo2Point("2026-10-01T20:03:00Z", 30)]);
+    expect([...spo2]).toEqual([
+      [ts("2026-10-01T20:00:00Z"), 964],
+      [ts("2026-10-01T20:01:00Z"), 1000],
+    ]);
+  });
+
   it("steps per minute: maximum across sources, a long interval spread over its minutes", () => {
     const steps = mapStepsMinutes(points("steps"));
     expect(steps.get(ts("2026-10-01T03:00:00Z"))).toBe(55); // band 40, phone 55
@@ -87,7 +112,7 @@ describe("intraday mappers", () => {
 });
 
 describe("sleep", () => {
-  const { sessions, segments } = mapSleep(points("sleep"), TZ);
+  const { sessions, segments, awakenings } = mapSleep(points("sleep"), TZ);
   const byId = (s: string) => sessions.find((x) => x.id.endsWith(s))!;
 
   it("a session from 23:30 to 07:10 maps to its local wake day, with its summary and lowercase stages", () => {
@@ -109,6 +134,20 @@ describe("sleep", () => {
     const mine = segments.filter((g) => g.sessionId === a.id);
     expect(mine.map((g) => g.stage)).toEqual(["awake", "light", "deep", "rem", "light", "awake"]);
     expect(mine[0]).toEqual({ sessionId: a.id, startTs: ts("2026-09-30T18:00:00Z"), endTs: ts("2026-09-30T18:10:00Z"), stage: "awake" });
+  });
+
+  it("brief awakenings (version 35): LIGHT and REM ones of a staged session; an unknown type or no end time is skipped alone", () => {
+    const a = byId("sleep-a");
+    expect(awakenings.filter((w) => w.sessionId === a.id)).toEqual([
+      { sessionId: a.id, startTs: ts("2026-09-30T21:00:00Z"), endTs: ts("2026-09-30T21:01:00Z"), stage: "rem" },
+      { sessionId: a.id, startTs: ts("2026-09-30T23:00:00Z"), endTs: ts("2026-09-30T23:02:00Z"), stage: "light" },
+    ]);
+    // A staged night without the list had none (proto3 omits an empty one).
+    expect(awakenings.filter((w) => w.sessionId === byId("sleep-b").id)).toEqual([]);
+    // A night that wasn't staged keeps none, even if the list came.
+    const failed = structuredClone(points("sleep")[0]) as { sleep: { metadata: { stagesStatus: string } } };
+    failed.sleep.metadata.stagesStatus = "FAILED";
+    expect(mapSleep([failed], TZ).awakenings).toEqual([]);
   });
 
   it("when two sessions overlap, the one flagged mainSleep wins even if shorter", () => {

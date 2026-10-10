@@ -78,6 +78,8 @@ flowchart LR
 | `exercise` | `interval.civil_start_time` | 90 | 25 | yes | no | confirm on Fitbit Air |
 | `heart-rate` | `sample_time.physical_time` | 14 | 10,000 | yes | not used | confirm on Fitbit Air |
 | `steps` | `interval.start_time` | 14 | 10,000 | yes | yes (daily totals) | confirm on Fitbit Air |
+| `heart-rate-variability` | `sample_time.physical_time` | 30 | 10,000 | yes | no (`list` only) | **seen** on Fitbit Air (2026-10-10) |
+| `oxygen-saturation` | `sample_time.physical_time` | 30 | 10,000 | yes | no (`list` only) | **seen** on Fitbit Air (2026-10-10) |
 | `total-calories` | none | 14 | n/a | **no** | yes | confirm on Fitbit Air |
 | `time-in-heart-rate-zone` | none | 14 | n/a | not used | yes | confirm on Fitbit Air (shape from the reference only) |
 
@@ -86,6 +88,11 @@ Notes:
 - **`exercise` windows on civil start time.** A window expressed in UTC means something different for this type.
 - **The heart-rate 14-day cap comes from the plan.** The other list caps are a conservative guess: 90 days, Hælan's rollup cap. Hælan itself only ever listed one day per request.
 - **`:reconcile`.** Hælan observed it only for `daily-resting-heart-rate`, `sleep` and floors. Pulse does not use it.
+- **Overnight samples (version 35, the owner's Fitbit Air, 2026-10-10).**
+  - **HRV:** one every 300 s, all inside sleep, 65–97 a night. Each point has `rootMeanSquareOfSuccessiveDifferencesMilliseconds` and `metadata.{highFrequencyPower,lowFrequencyPower}` (not stored). The night's median equals Google's `averageHeartRateVariabilityMilliseconds` exactly (7 of 7 nights), and the deep-stage mean is within 1 ms of the deep RMSSD.
+  - **SpO2:** one every 60 s over stretches of the night (2–8 h), plus the odd daytime spot check, which the curve clips to the main sleep. The night's median was within 1.3 points of `dailyOxygenSaturation.averagePercentage`.
+  - **Storage:** both are stored as tenths in `hrv_days` / `spo2_days`, band (`FITBIT`) only, and never scored.
+  - **Personal ranges:** `dailyRollUp` on `daily-resting-heart-rate` and `daily-heart-rate-variability` answers `UNSUPPORTED_DATA_TYPE_ACTION`, so there are no Google personal ranges.
 
 ## Field paths
 
@@ -102,6 +109,9 @@ dailyHeartRateVariability.date.{year,month,day}                                 
 ```
 
 U4 uses `averageHeartRateVariabilityMilliseconds` and stores the deep-sleep RMSSD beside it. The two are never mixed in one baseline.
+Version 35 stores `nonRemHeartRateBeatsPerMinute` as `non_rem_hr_bpm`, the sleeping resting HR. On the owner's Fitbit Air
+it was 60–66 bpm against a daily resting HR of 67–71 (2026-10-10), so it has its own baseline
+(`docs/algorithms/baselines.md` § Why version 35). Absent on nights without HRV (Health Connect nights never carry it).
 
 **`daily-resting-heart-rate`**
 
@@ -170,7 +180,7 @@ sleep.metadata.stagesStatus                        string {SUCCEEDED}
 sleep.type                                         string {STAGES}
 sleep.stages[].{startTime,endTime}                 string
 sleep.stages[].type                                string {AWAKE | DEEP | LIGHT | REM}
-sleep.shortAwakenings[].{startTime,endTime,type}   string
+sleep.shortAwakenings[].{startTime,endTime,type}   string, type {LIGHT | REM} (the stage it fell in)
 sleep.summary.minutesAsleep                        string (int64)
 sleep.summary.minutesAwake                         string (int64)
 sleep.summary.minutesInSleepPeriod                 string (int64)

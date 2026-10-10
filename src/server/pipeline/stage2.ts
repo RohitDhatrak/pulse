@@ -2,7 +2,7 @@
 // writes only the rows, series and reports whose JSON changed.
 import { and, eq, gt, gte, inArray, lt, lte, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "../db";
-import { dailyScores, intradayDirty, intradaySeries, journalEntries, reports, sleepSegments } from "../db/schema";
+import { dailyScores, intradayDirty, intradaySeries, journalEntries, reports, sleepAwakenings, sleepSegments } from "../db/schema";
 import { addDays } from "../time";
 import { hrvCfg, respCfg, restingHRCfg, skinTempCfg, update } from "@/core/scoring/baselines";
 import { journalImpact, journalImpactConfig, type JournalDay, type TagImpact } from "@/core/algorithms/journalImpact";
@@ -115,7 +115,9 @@ export async function stage2(db: Db, data: Data, opts: PipelineOptions) {
     // illness-ward run (version 30): then the baselines stay as they were, staleness included.
     if (!recovery.heldBaseline) {
       f.hrvB = update(f.hrvB, recovery.inputs.hrv, hrvCfg);
-      f.rhrB = update(f.rhrB, recovery.inputs.rhr, restingHRCfg);
+      // Each resting-HR series folds into its own baseline (version 35).
+      f.rhrB = update(f.rhrB, recovery.inputs.dailyRhr ?? null, restingHRCfg);
+      f.sleepHrB = update(f.sleepHrB, recovery.inputs.sleepHr ?? null, restingHRCfg);
       f.respB = update(f.respB, recovery.inputs.resp, respCfg);
       f.skinB = update(f.skinB, d.dm?.nightlyTempC ?? null, skinTempCfg);
     }
@@ -185,8 +187,9 @@ const camel = (k: string) => k.replace(/_(\w)/g, (_, c: string) => c.toUpperCase
 async function readInputs(db: Db, userId: number) {
   const ds = dailyScores;
   const sg = sleepSegments;
+  const sa = sleepAwakenings;
   const je = journalEntries;
-  const [scored, segments, entries] = await Promise.all([
+  const [scored, segments, awakenings, entries] = await Promise.all([
     db
       .select({ day: ds.day, strain: ds.strain, activities: ds.activities, sessionRhr: ds.sessionRhrBpm, recovery: ds.recovery, impact: ds.journalImpact })
       .from(ds)
@@ -196,6 +199,11 @@ async function readInputs(db: Db, userId: number) {
       .from(sg)
       .where(eq(sg.userId, userId))
       .orderBy(sg.startTs),
+    db
+      .select({ sessionId: sa.sessionId, n: sql<number>`count(*)::int` })
+      .from(sa)
+      .where(eq(sa.userId, userId))
+      .groupBy(sa.sessionId),
     // Tags in byte order, as SQLite sorted them: their order is part of journal impact's memo key.
     db.select({ day: je.day, tag: je.tag, value: je.value }).from(je).where(eq(je.userId, userId)).orderBy(je.day, sql`${je.tag} collate "C"`),
   ]);
@@ -218,6 +226,7 @@ async function readInputs(db: Db, userId: number) {
     stillHr: new Map(),
     loadSeries: new Map(),
     segments: groupBy(segments as Segment[], (s) => s.sessionId),
+    awakenings: new Map(awakenings.map((a) => [a.sessionId, Number(a.n)])),
     tagOn: (day, tag) => (journal.get(day) ?? []).some((e) => e.tag === tag && e.value > 0),
   };
   return { inputs, journal, storedImpact };

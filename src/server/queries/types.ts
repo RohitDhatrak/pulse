@@ -244,6 +244,12 @@ export type ActivityVM = {
 
 // ── Sleep ────────────────────────────────────────────────────────────────────
 
+/**
+ * An overnight sample series clipped to the main sleep (version 35): Fitbit's HRV (ms, about every 5 minutes) or
+ * SpO2 (%, about every minute). A null point is a gap. `median` is what Fitbit reports as the night's HRV.
+ */
+export type NightSeries = Metric<{ bed: number; wake: number; points: TimePoint[]; low: TimePoint; high: TimePoint; median: number }>;
+
 export type SleepVM = {
   day: string;
   isToday: boolean;
@@ -258,11 +264,16 @@ export type SleepVM = {
     wake: number;
     segments: { stage: "awake" | "rem" | "light" | "deep"; start: number; end: number }[];
     rows: { stage: "awake" | "rem" | "light" | "deep"; label: string; pct: number; minutes: number; typical: [number, number] }[];
+    /** Fitbit's brief awakenings, too short to stage as awake (version 35). */
+    awakenings: { stage: "light" | "rem"; start: number; end: number }[];
   }> | null;
   /** Hours asleep in the main sleep, against the prior 30 nights' mean (spec §7.5, §11 R9). */
   hours: Metric<{ asleepMin: number; average: number | null; sd?: number }>;
   /** Heart rate per minute across the main sleep, padded 15 minutes each side; a null minute is a gap. */
   nightHr: Metric<{ bed: number; wake: number; points: TimePoint[] }>;
+  /** Overnight HRV and SpO2 across the main sleep (version 35). */
+  nightHrv: NightSeries;
+  nightSpo2: NightSeries;
   hoursVsNeed: Metric<{
     asleepMin: number;
     needMin: number;
@@ -288,6 +299,8 @@ export type Vital = {
   chip: { tone: ChipTone; text: string } | null;
   /** 30 days ending on the day, for the vital sheet. */
   trend: Trend;
+  /** HRV and SpO2: the night's samples across the main sleep, for the vital sheet (version 35). */
+  night?: NightSeries;
 };
 
 export type HealthHubVM = {

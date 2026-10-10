@@ -12,6 +12,7 @@ import { minuteMeanHr } from "@/core/algorithms/stress";
 import { readHr, sampleRange } from "../samples";
 import { addDays, daysBetween, fractionalYears, localMidnight, wall } from "../time";
 import { zoneBounds, zoneNote, zoneRows } from "./strain";
+import { nightSeriesOf } from "./sleep";
 import { illnessRaised, VITAL_LABEL } from "./home";
 import {
   type DayRow,
@@ -323,7 +324,15 @@ export async function getMonitor(day: string, ctx: QueryCtx, preloaded?: Map<str
   ]);
   const row = rows.get(day);
   const hm = row?.healthMonitor;
-  const vitals: Vital[] = VITALS.map((v) => {
+  // Version 35: when the night scores the sleeping heart rate, the tile, its trend and its range are that series alone.
+  const sleeping = row?.recovery?.inputs.rhrSource === "sleep";
+  // The night behind the readings, for the HRV and SpO2 sheets (version 35).
+  const main = row?.sleep?.main;
+  const [nightHrv, nightSpo2] = main
+    ? await Promise.all([nightSeriesOf(ctx, "hrv", main.start, main.end), nightSeriesOf(ctx, "spo2", main.start, main.end)])
+    : [none<never>("no_data"), none<never>("no_data")];
+  const vitals: Vital[] = VITALS.map((base) => {
+    const v = base.key === "restingHr" && sleeping ? { ...base, pick: (r: DayRow) => r.metrics?.nonRemHrBpm } : base;
     const reading = hm && hm.reason === null ? hm.vitals.find((x) => x.key === v.key) : undefined;
     const value = row ? v.pick(row) : null;
     const range = reading?.range ?? null;
@@ -345,7 +354,7 @@ export async function getMonitor(day: string, ctx: QueryCtx, preloaded?: Map<str
     const tags = hm && hm.reason === null && hm.stale.includes(v.key === "restingHr" ? "rhr" : v.key === "skinTempDev" ? "skinTemp" : v.key) ? (["stale_baseline"] as const) : [];
     return {
       key: v.key,
-      label: v.key === "skinTempDev" ? "Skin temp (from baseline)" : VITAL_LABEL[v.key],
+      label: v.key === "skinTempDev" ? "Skin temp (from baseline)" : v.key === "restingHr" && sleeping ? "Sleeping heart rate" : VITAL_LABEL[v.key],
       short: v.short,
       unit: v.unit,
       metric: finite(value) ? ok(value, false, [...tags]) : none(reason),
@@ -356,6 +365,8 @@ export async function getMonitor(day: string, ctx: QueryCtx, preloaded?: Map<str
         points: trendPoints(rows, day, v.pick, 30),
         baseline: range && v.key !== "spo2" ? { mean: (range.low + range.high) / 2, sd: (range.high - range.low) / 2 } : null,
       },
+      ...(v.key === "hrv" && { night: nightHrv }),
+      ...(v.key === "spo2" && { night: nightSpo2 }),
     };
   });
 

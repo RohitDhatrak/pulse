@@ -552,15 +552,16 @@ describe("the robust first week (SCORING_VERSION 32)", () => {
 describe("a lasting step restarts the baselines (SCORING_VERSION 33)", () => {
   it("end to end: resting HR 18 bpm lower from day 120 is followed within 14 days by Recovery and the Health Monitor", async () => {
     const copy = await copyDb(db);
-    // A beta-blocker from day 120 on. Google's resting-HR ranges are cleared, so the Monitor uses Pulse's baseline.
-    await copy.execute(sql`update daily_metrics set rhr_bpm = rhr_bpm - 18 where user_id = ${USER} and day >= ${dayAt(120)}`);
+    // A beta-blocker from day 120 on lowers both resting readings (version 35: Recovery scores the sleeping one).
+    // Google's resting-HR ranges are cleared, so the Monitor uses Pulse's baseline.
+    await copy.execute(sql`update daily_metrics set rhr_bpm = rhr_bpm - 18, non_rem_hr_bpm = non_rem_hr_bpm - 18 where user_id = ${USER} and day >= ${dayAt(120)}`);
     await copy.execute(sql`update daily_metrics set rhr_range_low = null, rhr_range_high = null where user_id = ${USER}`);
     await copy.execute(sql`insert into intraday_dirty (user_id, day) select ${USER}, day from daily_metrics where user_id = ${USER} and day >= ${dayAt(118)} on conflict do nothing`);
     await recompute(copy, OPTS);
     const at = async (i: number) =>
       (await rows<{ r: RecoveryRow; h: HealthMonitorRow; rhr: number }>(
         copy,
-        sql`select s.recovery r, s.health_monitor h, m.rhr_bpm rhr from daily_scores s join daily_metrics m on m.user_id = s.user_id and m.day = s.day where s.user_id = ${USER} and s.day = ${dayAt(i)}`,
+        sql`select s.recovery r, s.health_monitor h, (s.recovery->'inputs'->>'rhr')::float8 rhr from daily_scores s join daily_metrics m on m.user_id = s.user_id and m.day = s.day where s.user_id = ${USER} and s.day = ${dayAt(i)}`,
       ))[0];
     const before = (js<RecoveryRow>("recovery", dayAt(119)).baselines as { rhr: { mean: number } }).rhr.mean;
     const later = await at(134);
@@ -657,20 +658,31 @@ describe("Google's inputs first (docs/research/google-vs-pulse-metrics.md)", () 
     }
   });
 
-  it("Recovery and Strain read Google's daily resting HR, not the sleep-session estimate", () => {
+  it("Strain reads Google's daily resting HR; Recovery its sleeping HR once established (version 35), Google's before", () => {
     const rhr = metric(dayAt(120), "rhr_bpm");
-    expect(js<RecoveryRow>("recovery", dayAt(120)).inputs.rhr).toBe(rhr);
     expect(js<Stage1Day>("strain", dayAt(120))).toMatchObject({ restingHr: rhr, restingHrSource: "daily" });
+    expect(js<RecoveryRow>("recovery", dayAt(120)).inputs).toMatchObject({ rhr: metric(dayAt(120), "non_rem_hr_bpm"), rhrSource: "sleep", dailyRhr: rhr });
+    // Until the sleeping-HR baseline is trusted (14 nights), Google's daily value against its own baseline.
+    const early = js<RecoveryRow>("recovery", dayAt(10)).inputs;
+    expect(early).toMatchObject({ rhr: metric(dayAt(10), "rhr_bpm"), rhrSource: "daily", sleepHr: metric(dayAt(10), "non_rem_hr_bpm") });
   });
 
-  it("skin temperature: nightly − Google's baseline; Health Monitor takes Google's ranges", () => {
+  it("skin temperature: nightly − Google's baseline; Health Monitor takes Google's ranges (resting HR's only for Google's own value)", () => {
     const d = dayAt(120);
     const dev = (metric(d, "nightly_temp_c") as number) - (metric(d, "temp_baseline_c") as number);
     expect(js<RecoveryRow>("recovery", d).inputs.skinTempDev).toBeCloseTo(dev, 9);
     const hm = js<HealthMonitorRow>("health_monitor", d);
     if (hm.reason !== null) throw new Error("no health monitor");
     const by = Object.fromEntries(hm.vitals.map((v) => [v.key, v]));
-    expect(by.restingHr).toMatchObject({ rangeSource: "google", range: { low: metric(d, "rhr_range_low"), high: metric(d, "rhr_range_high") } });
+    // Version 35: the Monitor scores the sleeping HR here, which Google's resting-HR range doesn't describe.
+    expect(js<RecoveryRow>("recovery", d).inputs.rhrSource).toBe("sleep");
+    expect(by.restingHr).toMatchObject({ rangeSource: "pulse", value: metric(d, "non_rem_hr_bpm") });
+    // Before the sleeping-HR baseline is trusted, a night with Google's range and value keeps that range.
+    const g = allDays.find((x) => metric(x, "rhr_range_low") != null && js<RecoveryRow>("recovery", x).inputs.rhrSource === "daily")!;
+    expect(g).toBeDefined();
+    const early = js<HealthMonitorRow>("health_monitor", g);
+    if (early.reason !== null) throw new Error("no health monitor");
+    expect(early.vitals.find((v) => v.key === "restingHr")).toMatchObject({ rangeSource: "google", range: { low: metric(g, "rhr_range_low"), high: metric(g, "rhr_range_high") } });
     expect(by.hrv).toMatchObject({ rangeSource: "google", range: { low: metric(d, "hrv_range_low"), high: metric(d, "hrv_range_high") } });
     const sd = metric(d, "temp_sd_c") as number;
     expect(by.skinTempDev).toMatchObject({ rangeSource: "google", range: { low: -2 * sd, high: 2 * sd } });
@@ -881,7 +893,7 @@ describe("the illness signal's workout context on the seed (SCORING_VERSION 23)"
     for (let i = 40; i < 110; i++) if (Math.abs(i - exDay) > 3 && l[i] != null && l[i]! < 20) { rest = i; break; }
     const strain = async (i: number) => {
       const m = metrics.get(dayAt(i + 1))!;
-      await copy.update(dailyMetrics).set({ rhrBpm: Number(m.rhr_bpm) + 12, hrvMs: Number(m.hrv_ms) * 0.55, respBpm: Number(m.resp_bpm) + 2.5 }).where(and(eq(dailyMetrics.userId, USER), eq(dailyMetrics.day, dayAt(i + 1))));
+      await copy.update(dailyMetrics).set({ rhrBpm: Number(m.rhr_bpm) + 12, nonRemHrBpm: Number(m.non_rem_hr_bpm) + 12, hrvMs: Number(m.hrv_ms) * 0.55, respBpm: Number(m.resp_bpm) + 2.5 }).where(and(eq(dailyMetrics.userId, USER), eq(dailyMetrics.day, dayAt(i + 1))));
       await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(i)}), (${USER}, ${dayAt(i + 1)}) on conflict do nothing`);
     };
     await strain(exDay);

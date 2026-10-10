@@ -1,0 +1,143 @@
+{
+  "dataPoints": [
+    {
+      "name": "users/me/dataTypes/heart-rate-variability/dataPoints/hrv-0",
+      "dataSource": {
+        "platform": "FITBIT",
+        "recordingMethod": "PASSIVELY_MEASURED",
+        "device": {
+          "displayName": "<device>"
+        }
+      },
+      "heartRateVariability": {
+        "sampleTime": {
+          "physicalTime": "2026-09-30T18:10:00Z",
+          "utcOffset": "19800s"
+        },
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 22.5,
+        "metadata": {
+          "highFrequencyPower": 150.2,
+          "lowFrequencyPower": 3600.4
+        }
+      }
+    },
+    {
+      "name": "users/me/dataTypes/heart-rate-variability/dataPoints/hrv-1",
+      "dataSource": {
+        "platform": "FITBIT",
+        "recordingMethod": "PASSIVELY_MEASURED",
+        "device": {
+          "displayName": "<device>"
+        }
+      },
+      "heartRateVariability": {
+        "sampleTime": {
+          "physicalTime": "2026-09-30T18:15:00Z",
+          "utcOffset": "19800s"
+        },
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 25.1,
+        "metadata": {
+          "highFrequencyPower": 150.2,
+          "lowFrequencyPower": 3600.4
+        }
+      }
+    },
+    {
+      "name": "users/me/dataTypes/heart-rate-variability/dataPoints/hrv-2",
+      "dataSource": {
+        "platform": "FITBIT",
+        "recordingMethod": "PASSIVELY_MEASURED",
+        "device": {
+          "displayName": "<device>"
+        }
+      },
+      "heartRateVariability": {
+        "sampleTime": {
+          "physicalTime": "2026-09-30T18:20:00Z",
+          "utcOffset": "19800s"
+        },
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 31.3,
+        "metadata": {
+          "highFrequencyPower": 150.2,
+          "lowFrequencyPower": 3600.4
+        }
+      }
+    },
+    {
+      "name": "users/me/dataTypes/heart-rate-variability/dataPoints/hrv-3",
+      "dataSource": {
+        "platform": "FITBIT",
+        "recordingMethod": "PASSIVELY_MEASURED",
+        "device": {
+          "displayName": "<device>"
+        }
+      },
+      "heartRateVariability": {
+        "sampleTime": {
+          "physicalTime": "2026-09-30T18:25:00Z",
+          "utcOffset": "19800s"
+        },
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 28.4,
+        "metadata": {
+          "highFrequencyPower": 150.2,
+          "lowFrequencyPower": 3600.4
+        }
+      }
+    },
+    {
+      "name": "users/me/dataTypes/heart-rate-variability/dataPoints/hrv-4",
+      "dataSource": {
+        "platform": "FITBIT",
+        "recordingMethod": "PASSIVELY_MEASURED",
+        "device": {
+          "displayName": "<device>"
+        }
+      },
+      "heartRateVariability": {
+        "sampleTime": {
+          "physicalTime": "2026-09-30T18:30:00Z",
+          "utcOffset": "19800s"
+        },
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 19.9,
+        "metadata": {
+          "highFrequencyPower": 150.2,
+          "lowFrequencyPower": 3600.4
+        }
+      }
+    },
+    {
+      "name": "users/me/dataTypes/heart-rate-variability/dataPoints/hrv-5",
+      "dataSource": {
+        "platform": "FITBIT",
+        "recordingMethod": "PASSIVELY_MEASURED",
+        "device": {
+          "displayName": "<device>"
+        }
+      },
+      "heartRateVariability": {
+        "sampleTime": {
+          "physicalTime": "2026-09-30T18:35:00Z",
+          "utcOffset": "19800s"
+        },
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 24.0,
+        "metadata": {
+          "highFrequencyPower": 150.2,
+          "lowFrequencyPower": 3600.4
+        }
+      }
+    },
+    {
+      "name": "users/me/dataTypes/heart-rate-variability/dataPoints/hc",
+      "dataSource": {
+        "platform": "HEALTH_CONNECT"
+      },
+      "heartRateVariability": {
+        "sampleTime": {
+          "physicalTime": "2026-09-30T18:50:00Z",
+          "utcOffset": "19800s"
+        },
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 60
+      }
+    }
+  ]
+}

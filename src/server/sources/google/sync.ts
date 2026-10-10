@@ -15,7 +15,7 @@ import { and, eq, getTableColumns, getTableName, gte, inArray, lt, sql } from "d
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { getConfig } from "../../config";
 import { type Db, getDb, row } from "../../db";
-import { dailyMetrics, dailyValues, exercises, healthRecords, hrDays, intradayDirty, oauthTokens, sleepSegments, sleepSessions, stepsDays, syncState } from "../../db/schema";
+import { dailyMetrics, dailyValues, exercises, healthRecords, hrDays, intradayDirty, oauthTokens, sleepAwakenings, sleepSegments, sleepSessions, stepsDays, syncState } from "../../db/schema";
 import { getProfile } from "../../profile";
 import { mergeSamples } from "../../samples";
 import type { Source } from "../types";
@@ -32,10 +32,12 @@ import {
   mapExtra,
   mapHeartRate,
   mapHeight,
+  mapNightSamples,
   mapRecords,
   mapRollup,
   mapSleep,
   mapStepsMinutes,
+  type AwakeningRow,
   type RollupType,
   type SegmentRow,
 } from "./map";
@@ -63,6 +65,7 @@ type Job =
   | { key: string; kind: "rollup"; type: RollupType }
   | { key: string; kind: "extra"; type: ExtraType }
   | { key: string; kind: "records"; type: "electrocardiogram" | "irregular-rhythm-notification" }
+  | { key: string; kind: "night"; type: "heart-rate-variability" | "oxygen-saturation" }
   | { key: string; kind: "sleep" | "exercise" | "hr" | "steps" | "height"; type: DataTypeId };
 
 /** Shown-only extras (src/lib/extraMetrics.ts). heart-rate's roll-up gets its own key: "heart-rate" is the sample list. */
@@ -71,6 +74,9 @@ export const EXTRA_JOBS: Job[] = [
   { key: "electrocardiogram", kind: "records", type: "electrocardiogram" },
   { key: "irregular-rhythm-notification", kind: "records", type: "irregular-rhythm-notification" },
   { key: "height", kind: "height", type: "height" },
+  // Overnight HRV and SpO2 samples, shown as curves (version 35); nothing scores them.
+  { key: "hrv-samples", kind: "night", type: "heart-rate-variability" },
+  { key: "spo2-samples", kind: "night", type: "oxygen-saturation" },
 ];
 export const EXTRA_JOB_KEYS = new Set(EXTRA_JOBS.map((j) => j.key));
 
@@ -285,22 +291,25 @@ function writer(tz: string, userId: number) {
   const dailyRows = async (db: Db, rows: DailyRow[]) =>
     (await upsert(db, dailyMetrics, ["day"], userId, rows.map((r) => ({ ...r, source: "google" })))).length > 0;
 
-  /** Replaces each session's segments where they differ. Returns the sessions whose segments changed. */
-  async function segments(db: Db, sessionIds: string[], next: SegmentRow[]): Promise<Set<string>> {
+  /**
+   * Replaces each session's child rows (stage segments, brief awakenings) where they differ. Returns the sessions whose
+   * rows changed.
+   */
+  async function children<R extends SegmentRow | AwakeningRow>(db: Db, table: typeof sleepSegments | typeof sleepAwakenings, sessionIds: string[], next: R[]): Promise<Set<string>> {
     const changed = new Set<string>();
     if (!sessionIds.length) return changed;
     const held = await db
-      .select({ sessionId: sleepSegments.sessionId, startTs: sleepSegments.startTs, endTs: sleepSegments.endTs, stage: sleepSegments.stage })
-      .from(sleepSegments)
-      .where(and(eq(sleepSegments.userId, userId), inArray(sleepSegments.sessionId, sessionIds)))
-      .orderBy(sleepSegments.sessionId, sleepSegments.startTs);
-    const key = (xs: SegmentRow[], id: string) =>
+      .select({ sessionId: table.sessionId, startTs: table.startTs, endTs: table.endTs, stage: table.stage })
+      .from(table)
+      .where(and(eq(table.userId, userId), inArray(table.sessionId, sessionIds)))
+      .orderBy(table.sessionId, table.startTs);
+    const key = (xs: { sessionId: string; startTs: number; endTs: number; stage: string }[], id: string) =>
       JSON.stringify(xs.filter((s) => s.sessionId === id).map((s) => [s.startTs, s.endTs, s.stage]).sort((a, b) => (a[0] as number) - (b[0] as number)));
     for (const id of sessionIds) if (key(held, id) !== key(next, id)) changed.add(id);
     if (!changed.size) return changed;
-    await db.delete(sleepSegments).where(and(eq(sleepSegments.userId, userId), inArray(sleepSegments.sessionId, [...changed])));
+    await db.delete(table).where(and(eq(table.userId, userId), inArray(table.sessionId, [...changed])));
     const rows = next.filter((s) => changed.has(s.sessionId)).map((s) => ({ userId, ...s }));
-    for (let i = 0; i < rows.length; i += CHUNK) await db.insert(sleepSegments).values(rows.slice(i, i + CHUNK));
+    for (let i = 0; i < rows.length; i += CHUNK) await db.insert(table).values(rows.slice(i, i + CHUNK) as never);
     return changed;
   }
 
@@ -315,7 +324,10 @@ function writer(tz: string, userId: number) {
     if (!gone.length) return [];
     const ids = gone.map((r) => r.id);
     await db.delete(table).where(and(eq(table.userId, userId), inArray(table.id, ids)));
-    if (table === sleepSessions) await db.delete(sleepSegments).where(and(eq(sleepSegments.userId, userId), inArray(sleepSegments.sessionId, ids)));
+    if (table === sleepSessions) {
+      await db.delete(sleepSegments).where(and(eq(sleepSegments.userId, userId), inArray(sleepSegments.sessionId, ids)));
+      await db.delete(sleepAwakenings).where(and(eq(sleepAwakenings.userId, userId), inArray(sleepAwakenings.sessionId, ids)));
+    }
     return gone.map((r) => r.day);
   }
 
@@ -345,6 +357,13 @@ function writer(tz: string, userId: number) {
       }
       case "hr":
         return writeHr(db, mapHeartRate(points), win);
+      // Shown only: never `changed`, never dirty, so a night's samples don't trigger a recompute. As with heart rate,
+      // an empty answer leaves what is stored.
+      case "night": {
+        const samples = mapNightSamples(job.type, points);
+        if (samples.size) await mergeSamples(db, job.type === "heart-rate-variability" ? "hrv" : "spo2", userId, win, samples, "replace");
+        return false;
+      }
       case "steps": {
         // Max with the stored minute too: a multi-minute interval that starts before the re-fetch
         // window must not shrink the minutes it spills into.
@@ -354,10 +373,13 @@ function writer(tz: string, userId: number) {
       }
       // Sessions feed stage 1 too (session resting HR, per-activity strain), so a changed one marks its day.
       case "sleep": {
-        const { sessions, segments: segs } = mapSleep(points, tz);
+        const { sessions, segments: segs, awakenings } = mapSleep(points, tz);
         const written = new Set((await upsert(db, sleepSessions, ["id"], userId, sessions)).map((r) => r.id as string));
-        const resegmented = await segments(db, sessions.map((s) => s.id), segs);
-        for (const s of sessions) if (written.has(s.id) || resegmented.has(s.id)) dirty.add(s.day);
+        const ids = sessions.map((s) => s.id);
+        const resegmented = await children(db, sleepSegments, ids, segs);
+        // A night's Disturbances count is read at recompute (version 35), so changed awakenings mark the day too.
+        const rewoken = await children(db, sleepAwakenings, ids, awakenings);
+        for (const s of sessions) if (written.has(s.id) || resegmented.has(s.id) || rewoken.has(s.id)) dirty.add(s.day);
         // Only when every point was readable: a shape change must not read as "all deleted".
         if (sessions.length === points.length) for (const d of await prune(db, sleepSessions, sleepSessions.endTs, win, sessions)) dirty.add(d);
         break;

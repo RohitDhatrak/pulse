@@ -22,6 +22,7 @@ import {
   exercises,
   intradayDirty,
   journalEntries,
+  sleepAwakenings,
   sleepSegments,
   sleepSessions,
   syncState,
@@ -225,8 +226,11 @@ function night(ctx: Ctx, i: number) {
     respBpm: round(14.6 + ill.resp * sev + (alcohol ? EFFECTS.alcohol.resp : 0) + 0.25 * r.g(), 1),
     nightlyTempC: hasSkinTemp(i) ? round(34.3 + ill.tempC * sev + (alcohol ? EFFECTS.alcohol.tempC : 0) + 0.12 * r.g(), 2) : null,
     spo2Pct: round(clamp(96.7 + ill.spo2 * sev + 0.5 * r.g(), 90, 99.5), 1),
+    // Fitbit's non-REM heart rate (version 35): the light and deep sleep HR synthesised below (STAGE_HR, plus the
+    // first hour's settling), its own stream so nothing above moves. None without HRV, as on a real band.
+    nonRemHrBpm: noHrv ? null : nonRemHr(rhr, summary, rng(i, "nonrem")),
   };
-  return { bed, wake, segments, summary, rhr, metrics };
+  return { bed, wake, segments, summary, rhr, metrics, restless };
 }
 
 /** Karvonen shares of heart-rate reserve where LIGHT, MODERATE, VIGOROUS and PEAK start (demo values). */
@@ -289,6 +293,46 @@ function workoutIntensity(w: Workout, k: number) {
   return 0.3 + (a - 0.3) * Math.min(1, (k + 1) / 6); // warm-up
 }
 
+/** The night's light and deep sleep HR, minute-weighted, as Fitbit's non-REM heart rate (whole bpm). */
+function nonRemHr(rhr: number, summary: { lightMin: number; deepMin: number }, r: ReturnType<typeof rng>): number | null {
+  const min = summary.lightMin + summary.deepMin;
+  if (!min) return null;
+  return Math.round(rhr + (STAGE_HR.light * summary.lightMin + STAGE_HR.deep * summary.deepMin) / min + 0.6 + 0.6 * r.g());
+}
+
+/**
+ * A night's Fitbit extras (version 35), each on its own stream: RMSSD every 5 minutes asleep around the nightly HRV
+ * (higher in deep sleep, lower in REM), SpO2 every minute asleep around the nightly average, and 6-16 brief
+ * awakenings (more on a restless night) of 1-3 minutes inside light or REM sleep.
+ */
+function nightExtras(i: number, id: string, n: NonNullable<ReturnType<typeof night>>) {
+  const asleep = n.segments.filter((g) => g.stage !== "awake");
+  const hrv: { ts: number; v: number }[] = [];
+  const spo2: { ts: number; v: number }[] = [];
+  const rh = rng(i, "hrvs");
+  const ro = rng(i, "spo2s");
+  const SHIFT = { deep: 1.08, light: 1, rem: 0.92, awake: 1 } as const;
+  for (const g of asleep) {
+    for (let t = Math.ceil(g.start / 300) * 300; t < g.end; t += 300) {
+      if (n.metrics.hrvMs != null) hrv.push({ ts: t, v: Math.round(10 * clamp(n.metrics.hrvMs * SHIFT[g.stage] * Math.exp(0.15 * rh.g()), 5, 250)) });
+    }
+    for (let t = Math.ceil(g.start / 60) * 60; t < g.end; t += 60) spo2.push({ ts: t, v: Math.round(10 * clamp(n.metrics.spo2Pct + 0.9 * ro.g(), 85, 100)) });
+  }
+  const ra = rng(i, "awaken");
+  const pool = asleep.filter((g) => (g.stage === "light" || g.stage === "rem") && g.end - g.start >= 300);
+  const total = pool.reduce((a, g) => a + g.end - g.start, 0);
+  const count = Math.round(ra.u(6, 11) + 5 * n.restless);
+  const awakenings = new Map<number, { sessionId: string; startTs: number; endTs: number; stage: "light" | "rem" }>();
+  for (let k = 0; k < count && total > 0; k++) {
+    let at = ra.u(0, total);
+    const g = pool.find((x) => (at -= x.end - x.start) < 0) ?? pool[pool.length - 1];
+    const len = 60 * Math.round(ra.u(1, 3));
+    const startTs = 60 * Math.floor(ra.u(g.start, g.end - len) / 60);
+    awakenings.set(startTs, { sessionId: id, startTs, endTs: startTs + len, stage: g.stage as "light" | "rem" });
+  }
+  return { hrv, spo2, awakenings: [...awakenings.values()].sort((a, b) => a.startTs - b.startTs) };
+}
+
 const HR_CADENCE_S = 15;
 const BMR_KCAL = 1700;
 /** Sleep HR relative to the night's resting HR, by stage. */
@@ -301,6 +345,7 @@ const NO_NIGHT = {
   respBpm: null,
   nightlyTempC: null,
   spo2Pct: null,
+  nonRemHrBpm: null,
   vo2maxDaily: null,
   hrZones: null as number[] | null,
   tempBaselineC: null,
@@ -455,6 +500,7 @@ export function generateDay(ctx: Ctx, i: number) {
       availableAt: lastNight.wake + SLEEP_SYNC_DELAY_S,
       row: { id, day, startTs: lastNight.bed, endTs: lastNight.wake, isMain: true, processed: true, stagesStatus: "SUCCEEDED", ...lastNight.summary, source: "seed" },
       segments: lastNight.segments.map((g) => ({ sessionId: id, startTs: g.start, endTs: g.end, stage: g.stage })),
+      ...nightExtras(i, id, lastNight),
     });
   }
   if (napToday) {
@@ -463,6 +509,9 @@ export function generateDay(ctx: Ctx, i: number) {
       availableAt: endTs,
       row: { id: `seed-nap-${day}`, day, startTs, endTs, isMain: false, processed: true, stagesStatus: null, asleepMin, awakeMin, source: "seed" },
       segments: [],
+      hrv: [],
+      spo2: [],
+      awakenings: [],
     });
   }
 
@@ -635,6 +684,14 @@ async function writeDays(db: Db, userId: number, gs: Day[], now: number, synced:
     (await db.insert(sleepSessions).values(rows).onConflictDoNothing().returning({ id: sleepSessions.id })).length);
   n += await inChunks(sleeps.flatMap((s) => s.segments.map((g) => ({ userId, ...g }))), async (rows) =>
     (await db.insert(sleepSegments).values(rows).onConflictDoNothing().returning({ id: sleepSegments.sessionId })).length);
+  // A night's extras arrive with its sleep, like a band's (version 35). writeSamples keeps what is stored, so a
+  // re-pull adds nothing; they feed no score, so they mark nothing dirty.
+  const nightHrv = sleeps.flatMap((s) => s.hrv);
+  const nightSpo2 = sleeps.flatMap((s) => s.spo2);
+  if (nightHrv.length) await writeSamples(db, "hrv", userId, nightHrv);
+  if (nightSpo2.length) await writeSamples(db, "spo2", userId, nightSpo2);
+  n += await inChunks(sleeps.flatMap((s) => s.awakenings.map((a) => ({ userId, ...a }))), async (rows) =>
+    (await db.insert(sleepAwakenings).values(rows).onConflictDoNothing().returning({ id: sleepAwakenings.sessionId })).length);
   n += await inChunks(gs.flatMap((g) => g.exercises.filter((e) => e.endTs <= now).map((e) => ({ userId, ...e }))), async (rows) =>
     (await db.insert(exercises).values(rows).onConflictDoNothing().returning({ id: exercises.id })).length);
   n += await inChunks(gs.flatMap((g) => extrasAt(g, now).map(([key, value]) => ({ userId, day: g.day, key, value }))), async (rows) =>

@@ -77,7 +77,7 @@ export default async function SleepPage({ searchParams }: PageProps<"/sleep">) {
       insight={vm.insight && <InsightCard body={vm.insight} />}
       primary={
         <SectionShell variant="card" title="Last night’s sleep" aside="vs. prior 30 days" level={2}>
-          <SleepStages hours={vm.hours} hr={vm.nightHr} data={vm.stages} />
+          <SleepStages hours={vm.hours} hr={vm.nightHr} hrv={vm.nightHrv} spo2={vm.nightSpo2} data={vm.stages} />
         </SectionShell>
       }
       secondary={[

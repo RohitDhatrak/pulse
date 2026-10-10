@@ -32,6 +32,7 @@ const GROUPS: { key: string; label: string; types: string[] }[] = [
   { key: "nutrition", label: "Food and water", types: ["hydration-log", "nutrition-log"] },
   { key: "vitals", label: "Glucose and core temperature", types: ["blood-glucose", "core-body-temperature"] },
   { key: "rhythm", label: "ECG and irregular rhythm", types: ["electrocardiogram", "irregular-rhythm-notification"] },
+  { key: "night", label: "Overnight HRV and blood oxygen", types: ["hrv-samples", "spo2-samples"] },
 ];
 
 /**
@@ -40,7 +41,7 @@ const GROUPS: { key: string; label: string; types: string[] }[] = [
  * the next sign-in, a type the account never has) shows in Settings, but never turns the sync dot red or holds the
  * import banner open.
  */
-const OPTIONAL_TYPES = new Set(GROUPS.filter((g) => ["zones", "activity", "nutrition", "vitals", "rhythm"].includes(g.key)).flatMap((g) => g.types).concat("height"));
+const OPTIONAL_TYPES = new Set(GROUPS.filter((g) => ["zones", "activity", "nutrition", "vitals", "rhythm", "night"].includes(g.key)).flatMap((g) => g.types).concat("height"));
 
 /** Types every Google account syncs: the shell's sync dot and the import banner follow these alone. */
 const CORE_TYPES = new Set(GROUPS.flatMap((g) => g.types).filter((t) => !OPTIONAL_TYPES.has(t)));

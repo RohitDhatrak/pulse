@@ -13,7 +13,13 @@ import { useOptionalShellCalendar } from "@/components/shells/ShellStatus"
 import { ReasonPlaceholder } from "@/components/metrics/ReasonPlaceholder"
 import { AXIS, ChartFigure, GRID, LINE_CURSOR, TOOLTIP_CLASS, TooltipLine, useSeriesAnimation } from "./ChartFrame"
 
-export type HypnogramNight = { bed: number; wake: number; segments: StageSegment[] }
+export type HypnogramNight = {
+  bed: number
+  wake: number
+  segments: StageSegment[]
+  /** Fitbit's brief awakenings (scoring version 35), each drawn as a thin spike from its lane up to Awake. */
+  awakenings?: { stage: "light" | "rem"; start: number; end: number }[]
+}
 export type HypnogramProps = {
   /** null or no segments: the night has no stage data (Fitbit only stages sleeps over about 3 h). */
   data: Metric<HypnogramNight> | null | undefined
@@ -39,9 +45,11 @@ export function HypnogramChart({ night }: { night: HypnogramNight }) {
   const minutes = (st: Stage) => night.segments.filter((s) => s.stage === st).reduce((a, s) => a + s.end - s.start, 0) / 60_000
   const summary = `Sleep stages from ${clock(night.bed, tz)} to ${clock(night.wake, tz)}, ${night.segments.length} stretches: ${STAGES.map(
     (s) => `${STAGE_NAME[s]} ${durationWords(minutes(s))}, ${Math.round(((minutes(s) * 60_000) / (total || 1)) * 100)} percent`
-  ).join("; ")}.`
+  ).join("; ")}.${night.awakenings?.length ? ` ${night.awakenings.length} brief awakenings.` : ""}`
   // The connector's last point is the wake time, the end of the last stretch: it reads as that stretch.
   const segAt = (t: number) => night.segments.find((s) => s.start <= t && t < s.end) ?? night.segments.findLast((s) => s.end === t)
+  // A brief awakening within a minute or so of the cursor, for the tooltip.
+  const wakeAt = (t: number) => night.awakenings?.find((a) => a.start - 90_000 <= t && t <= a.end + 90_000)
 
   return (
     <ChartFigure summary={summary} config={{}} className="h-44">
@@ -94,12 +102,21 @@ export function HypnogramChart({ night }: { night: HypnogramNight }) {
                 return s ? `${clock(s.start, tz)} to ${clock(s.end, tz)}` : ""
               }}
               formatter={(_, __, item) => {
-                const s = segAt(Number((item.payload as { t: number }).t))
+                const t = Number((item.payload as { t: number }).t)
+                const s = segAt(t)
                 if (!s) return null
+                const w = wakeAt(t)
                 return (
-                  <TooltipLine color={DATA_COLORS[`stage-${s.stage}`].css}>
-                    {STAGE_NAME[s.stage]}, {Math.round((s.end - s.start) / 60000)} min
-                  </TooltipLine>
+                  <>
+                    <TooltipLine color={DATA_COLORS[`stage-${s.stage}`].css}>
+                      {STAGE_NAME[s.stage]}, {Math.round((s.end - s.start) / 60000)} min
+                    </TooltipLine>
+                    {w && (
+                      <TooltipLine color={DATA_COLORS["stage-awake"].css}>
+                        Brief awakening, {Math.max(1, Math.round((w.end - w.start) / 60000))} min ({STAGE_NAME[w.stage].toLowerCase()} sleep)
+                      </TooltipLine>
+                    )}
+                  </>
                 )
               }}
             />
@@ -110,6 +127,20 @@ export function HypnogramChart({ night }: { night: HypnogramNight }) {
           <ReferenceLine key={lane} y={lane} stroke="color-mix(in srgb, var(--foreground) 7%, transparent)" strokeWidth={14} />
         ))}
         <Line dataKey="lane" type="stepAfter" stroke="color-mix(in srgb, var(--foreground) 22%, transparent)" strokeWidth={1} dot={false} activeDot={false} {...anim} />
+        {/* Brief awakenings: a thin spike from the stage's lane to Awake, as Fitbit's own hypnogram marks them. */}
+        {night.awakenings?.map((a) => (
+          <ReferenceLine
+            key={a.start}
+            segment={[
+              { x: a.start, y: LANE_STAGE.indexOf(a.stage) },
+              { x: a.start, y: 3 },
+            ]}
+            stroke={DATA_COLORS["stage-awake"].css}
+            strokeOpacity={0.7}
+            strokeWidth={1.5}
+            ifOverflow="hidden"
+          />
+        ))}
         {STAGES.map((st) => (
           <Line
             key={st}

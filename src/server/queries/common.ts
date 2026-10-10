@@ -68,6 +68,8 @@ export type MetricsRow = {
   day: string;
   hrvMs: number | null;
   rhrBpm: number | null;
+  /** Fitbit's non-REM heart rate: the sleeping resting HR (version 35). */
+  nonRemHrBpm: number | null;
   respBpm: number | null;
   nightlyTempC: number | null;
   spo2Pct: number | null;
@@ -173,6 +175,7 @@ export async function loadDays(ctx: QueryCtx, fromDay: string, to: string): Prom
         day: m.day,
         hrvMs: m.hrvMs,
         rhrBpm: m.rhrBpm,
+        nonRemHrBpm: m.nonRemHrBpm,
         respBpm: m.respBpm,
         nightlyTempC: m.nightlyTempC,
         spo2Pct: m.spo2Pct,

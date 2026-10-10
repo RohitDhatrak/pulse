@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
-import { sleepSegments } from "../db/schema";
-import { readHr } from "../samples";
+import { sleepAwakenings, sleepSegments } from "../db/schema";
+import { readHr, readTenths } from "../samples";
 import { addDays, localMinutes } from "../time";
 import {
   type DayRow,
@@ -19,7 +19,7 @@ import {
   vitalReason,
   trendPoints,
 } from "./common";
-import type { KeyStat, Metric, SleepStatus, SleepVM, TimePoint } from "./types";
+import type { KeyStat, Metric, NightSeries, SleepStatus, SleepVM, TimePoint } from "./types";
 
 type Stage = "awake" | "rem" | "light" | "deep";
 const STAGE_ROWS: { stage: Stage; label: string; typical: [number, number] }[] = [
@@ -88,12 +88,19 @@ export async function getSleep(day: string, ctx: QueryCtx): Promise<SleepVM> {
   const details = [
     { ...stat("timeInBed", "Time in bed", (r) => r.sleep?.main?.inBedMin, "min"), direction: "neutral" as const },
     { ...stat("wakeEvents", "Wake events", (r) => r.sleep?.main?.wakeEvents, undefined), direction: "down" as const },
+    // Fitbit's brief awakenings, too short to stage as awake (version 35): shown, not scored.
+    { ...stat("disturbances", "Disturbances", (r) => r.sleep?.main?.disturbances, undefined), direction: "down" as const },
     { ...stat("resp", "Respiratory rate", (r) => r.metrics?.respBpm, "rpm", undefined, vitalReason(row, isToday)), direction: "neutral" as const },
     { ...stat("debt", "Sleep debt", (r) => (r.sleep?.main || r.sleep?.awakeAllNight ? r.sleep.debtMin : null), "min"), direction: "down" as const },
   ];
 
   const plan = planVM(ctx, row, isToday);
-  const [stages, nightHr] = await Promise.all([stagesOf(ctx, row, noNight), main ? nightHrOf(ctx, main.start, main.end) : fromReason<never>(noNight, isToday)]);
+  const [stages, nightHr, nightHrv, nightSpo2] = await Promise.all([
+    stagesOf(ctx, row, noNight),
+    main ? nightHrOf(ctx, main.start, main.end) : fromReason<never>(noNight, isToday),
+    main ? nightSeriesOf(ctx, "hrv", main.start, main.end) : fromReason<never>(noNight, isToday),
+    main ? nightSeriesOf(ctx, "spo2", main.start, main.end) : fromReason<never>(noNight, isToday),
+  ]);
   return {
     day,
     isToday,
@@ -104,6 +111,8 @@ export async function getSleep(day: string, ctx: QueryCtx): Promise<SleepVM> {
     stages,
     hours,
     nightHr,
+    nightHrv,
+    nightSpo2,
     hoursVsNeed,
     details,
     debtTrend: {
@@ -118,13 +127,21 @@ async function stagesOf(ctx: QueryCtx, row: DayRow | undefined, noNight: SleepVM
   if (!main) return none(noNight ?? "no_data");
   if (!main.staged) return null;
   const g = sleepSegments;
-  const segments = (
-    await ctx.db
+  const a = sleepAwakenings;
+  const [segRows, wakeRows] = await Promise.all([
+    ctx.db
       .select({ stage: g.stage, startTs: g.startTs, endTs: g.endTs })
       .from(g)
       .where(and(eq(g.userId, ctx.userId), eq(g.sessionId, main.id)))
-      .orderBy(g.startTs)
-  ).map((g) => ({ stage: g.stage, start: ms(g.startTs), end: ms(g.endTs) }));
+      .orderBy(g.startTs),
+    ctx.db
+      .select({ stage: a.stage, startTs: a.startTs, endTs: a.endTs })
+      .from(a)
+      .where(and(eq(a.userId, ctx.userId), eq(a.sessionId, main.id)))
+      .orderBy(a.startTs),
+  ]);
+  const segments = segRows.map((g) => ({ stage: g.stage, start: ms(g.startTs), end: ms(g.endTs) }));
+  const awakenings = wakeRows.map((w) => ({ stage: w.stage, start: ms(w.startTs), end: ms(w.endTs) }));
   const minutes: Record<Stage, number> = { awake: main.awakeMin, rem: main.remMin ?? 0, light: main.lightMin ?? 0, deep: main.deepMin ?? 0 };
   const total = minutes.awake + minutes.rem + minutes.light + minutes.deep;
   return ok({
@@ -132,7 +149,37 @@ async function stagesOf(ctx: QueryCtx, row: DayRow | undefined, noNight: SleepVM
     wake: ms(main.end),
     segments,
     rows: STAGE_ROWS.map((r) => ({ ...r, minutes: minutes[r.stage], pct: total > 0 ? (minutes[r.stage] / total) * 100 : 0 })),
+    awakenings,
   });
+}
+
+/** Fitbit's sampling: HRV about every 5 minutes asleep, SpO2 about every minute. A gap is over 3 cadences. */
+const NIGHT_CADENCE_S = { hrv: 300, spo2: 60 } as const;
+/** Fewer samples than this is too thin to draw. */
+const NIGHT_MIN_POINTS = 6;
+
+/**
+ * The main sleep's overnight HRV or SpO2 samples (version 35), clipped to [start, end] with no padding: the band
+ * also takes the odd daytime SpO2 spot check, which isn't part of the night. Points as sampled, with a null where the
+ * band missed more than 3 cadences; low and high are actual samples; median is Fitbit's nightly HRV (checked against
+ * Google's daily value on 6 of 6 of the owner's nights).
+ */
+export async function nightSeriesOf(ctx: QueryCtx, kind: "hrv" | "spo2", start: number, end: number): Promise<NightSeries> {
+  const samples = await readTenths(ctx.db, kind, ctx.userId, start, end + 1);
+  if (samples.length < NIGHT_MIN_POINTS) return none("no_data");
+  const gap = 3 * NIGHT_CADENCE_S[kind];
+  const points: TimePoint[] = [];
+  samples.forEach((s, i) => {
+    if (i > 0 && s.ts - samples[i - 1].ts > gap) points.push({ t: ms(samples[i - 1].ts + NIGHT_CADENCE_S[kind]), v: null });
+    points.push({ t: ms(s.ts), v: s.v });
+  });
+  const pick = (better: (a: number, b: number) => boolean) => samples.reduce((m, s) => (better(s.v, m.v) ? s : m));
+  const low = pick((a, b) => a < b);
+  const high = pick((a, b) => a > b);
+  const sorted = samples.map((s) => s.v).sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return ok({ bed: ms(start), wake: ms(end), points, low: { t: ms(low.ts), v: low.v }, high: { t: ms(high.ts), v: high.v }, median });
 }
 
 const HR_PAD_S = 15 * 60;

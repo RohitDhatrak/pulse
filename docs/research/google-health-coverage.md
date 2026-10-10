@@ -5,16 +5,16 @@ This compares, one by one, the data types the Google Health API v4 returns ([`us
 ## Summary
 
 - Google lists **42** data point types.
-- Pulse fetches **14** of them, plus `total-calories`, which only answers daily roll-ups and is not in that list.
-- **11** reach a screen. **2** (weight, body fat) feed only Pulse Age and are never displayed. **1** (`vo2-max`) is fetched only for the probe.
-- **28** are not fetched at all.
+- Pulse fetches **16** of them (version 35 added the HRV and SpO2 samples), plus `total-calories`, which only answers daily roll-ups and is not in that list.
+- **13** reach a screen (the two sample types since version 35). **2** (weight, body fat) feed only Pulse Age and are never displayed. **1** (`vo2-max`) is fetched only for the probe.
+- **26** are not fetched at all.
 - OAuth asks only for the 13 scopes Pulse uses (2026-10-04, trimmed for Google verification): read `activity_and_fitness`, `health_metrics_and_measurements`, `sleep`, `ecg`, `irn`, `nutrition`, `profile` (age at onboarding), `settings` (`users.pairedDevices.list`, the no-device check); write `nutrition`, `health_metrics_and_measurements`, `mindfulness` (moods), `logged_symptoms`, `reproductive_health` (Journal › Log). `location` and the read side of mindfulness, logged symptoms and reproductive health were dropped: Pulse reads nothing there (the types it logs are write-only at Google).
 
 ```mermaid
 flowchart LR
-  G[42 Google types] --> F[14 fetched + total-calories]
-  G --> N[28 not fetched]
-  F --> S[11 shown on a screen]
+  G[42 Google types] --> F[16 fetched + total-calories]
+  G --> N[26 not fetched]
+  F --> S[13 shown on a screen]
   F --> U[weight, body fat: Pulse Age only]
   F --> P[vo2-max: probe only]
 ```
@@ -27,9 +27,9 @@ Status: **Shown** means visible on a screen; **Used** means it feeds a score but
 |---|---|---|---|
 | `steps` | Step counts per interval | **Shown** | Daily total (roll-up) on My Dashboard, Strain, Trends, Pulse Age. Per-minute counts gate stress |
 | `heart-rate` | HR samples | **Shown** | Strain, HR charts, zones, stress, Energy Bank. Band only: `HEALTH_CONNECT` points are dropped. Google's daily average shows in Trends (Vitals) |
-| `sleep` | Sessions with stages | **Shown** | Sleep, Recovery, Sleep Planner, SRI |
-| `daily-resting-heart-rate` | Daily RHR | **Shown** | Recovery, Strain's heart-rate reserve, Health Monitor, My Dashboard, Pulse Age (the sleep-session estimate only on days without it). The calculation method is stored, not shown. Its `dailyRollUp` personal range sets Health Monitor's RHR range (unconfirmed) |
-| `daily-heart-rate-variability` | Nightly average RMSSD | **Shown** | Recovery, My Dashboard. The deep-sleep RMSSD is stored, not shown. The non-REM HR is not stored. Its `dailyRollUp` personal range sets Health Monitor's HRV range (unconfirmed) |
+| `sleep` | Sessions with stages | **Shown** | Sleep, Recovery, Sleep Planner, SRI. Brief awakenings (`shortAwakenings`, version 35) as Disturbances on Sleep and the hypnogram, shown only |
+| `daily-resting-heart-rate` | Daily RHR | **Shown** | Strain's heart-rate reserve, My Dashboard, Pulse Age, Trends; Recovery and the Health Monitor until the sleeping HR's baseline is trusted (version 35). The calculation method is stored, not shown. No personal range: Google rejects `dailyRollUp` on this type (checked 2026-10-03 and 2026-10-10) |
+| `daily-heart-rate-variability` | Nightly average RMSSD | **Shown** | Recovery, My Dashboard. The deep-sleep RMSSD is stored, not shown. The **non-REM HR** is Recovery's, readiness's and the Health Monitor's resting HR once its own baseline is trusted (version 35). No personal range (`dailyRollUp` rejected) |
 | `daily-respiratory-rate` | Nightly breathing rate | **Shown** | Health Monitor, My Dashboard |
 | `daily-oxygen-saturation` | Nightly SpO2 | **Shown** | Average only, on Health Monitor and My Dashboard. The lower and upper bounds are not stored |
 | `daily-sleep-temperature-derivations` | Nightly skin temperature | **Shown** | Health Monitor, Recovery, My Dashboard: deviation from Google's baseline, Health Monitor's range from its 30-night SD |
@@ -51,8 +51,8 @@ Status: **Shown** means visible on a screen; **Used** means it feeds a score but
 | `sedentary-period` | Sedentary intervals | **Shown** | Daily total as Sedentary time (Trends) |
 | `active-energy-burned` | Active kcal | **Shown** | Strain, Trends (Activity) |
 | `basal-energy-burned` | BMR kcal | No | No daily roll-up (2026-10-03). Strain's Calories burned derives resting as `total-calories` − `active-energy-burned` |
-| `heart-rate-variability` | HRV samples | No | Only the nightly average is fetched |
-| `oxygen-saturation` | SpO2 samples | No | Only the nightly average is fetched |
+| `heart-rate-variability` | HRV samples | **Shown** | Version 35: about every 5 minutes asleep (`hrv_days`, tenths), the overnight HRV curve on Sleep and the Health Monitor's HRV sheet. Their median equals Google's nightly value (7 of 7 of the owner's nights). The LF/HF powers are not stored |
+| `oxygen-saturation` | SpO2 samples | **Shown** | Version 35: about every minute asleep, plus the odd daytime spot check (`spo2_days`, tenths), the overnight SpO2 curve, clipped to the main sleep |
 | `respiratory-rate-sleep-summary` | Breathing rate per sleep stage | No | |
 | `core-body-temperature` | Core temperature | **Shown** | Daily average (`daily_values.core_temp`): Health Monitor › Measurements once ever recorded; Trends (Vitals) |
 | `height` | Height | **Used** | Latest reading fills the profile height when the user gave none (Pulse Age lean mass) |

@@ -18,6 +18,7 @@ import {
   oauthTokens,
   profile,
   reports,
+  sleepAwakenings,
   sleepSessions,
   syncState,
 } from "../db/schema";
@@ -138,6 +139,10 @@ beforeAll(async () => {
   // A night of heart rate and a day of steps overlapping user 1's: per-minute charts must not average them in.
   const lo = NOW - 29 * 86400 - 12 * 3600;
   await writeSamples(db, "hr", u2, Array.from({ length: 24 * 60 }, (_, k) => ({ ts: lo + k * 60, v: 199 })));
+  // Overnight HRV and SpO2 across the same span (version 35), in tenths: 777.7 ms and 177.7 %, and a night's awakenings.
+  await writeSamples(db, "hrv", u2, Array.from({ length: 24 * 12 }, (_, k) => ({ ts: lo + k * 300, v: 7777 })));
+  await writeSamples(db, "spo2", u2, Array.from({ length: 24 * 60 }, (_, k) => ({ ts: lo + k * 60 + 30, v: 1777 })));
+  await db.insert(sleepAwakenings).values({ ...user, sessionId: "INTRUDER-sleep", startTs: NOW - 30 * 86400 + 3600, endTs: NOW - 30 * 86400 + 3720, stage: "rem" });
   await writeSamples(db, "steps", u2, Array.from({ length: 24 * 60 }, (_, k) => ({ ts: NOW - 86400 * 9 + k * 60, v: 777 })));
   await db.insert(intradaySeries).values(["hr", "stress", "energy_bank"].map((kind) => ({ ...user, day: TODAY, kind, data: Array(1440).fill(777.7) })));
   await db.insert(journalTags).values([

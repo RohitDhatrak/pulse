@@ -16,7 +16,10 @@
           { "type": "AWAKE", "startTime": "2026-10-01T01:30:00Z", "startUtcOffset": "19800s", "endTime": "2026-10-01T01:40:00Z", "endUtcOffset": "19800s" }
         ],
         "shortAwakenings": [
-          { "type": "AWAKE", "startTime": "2026-09-30T23:00:00Z", "startUtcOffset": "19800s", "endTime": "2026-09-30T23:02:00Z", "endUtcOffset": "19800s" }
+          { "type": "REM", "startTime": "2026-09-30T21:00:00Z", "startUtcOffset": "19800s", "endTime": "2026-09-30T21:01:00Z", "endUtcOffset": "19800s" },
+          { "type": "LIGHT", "startTime": "2026-09-30T23:00:00Z", "startUtcOffset": "19800s", "endTime": "2026-09-30T23:02:00Z", "endUtcOffset": "19800s" },
+          { "type": "RESTLESS", "startTime": "2026-09-30T23:30:00Z", "endTime": "2026-09-30T23:31:00Z" },
+          { "type": "LIGHT", "startTime": "2026-10-01T00:10:00Z" }
         ],
         "summary": {
           "minutesAsleep": "440",

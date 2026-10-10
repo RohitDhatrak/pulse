@@ -29,10 +29,11 @@ const sample = { member: "sample_time.physical_time", maxDays: 90, pageSize: PAG
 const rollup = { member: null, maxDays: 14, pageSize: PAGE, dailyRollUp: true } as const;
 
 export const DATA_TYPES = {
-  // list for the nightly value; dailyRollUp for Google's personal range (restingHeartRatePersonalRange,
-  // heartRateVariabilityPersonalRange), which the dailyRollUp reference returns "by default" for these types.
-  "daily-heart-rate-variability": { ...daily, dailyRollUp: true },
-  "daily-resting-heart-rate": { ...daily, dailyRollUp: true },
+  // List only: a dailyRollUp for Google's personal ranges answers UNSUPPORTED_DATA_TYPE_ACTION ("supported: list,
+  // reconcile"; checked on a real account 2026-10-03 and 2026-10-10), so the Health Monitor keeps Pulse's own ranges.
+  // daily-heart-rate-variability also carries the night's non-REM heart rate, Pulse's sleeping resting HR (version 35).
+  "daily-heart-rate-variability": daily,
+  "daily-resting-heart-rate": daily,
   // The day's Karvonen zone bounds (LIGHT, MODERATE, VIGOROUS, PEAK).
   "daily-heart-rate-zones": daily,
   "daily-respiratory-rate": daily,
@@ -48,6 +49,10 @@ export const DATA_TYPES = {
   exercise: { member: "interval.civil_start_time", maxDays: 90, pageSize: 25, dailyRollUp: false },
   // list for the band's samples; dailyRollUp for the all-source daily average (an extra metric).
   "heart-rate": { ...sample, maxDays: 14, dailyRollUp: true },
+  // Overnight samples, shown as curves on Sleep and the Health Monitor (version 35): RMSSD about every 5 minutes
+  // asleep, SpO2 about every minute (and the odd daytime spot check, clipped to the sleep when shown).
+  "heart-rate-variability": { ...sample, maxDays: 30 },
+  "oxygen-saturation": { ...sample, maxDays: 30 },
   // dailyRollUp gives Google's merged, worn-only daily total; list gives per-minute counts for movement gating.
   steps: { member: "interval.start_time", maxDays: 14, pageSize: PAGE, dailyRollUp: true },
   "total-calories": { member: null, maxDays: 14, pageSize: PAGE, dailyRollUp: true },

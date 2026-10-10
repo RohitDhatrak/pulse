@@ -5,6 +5,7 @@ import { useSheetParam } from "@/hooks/use-sheet-param"
 import { Activity, Droplet, Heart, Thermometer, Wind } from "lucide-react"
 import { formatValue, isSymbolUnit, NBSP, type FormatKey } from "@/lib/format"
 import type { Vital, VitalKey } from "@/server/queries/types"
+import { NightLineChart } from "@/components/charts/NightLineChart"
 import { TrendChart } from "@/components/charts/TrendChart"
 import { KeyStatRow, KeyStatRowSkeleton } from "@/components/metrics/KeyStatRow"
 import { StatusChip, ValueUnit } from "@/components/metrics/primitives"
@@ -78,6 +79,8 @@ export function VitalTiles({ vitals }: { vitals: Vital[] }) {
                 {unit(v.unit)}
               </p>
             )}
+            {/* Last night's samples (scoring version 35), above the 6-month trend. */}
+            {(v.key === "hrv" || v.key === "spo2") && v.night?.value && <NightLineChart kind={v.key} night={v.night.value} />}
             <TrendChart
               label={v.label}
               data={{ value: v.trend.points.map((p) => ({ date: p.day, value: p.value })), reason: null, provisional: false }}

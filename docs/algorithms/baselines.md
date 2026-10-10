@@ -186,6 +186,51 @@ On the 180-day seed:
 - After about day 67, Recovery is within 0.4 points of before on average.
 - Recovery bands (green / yellow / red) go from 62 / 80 / 28 to 61 / 85 / 24.
 
+## Why version 35: the sleeping heart rate gets its own baseline
+
+**What changed.** Google's `daily-heart-rate-variability` carries Fitbit's **non-REM heart rate**
+(`nonRemHeartRateBeatsPerMinute`): the night's heart rate over light and deep sleep. On the owner's first seven Fitbit
+nights it read **60–66 bpm**, while Google's daily resting HR read **67–71**. Google's value blends awake data and
+on one night (Oct 3) was computed from awake data only (77 bpm). Recovery, readiness, the Health Monitor and the illness
+signal now score the sleeping HR. Strain's zones and Pulse Age keep Google's daily value: zones then match Fitbit's,
+and Pulse Age's population curves are on awake resting HR.
+
+**Why it never shares a baseline.** The two series sit about 6 bpm apart. Fold them into one baseline and the night the
+sleeping HR first arrives reads as a 6 bpm drop: a falsely great Recovery for days, the device-seam problem again.
+So each has its own baseline, folded every night it has a value:
+- `rhrB` with Google's daily value (else Pulse's session estimate);
+- `sleepHrB` with the non-REM HR.
+
+**The rule** (`restingPair`, `src/server/pipeline/scores.ts`):
+- **Use the sleeping HR against `sleepHrB`** when the night has one and `sleepHrB` is **trusted** (14 nights). It is
+  also used as soon as it is usable (4 nights) if `rhrB` isn't usable either, as on a new Fitbit-only account.
+- **Otherwise use Google's daily value against `rhrB`**, as before.
+
+A young sleeping-HR baseline doesn't take over from an established daily one: its first-week spread is wide, so for two
+weeks its z would be noisier than the one it replaces. Readiness and the Health Monitor fold their own histories, and they
+take the same series the night uses: the `sleepHr` column, or the daily one, never a mix. Google's resting-HR range (only
+in the demo; real accounts never get one) is dropped when the Monitor shows the sleeping HR, since it describes the
+daily value.
+
+**How it was tested.** `restingPair.test.ts` simulates 60 people:
+- 90 nights of Google's daily resting HR only (a phone, or an older band);
+- then a Fitbit also reporting a non-REM HR 5–7 bpm lower;
+- night-to-night noise like the owner's (SD 1.4–2 bpm).
+
+| Mean \|z\| | Rule (separate baselines) | One mixed baseline |
+|---|---|---|
+| Two weeks after the switch | **0.46** | 1.45 |
+| First three switch nights (signed mean z) | **+0.03** | **−2.05** (a falsely low resting HR) |
+| Weeks later, settled on the sleeping HR | 0.63 | — |
+
+**On the seed** (`GOLDEN[35]`, the parity snapshot):
+- Recovery moved by 1.35 points on average (at most 4.8), with a mean change of +0.03.
+- The green / yellow / red days are unchanged (53 / 93 / 24).
+- Strain and sleep are byte-identical.
+
+**On the owner's data** (a local copy, after a sync with version 35): the non-REM HR is present on every Fitbit night
+from Oct 4. Recovery keeps Google's daily value until the sleeping-HR baseline is trusted (night 14).
+
 ## Why version 33: a large real step locked the baseline for good
 
 **The mechanism.** Past its first week a baseline rejects any value more than 5 spreads from its centre
