@@ -1,6 +1,6 @@
-// A device switch, from the source of each main sleep (scoring version 34; docs/data-from.md). Google merges daily
-// metrics across sources, so only sleep sessions (and exercises) say which device recorded them: `FITBIT` for the band,
-// `HEALTH_CONNECT` for a phone or another watch. When the main sleeps move to a new source and stay there, the old
+// A device switch, from the source of each main sleep (scoring version 34; docs/data-from.md). Pulse stores daily
+// metrics without their device (`daily_metrics.source` is always "google"), while sleep sessions (and exercises) keep
+// it: `FITBIT` for the band, `HEALTH_CONNECT` for a phone or another watch. When the main sleeps move to a new source and stay there, the old
 // device's history would keep shaping every baseline (on the owner's account resting HR differed by 5.5 bpm and SpO2 by
 // 4 points between the two devices), so Pulse suggests counting data from the switch. It never applies it by itself.
 

@@ -3,11 +3,11 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { type Db, row, sql } from "../db";
 import { dailyMetrics, dailyValues, loggedEntries } from "../db/schema";
-import { readSamples } from "../samples";
+import { readSamples, writeSamples } from "../samples";
 import { localMidnight } from "../time";
 import { copyDb, ctxFor, dayAt, seeded, TZ, USER } from "../testing";
 
-import { DETAIL_KEYS, getMetricDetail, rangeStats, STEP_TARGET, WEEKLY_TARGET, type Section } from "./metric";
+import { DETAIL_KEYS, getMetricDetail, rangeStats, scaleToTotal, STEP_TARGET, WEEKLY_TARGET, type Section } from "./metric";
 
 let db: Db;
 beforeAll(async () => {
@@ -42,17 +42,15 @@ describe("getMetricDetail", () => {
       }
   });
 
-  it("steps: the day's value against its prior 30 days, today a gap in history, hours summing the stored steps", async () => {
+  it("steps: the day's value against its prior 30 days, today a gap in history, hours adding up to the day's steps", async () => {
     const vm = await getMetricDetail("steps", PAST, ctxFor(db));
     const steps = async (d: string) => (await metricOn(db, d))?.steps ?? null;
     expect(vm.value.value).toBe(await steps(PAST));
     const prior = (await Promise.all(Array.from({ length: 30 }, (_, k) => steps(dayAt(169 - k))))).filter((x): x is number => x != null);
     expect(vm.average).toBeCloseTo(prior.reduce((a, b) => a + b, 0) / prior.length, 6);
     const hours = section(vm.sections, "hourly")!.hours.value!;
-    const start = localMidnight(PAST, TZ);
-    const sum = (await readSamples(db, "steps", USER, start, start + 86400)).reduce((a, x) => a + x.v, 0);
     expect(hours).toHaveLength(24);
-    expect(hours.reduce((a, h) => a + (h.value ?? 0), 0)).toBe(sum);
+    expect(hours.reduce((a, h) => a + (h.value ?? 0), 0)).toBe(vm.value.value);
     expect(vm.chart.reference).toEqual({ y: STEP_TARGET, label: "7,000" });
     expect(section(vm.sections, "weekday")!.days.map((d) => d.label)).toEqual(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
 
@@ -61,6 +59,79 @@ describe("getMetricDetail", () => {
     expect(today.history.value!.at(-1)!.value).toBeNull();
     // 14:00: the hours after now are gaps, not zeros.
     expect(section(today.sections, "hourly")!.hours.value!.slice(15).every((h) => h.value === null)).toBe(true);
+  });
+
+  describe("steps by hour add up to the day's total, even when two devices double-count a walk", () => {
+    const hoursOf = async (c: Db, key: "steps" | "sedentary_minutes", day: string) => section((await getMetricDetail(key, day, ctxFor(c))).sections, "hourly")!;
+    const sumOf = (hs: { value: number | null }[]) => hs.reduce((a, h) => a + (h.value ?? 0), 0);
+    const minutesOf = async (c: Db, day: string) => {
+      const start = localMidnight(day, TZ);
+      return readSamples(c, "steps", USER, start, start + 86400);
+    };
+    /** A phone that saw every step a minute after the band: per-minute max keeps both (the owner's +26% since Oct 3). */
+    async function phoneEcho(c: Db, day: string) {
+      const mins = await minutesOf(c, day);
+      const at = new Map(mins.map((m) => [m.ts, m.v]));
+      await writeSamples(c, "steps", USER, mins.filter((m) => m.v > 0).map((m) => ({ ts: m.ts + 60, v: Math.max(at.get(m.ts + 60) ?? 0, m.v) })));
+    }
+    const DAYS = [dayAt(150), dayAt(160), PAST];
+    let echo: Db;
+    beforeAll(async () => {
+      echo = await copyDb(db);
+      for (const d of DAYS) await phoneEcho(echo, d);
+    });
+
+    it("the echo inflates the stored minutes, but the hours still add up to the day's steps", async () => {
+      for (const d of DAYS) {
+        const steps = (await metricOn(echo, d))!.steps!;
+        const raw = (await minutesOf(echo, d)).reduce((a, m) => a + m.v, 0);
+        expect(raw, d).toBeGreaterThan(steps * 1.2); // the double count is really there
+        const vm = await getMetricDetail("steps", d, ctxFor(echo));
+        expect(sumOf(section(vm.sections, "hourly")!.hours.value!), d).toBe(vm.value.value);
+        expect(vm.value.value).toBe(steps);
+      }
+    });
+
+    it("lands closer to the true hours than the raw minutes do, and quiet hours stay 0", async () => {
+      for (const d of DAYS) {
+        // The seed's own hours are the truth (one device); the echo can't be undone exactly, since scattered steps
+        // double while a long walk only gains its last minute, but scaling must beat showing the inflated minutes.
+        const before = (await hoursOf(db, "steps", d)).hours.value!.map((h) => h.value ?? 0);
+        const after = (await hoursOf(echo, "steps", d)).hours.value!.map((h) => h.value ?? 0);
+        const start = localMidnight(d, TZ);
+        const raw = new Array<number>(24).fill(0);
+        for (const m of await minutesOf(echo, d)) raw[Math.floor((m.ts - start) / 3600)] += m.v;
+        const err = (xs: number[]) => xs.reduce((a, v, h) => a + Math.abs(v - before[h]), 0);
+        expect(err(after), d).toBeLessThan(err(raw));
+        // An hour the echo spills into (a walk ending at :59) may gain steps; an hour with none before stays 0 otherwise.
+        before.forEach((v, h) => v === 0 && h > 0 && before[h - 1] === 0 && expect(after[h], `${d} ${h}:00`).toBe(0));
+      }
+    });
+
+    it("without a daily total the hours are the stored minutes as they are", async () => {
+      const c = await copyDb(echo);
+      await c.update(dailyMetrics).set({ steps: null }).where(and(eq(dailyMetrics.userId, USER), eq(dailyMetrics.day, PAST)));
+      const raw = (await minutesOf(c, PAST)).reduce((a, m) => a + m.v, 0);
+      expect(sumOf((await hoursOf(c, "steps", PAST)).hours.value!)).toBe(raw);
+    });
+
+    it("today: the hours add up to the running total and the hours to come stay gaps", async () => {
+      const c = await copyDb(db);
+      await phoneEcho(c, TODAY);
+      const vm = await getMetricDetail("steps", TODAY, ctxFor(c));
+      const hours = section(vm.sections, "hourly")!.hours.value!;
+      expect(sumOf(hours)).toBe(vm.value.value);
+      expect(hours.slice(15).every((h) => h.value === null)).toBe(true);
+    });
+
+    it("Sedentary time shows the same hours; its longest still stretch is unchanged", async () => {
+      const [steps, sed] = await Promise.all([hoursOf(echo, "steps", PAST), hoursOf(echo, "sedentary_minutes", PAST)]);
+      expect(sed.hours).toEqual(steps.hours);
+      const plain = (await hoursOf(db, "sedentary_minutes", PAST)).still!;
+      // The echo only fills the minute after a step, so the longest stretch can only shrink by that minute.
+      expect(sed.still!.minutes).toBeGreaterThanOrEqual(plain.minutes - 1);
+      expect(sed.still!.minutes).toBeLessThanOrEqual(plain.minutes);
+    });
   });
 
   it("sedentary time: the longest stretch without steps stays inside 07:00-22:00", async () => {
@@ -144,6 +215,36 @@ describe("getMetricDetail", () => {
     expect(vm.value).toMatchObject({ value: null, reason: "no_data" });
     expect(vm.history).toMatchObject({ value: null, reason: "no_data" });
     expect(vm.sections).toEqual([]);
+  });
+});
+
+describe("scaleToTotal", () => {
+  /** A small deterministic generator, so a failure reproduces. */
+  const rng = (seed: number) => () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+
+  it("adds up to exactly the total, each value within 1 of its exact share, zeros staying zero (200 random days)", () => {
+    const r = rng(7);
+    for (let k = 0; k < 200; k++) {
+      const values = Array.from({ length: 24 }, () => (r() < 0.4 ? 0 : Math.floor(r() * (r() < 0.2 ? 3000 : 400))));
+      const sum = values.reduce((a, v) => a + v, 0);
+      if (!sum) continue;
+      const total = Math.floor(sum * (0.5 + r())); // down to half, up to one and a half
+      const out = scaleToTotal(values, total);
+      expect(out.reduce((a, v) => a + v, 0)).toBe(total);
+      out.forEach((v, i) => {
+        expect(Number.isInteger(v)).toBe(true);
+        expect(Math.abs(v - (values[i] * total) / sum)).toBeLessThan(1);
+        if (values[i] === 0) expect(v).toBe(0);
+      });
+    }
+  });
+
+  it("down, up, one busy hour, and a day without steps", () => {
+    expect(scaleToTotal([100, 300, 0, 600], 500)).toEqual([50, 150, 0, 300]);
+    expect(scaleToTotal([1, 1, 1], 10)).toEqual([4, 3, 3]);
+    expect(scaleToTotal([0, 0, 4314, 0], 3422)).toEqual([0, 0, 3422, 0]);
+    expect(scaleToTotal([0, 0, 0], 3422)).toEqual([0, 0, 0]);
+    expect(scaleToTotal([200, 300], 500)).toEqual([200, 300]); // already matching: unchanged
   });
 });
 

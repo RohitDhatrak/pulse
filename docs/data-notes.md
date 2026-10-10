@@ -274,6 +274,19 @@ From Hælan's `rollup-methods.md`:
   - `total-calories`: `totalCalories.kcalSum`, a number in kcal.
   - `steps`: unobserved. Confirm on Fitbit Air.
 - **Merging.** Rollups are server-side merged across sources, excluding intervals when a wearable was not worn. `dataSourceFamily` did not change the result.
+- **Steps: the daily total vs Pulse's per-minute steps** (the owner's 186 days, checked against the raw step points, 2026-10-10).
+  - **Google's daily steps follow no single rule.**
+    - With a Fitbit Air (from Oct 3) the daily total is exactly the band's own count, ignoring the phone (Fitbit
+      MobileTrack and Health Connect phone points).
+    - Before that it was mostly exactly Samsung Health's count (146 days).
+    - In May, with watch plus phone, it was a minute-level merge within about 1% of Pulse's (32 days).
+  - **Pulse's per-minute steps (`steps_days`) are the maximum across sources each minute** (`mapStepsMinutes`). That
+    is the right signal for movement gating (stress, night steps, still minutes). But a band and a phone that count the
+    same walk a minute apart add up: the minutes ran 25–26% over the daily total after the switch.
+  - **So Steps by hour (`/metric/steps`) is scaled to the day's total** (`scaleToTotal`, largest remainder). The bars
+    then add up to the hero. Hours can't be split exactly without storing steps per source.
+    - On the four days with band-only raw data, the worst hour was 49–424 steps off scaled, against 133–682 raw.
+    - The worst case was a strength session the phone counted and the band didn't.
 - **Use `dailyRollUp` for a daily row, not `rollUp`.** `rollUp` windows are UTC-anchored, so they shift the local day.
 
 ## Rate limits, retries and errors

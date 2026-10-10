@@ -31,8 +31,8 @@ weeks. Before this, deleting rows was the only fix, and a full re-import from Go
 
 ## The suggestion
 
-Google merges daily metrics across sources (`daily_metrics.source` is always `google`), but sleep sessions keep the
-device platform: `FITBIT` for the band, `HEALTH_CONNECT` for a phone or another watch. `detectDeviceSwitch`
+Pulse stores daily metrics without their device (`daily_metrics.source` is always `google`; Google's daily points do
+carry a platform, and the step and calorie roll-ups are merged by Google), but sleep sessions keep the device platform: `FITBIT` for the band, `HEALTH_CONNECT` for a phone or another watch. `detectDeviceSwitch`
 (`src/core/deviceSwitch.ts`) reads the source of each main sleep and returns the latest switch when:
 - the new source holds for the last **3** main sleeps in a row (`minNewNights`): a single stray sync isn't a switch;
 - the old source had at least **7** main sleeps before it (`minOldNights`): less history isn't worth starting over for.

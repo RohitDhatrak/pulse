@@ -138,7 +138,10 @@ export async function deviceSwitchFor(ctx: QueryCtx): Promise<DeviceSwitch | nul
   return from && from >= sw.day ? null : sw;
 }
 
-/** Every day in [from, to], one query per table (in parallel); days without rows come back empty. */
+/**
+ * Every day in [from, to], one query per table (in parallel); days without rows come back empty. Days before "count my
+ * data from" (scoring version 34) come back empty too, so callers can still read any day in the range.
+ */
 export async function loadDays(ctx: QueryCtx, fromDay: string, to: string): Promise<Map<string, DayRow>> {
   const { db, userId } = ctx;
   const from = countedFrom(ctx, fromDay);
@@ -196,7 +199,7 @@ export async function loadDays(ctx: QueryCtx, fromDay: string, to: string): Prom
   // daily_values.day is text ('latest' sorts after every date, so the range already excludes it).
   for (const r of extraRows) extra.set(r.day, { ...extra.get(r.day), [r.key as ExtraKey]: r.value });
   const out = new Map<string, DayRow>();
-  for (let d = from; d <= to; d = addDays(d, 1)) {
+  for (let d = fromDay; d <= to; d = addDays(d, 1)) {
     const r = scores.get(d);
     out.set(d, {
       day: d,

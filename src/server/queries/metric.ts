@@ -59,7 +59,7 @@ const PROTEIN_G_PER_KG = 0.8;
 
 const LEVELS = ["intensity"] as const;
 const CONFIG: Record<DetailKey, Config> = {
-  steps: { group: "activity", total: true, sections: ["hourly", "goal", "weekday"], reference: { y: STEP_TARGET, label: "7,000" }, about: "Steps counted through the day." },
+  steps: { group: "activity", total: true, sections: ["hourly", "goal", "weekday"], reference: { y: STEP_TARGET, label: "7,000" }, about: "Steps counted through the day. The hourly view spreads the day’s total by when your band or phone saw you move." },
   calories: {
     group: "activity",
     total: true,
@@ -251,6 +251,21 @@ function partsOf(stack: "calories" | "distance", r: DayRow | undefined, total: n
   }
   const workouts = Math.min(exs.filter((e) => e.day === r.day).reduce((a, e) => a + (e.distanceM ?? 0), 0) / 1000, total);
   return { workouts, everyday: total - workouts };
+}
+
+/**
+ * `values` (non-negative integers) scaled to add up to exactly `total`, each rounded by largest remainder, so no value
+ * moves more than 1 from its exact share. Zeros stay zero; a zero sum comes back unchanged.
+ */
+export function scaleToTotal(values: number[], total: number): number[] {
+  const sum = values.reduce((a, v) => a + v, 0);
+  if (sum <= 0) return values;
+  const exact = values.map((v) => (v * total) / sum);
+  const out = exact.map(Math.floor);
+  let left = Math.round(total) - out.reduce((a, v) => a + v, 0);
+  const byRemainder = exact.map((x, i) => ({ i, r: x - out[i] })).filter((x) => values[x.i] > 0).sort((a, b) => b.r - a.r || a.i - b.i);
+  for (let k = 0; left > 0 && byRemainder.length; k = (k + 1) % byRemainder.length, left--) out[byRemainder[k].i]++;
+  return out;
 }
 
 /** Stats over the last `n` of `values` (aligned with `days`), and the average of the `n` before them. */
@@ -456,8 +471,10 @@ const BUILD: Record<Exclude<SectionKind, "outliers">, (s: SectionCtx, key: Detai
 };
 
 /**
- * Steps per hour of the day from the stored steps per minute; hours still to come today are gaps. `still` adds the longest
- * stretch without a step between 07:00 and 22:00 (or now, today), for Sedentary time.
+ * Steps per hour of the day from the stored steps per minute; hours still to come today are gaps. The minutes are the
+ * maximum across sources (for movement), which double-counts a walk the band and the phone both saw a minute apart, so
+ * the hours are scaled to the day's total (Google's roll-up, the number the hero shows). Without a total they stay raw.
+ * `still` adds the longest stretch without a step between 07:00 and 22:00 (or now, today), for Sedentary time.
  */
 async function hourly(s: SectionCtx, still: boolean): Promise<Extract<Section, { kind: "hourly" }>> {
   const start = dayStartOf(s.ctx, s.day);
@@ -468,7 +485,9 @@ async function hourly(s: SectionCtx, still: boolean): Promise<Extract<Section, {
   const now = s.isToday ? Math.floor((s.ctx.now - start) / 3600) : n;
   const sums = new Array<number>(n).fill(0);
   for (const m of mins) sums[Math.min(n - 1, Math.floor((m.ts - start) / 3600))] += m.steps;
-  const hours = sums.map((v, h) => ({ t: ms(start + h * 3600), label: clock(ms(start + h * 3600), s.ctx.timeZone), value: h > now ? null : v }));
+  const total = s.rows.get(s.day)?.metrics?.steps;
+  const scaled = total != null && total > 0 ? scaleToTotal(sums, total) : sums;
+  const hours = scaled.map((v, h) => ({ t: ms(start + h * 3600), label: clock(ms(start + h * 3600), s.ctx.timeZone), value: h > now ? null : v }));
   let gap: { from: number; to: number; minutes: number } | null = null;
   if (still) {
     // ponytail: daytime is 07:00-22:00 so a night's sleep never reads as sitting; sleep times would be exact with a band.

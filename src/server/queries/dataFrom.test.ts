@@ -9,7 +9,17 @@ import { addDays, localMidnight } from "../time";
 import { getActivities } from "./activities";
 import { getActivity } from "./activity";
 import { deviceSwitchFor, exercisesBetween, loadDays, type QueryCtx } from "./common";
-import { getHeartRate } from "./health";
+import { getCalendarMonth } from "./calendar";
+import { getFitness, getHealthHub, getHealthspan, getHeartRate, getMonitor, getStress } from "./health";
+import { getHome } from "./home";
+import { getJournal, getJournalInsights } from "./journal";
+import { DETAIL_KEYS, getMetricDetail } from "./metric";
+import { getRecovery } from "./recovery";
+import { getReportArchive } from "./reports";
+import { getSettings } from "./settings";
+import { getSleep } from "./sleep";
+import { getStrain } from "./strain";
+import { getTrends, TREND_METRICS } from "./trends";
 
 const FROM = dayAt(170);
 let db: Db;
@@ -24,6 +34,8 @@ beforeAll(async () => {
 describe("count my data from on the screens (version 34)", () => {
   it("loadDays and exercisesBetween return nothing before the date", async () => {
     const days = await loadDays(ctx, dayAt(150), dayAt(179));
+    // Every day in the range is still there (callers index any day), just empty before the date.
+    expect([...days.keys()]).toEqual(Array.from({ length: 30 }, (_, i) => dayAt(150 + i)));
     for (const [day, row] of days) {
       if (day < FROM) expect(row.recovery ?? row.metrics ?? row.sleep ?? null, day).toBeNull();
     }
@@ -38,6 +50,19 @@ describe("count my data from on the screens (version 34)", () => {
     expect(await getActivity(old.id, ctxFor(db))).not.toBeNull();
     const list = await getActivities(30, ctx);
     expect(JSON.stringify(list)).not.toContain(old.id);
+  });
+
+  it("every screen renders with the date set, on days before, at and after it", async () => {
+    for (const d of [dayAt(160), FROM, dayAt(179)]) {
+      for (const f of [getHome, getRecovery, getStrain, getSleep, getMonitor, getStress, getHealthspan, getJournal, getHeartRate]) await f(d, ctx);
+      for (const key of DETAIL_KEYS) await getMetricDetail(key, d, ctx);
+    }
+    for (const m of TREND_METRICS) {
+      const t = await getTrends(m.key, ctx);
+      if (t.points.value) expect(t.points.value.filter((p) => p.day < FROM && p.value !== null), m.key).toEqual([]);
+    }
+    for (const m of ["recovery", "hrv", "sleep"] as const) await getJournalInsights(m, ctx);
+    await Promise.all([getHealthHub(ctx), getFitness(ctx), getCalendarMonth(dayAt(160).slice(0, 7), ctx), getReportArchive(ctx), getSettings(ctx)]);
   });
 
   it("heart-rate minutes before the date are gaps", async () => {
