@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { rows, sql } from "./db";
 import { dailyMetrics } from "./db/schema";
-import { getProfile, ProfileInput, saveProfile } from "./profile";
+import { dismissDeviceSwitch, getProfile, ProfileInput, saveProfile, setDataFrom } from "./profile";
 import { wholeYears } from "./time";
 import { addUser, freshDb, seeded, USER } from "./testing";
 
@@ -16,7 +16,7 @@ describe("profile", () => {
     const db = await freshDb();
     await saveProfile(db, USER, input);
     // Age 36 on 2026-10-02: 208 - 0.7 * 36 = 182.8
-    expect(await getProfile(db, USER, "2026-10-02")).toEqual({ birthDate: "1990-06-15", sex: "female", maxHr: 183, maxHrSource: "estimated", heightCm: 165, timeZone: "Asia/Kolkata" });
+    expect(await getProfile(db, USER, "2026-10-02")).toEqual({ birthDate: "1990-06-15", sex: "female", maxHr: 183, maxHrSource: "estimated", heightCm: 165, timeZone: "Asia/Kolkata", dataFrom: null, deviceSwitchDismissed: null });
     // Birthday not reached yet, age 35: 183.5
     expect((await getProfile(db, USER, "2026-06-14"))!.maxHr).toBe(184);
     await saveProfile(db, USER, { ...input, maxHr: 190 });
@@ -52,6 +52,34 @@ describe("profile", () => {
     expect(await dirty()).toBe(0);
     expect(await saveProfile(db, USER, { ...input, timeZone: "UTC" })).toBe(true);
     expect(await dirty()).toBe(days);
+  });
+
+  it("count my data from (version 34): set, change and clear it, each marking every day for recompute; the same value does nothing", async () => {
+    const db = await seeded();
+    await saveProfile(db, USER, input);
+    const count = async (q: ReturnType<typeof sql>) => (await rows<{ n: number }>(db, q))[0].n;
+    const days = await count(sql`select count(distinct day) n from daily_metrics where user_id = ${USER}`);
+    const dirty = () => count(sql`select count(*) n from intraday_dirty`);
+    await db.execute(sql`delete from intraday_dirty`);
+    expect(await setDataFrom(db, USER, "2026-08-01")).toBe(true);
+    expect((await getProfile(db, USER))!.dataFrom).toBe("2026-08-01");
+    expect(await dirty()).toBe(days);
+    await db.execute(sql`delete from intraday_dirty`);
+    expect(await setDataFrom(db, USER, "2026-08-01")).toBe(false);
+    expect(await dirty()).toBe(0);
+    expect(await setDataFrom(db, USER, null)).toBe(true);
+    expect((await getProfile(db, USER))!.dataFrom).toBeNull();
+    expect(await dirty()).toBe(days);
+    // Before onboarding there is no profile to set it on.
+    expect(await setDataFrom(await freshDb(), USER, "2026-08-01")).toBe(false);
+  });
+
+  it("dismissing a device-switch suggestion stores its day and changes nothing else", async () => {
+    const db = await seeded();
+    await saveProfile(db, USER, input);
+    const before = await getProfile(db, USER);
+    await dismissDeviceSwitch(db, USER, "2026-10-04");
+    expect(await getProfile(db, USER)).toEqual({ ...before, deviceSwitchDismissed: "2026-10-04" });
   });
 
   it("validates input, coercing form strings", () => {

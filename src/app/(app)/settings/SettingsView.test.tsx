@@ -14,6 +14,7 @@ const base: SettingsVM = {
   mode: "google",
   source: { label: "Google Health", status: "connected" },
   import: null,
+  dataFrom: { day: null, suggestion: null },
   sync: [
     { key: "heart-rate", label: "Heart rate", lastSuccessAt: NOW - 12 * 60_000, status: "ok", error: null },
     { key: "sleep", label: "Sleep", lastSuccessAt: NOW - 3 * 3600_000, status: "stale", error: null },
@@ -75,7 +76,7 @@ describe("Settings view", () => {
     expect(within(source()).queryByRole("link")).not.toBeInTheDocument()
     expect(screen.getByText(/DATA_SOURCE=google/)).toBeInTheDocument()
     expect(screen.queryByRole("region", { name: "About" })).not.toBeInTheDocument()
-    expect(screen.getAllByRole("region").map((r) => r.getAttribute("aria-labelledby"))).toEqual(["account-title", "source-title", "profile-title", "appearance-title"])
+    expect(screen.getAllByRole("region").map((r) => r.getAttribute("aria-labelledby"))).toEqual(["account-title", "source-title", "data-from-title", "profile-title", "appearance-title"])
   })
 
   it("profile is editable and the account can sign out with a plain form post", () => {

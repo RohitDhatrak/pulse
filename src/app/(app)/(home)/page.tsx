@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { CalendarRange, Check, ChevronRight, CircleAlert, Info, Lightbulb, Maximize2, Moon, Plus, Sun, TriangleAlert } from "lucide-react"
+import { CalendarRange, Check, ChevronRight, CircleAlert, Info, Lightbulb, Maximize2, Moon, Plus, Smartphone, Sun, TriangleAlert } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { isDashboardKey } from "@/lib/dashboard"
 import { clock, DAY, formatDay, formatValue, MISSING, rangeLabel } from "@/lib/format"
@@ -183,6 +183,7 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
             }
           >
             <div className="flex flex-col gap-3 xl:flex-1 xl:gap-4">
+              {vm.isToday && vm.deviceSwitch && <DeviceSwitchBanner day={vm.deviceSwitch.day} />}
               {vm.outlook && <DayBanner outlook={vm.outlook} />}
               <SectionShell
                 variant="card"
@@ -287,6 +288,23 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
         ),
       }}
     />
+  )
+}
+
+/**
+ * A device switch was detected (scoring version 34): offers "count my data from" in Settings, where it can be used or
+ * dismissed. Nothing changes until the person chooses.
+ */
+function DeviceSwitchBanner({ day }: { day: string }) {
+  return (
+    <Link href="/settings#data-from" className={cn(BANNER, "bg-card")}>
+      <Smartphone aria-hidden className="size-[22px] shrink-0 text-foreground-secondary" strokeWidth={1.5} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-base leading-[22px] font-semibold">New device since {formatDay(day, DAY.monthDay)}?</span>
+        <span className="block truncate text-[13px] leading-[18px] text-muted-foreground">Count your data from then for a clean start</span>
+      </span>
+      <ChevronRight aria-hidden className="size-5 shrink-0 text-coach" strokeWidth={1.75} />
+    </Link>
   )
 }
 

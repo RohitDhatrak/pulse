@@ -36,6 +36,7 @@ import {
   finite,
   recoveryBand,
   toStrain,
+  deviceSwitchFor,
 } from "./common";
 import type { EnergyBankVM, HomeVM, KeyStat, Metric, VitalKey } from "./types";
 
@@ -52,7 +53,7 @@ export async function getHome(day: string, ctx: QueryCtx): Promise<HomeVM> {
   const today = todayOf(ctx);
   const isToday = day === today;
   const stripStart = day < addDays(today, -29) ? day : addDays(today, -29);
-  const [rows, exs, keys, defaults, weeklyTeaser, journal, ebSeries] = await Promise.all([
+  const [rows, exs, keys, defaults, weeklyTeaser, journal, ebSeries, deviceSwitch] = await Promise.all([
     loadDays(ctx, addDays(stripStart, -30), today),
     exercisesBetween(ctx, day, day),
     dashboardKeys(ctx.db, ctx.userId),
@@ -60,6 +61,7 @@ export async function getHome(day: string, ctx: QueryCtx): Promise<HomeVM> {
     latestReport(ctx, "week"),
     journalWeek(ctx, day),
     loadSeries(ctx, day, "energy_bank"),
+    deviceSwitchFor(ctx),
   ]);
   const row = rows.get(day);
 
@@ -76,6 +78,7 @@ export async function getHome(day: string, ctx: QueryCtx): Promise<HomeVM> {
     day,
     today,
     isToday,
+    deviceSwitch,
     strip,
     dials: {
       sleep,

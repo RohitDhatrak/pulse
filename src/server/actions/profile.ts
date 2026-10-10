@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { currentUser, SIGNED_OUT } from "../auth";
 import { getDb } from "../db";
-import { ProfileInput, saveProfile } from "../profile";
+import { z } from "zod";
+import { dismissDeviceSwitch, ProfileInput, saveProfile, setDataFrom } from "../profile";
+import type { ActionResult } from "./journal";
 import { requestSync } from "../worker";
 
 export type ProfileFormState =
@@ -34,4 +36,31 @@ export async function saveProfileAction(_: ProfileFormState, form: FormData): Pr
   revalidatePath("/", "layout");
   if (form.get("onboarding") === "1") redirect("/");
   return { ok: true };
+}
+
+const Day = z.iso.date();
+
+/**
+ * Settings › Count my data from (scoring version 34): sets the first local day that counts, or clears it with null.
+ * Every day is re-scored from there; earlier data stays stored, so clearing it brings everything back.
+ */
+export async function setDataFromAction(day: string | null): Promise<ActionResult> {
+  const user = await currentUser();
+  if (!user) return SIGNED_OUT;
+  if (day !== null && !Day.safeParse(day).success) return { ok: false, error: "Choose a date" };
+  const today = new Date().toISOString().slice(0, 10);
+  if (day !== null && day > today) return { ok: false, error: "Choose a date that isn't in the future" };
+  if (await setDataFrom(getDb(), user.userId, day)) requestSync({ userId: user.userId, force: true });
+  revalidatePath("/", "layout");
+  return { ok: true, data: undefined };
+}
+
+/** Hides the device-switch suggestion for that day; nothing else changes. */
+export async function dismissDeviceSwitchAction(day: string): Promise<ActionResult> {
+  const user = await currentUser();
+  if (!user) return SIGNED_OUT;
+  if (!Day.safeParse(day).success) return { ok: false, error: "Choose a date" };
+  await dismissDeviceSwitch(getDb(), user.userId, day);
+  revalidatePath("/", "layout");
+  return { ok: true, data: undefined };
 }

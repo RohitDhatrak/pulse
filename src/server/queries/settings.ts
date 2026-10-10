@@ -4,7 +4,7 @@ import { missingScopes } from "../sources/google/oauth";
 import { addDays, wholeYears } from "../time";
 import { and, count, desc, eq, lte, sql } from "drizzle-orm";
 import { dailyScores, journalEntries, journalTags, oauthTokens, reports, syncState } from "../db/schema";
-import { firstDay, type QueryCtx, todayOf } from "./common";
+import { deviceSwitchFor, firstDay, type QueryCtx, todayOf } from "./common";
 import { latestReport } from "./home";
 import type { MoreVM, SettingsVM, ShellStatusVM, YourDataVM } from "./types";
 
@@ -125,8 +125,10 @@ export async function getSettings(ctx: QueryCtx): Promise<SettingsVM> {
         });
   const p = ctx.profile;
   const today = todayOf(ctx);
+  const suggestion = await deviceSwitchFor(ctx);
   return {
     mode: ctx.mode,
+    dataFrom: { day: p.dataFrom ?? null, suggestion },
     source:
       ctx.mode === "demo"
         ? { label: "Demo data", status: "demo" }

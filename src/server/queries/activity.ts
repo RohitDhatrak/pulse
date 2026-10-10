@@ -18,6 +18,7 @@ import {
   type QueryCtx,
   todayOf,
   toStrain,
+  countedFrom,
 } from "./common";
 import { hrChartOf, zoneNote, zoneRows } from "./strain";
 import type { Metric } from "@/lib/reasons";
@@ -30,7 +31,8 @@ export async function getActivity(id: string, ctx: QueryCtx): Promise<ActivityVM
     .select({ id: x.id, day: x.day, startTs: x.startTs, endTs: x.endTs, type: x.type, name: x.name, calories: x.calories, distanceM: x.distanceM })
     .from(x)
     .where(and(eq(x.userId, ctx.userId), eq(x.id, id)));
-  if (!e) return null;
+  // An activity before "count my data from" doesn't exist here (version 34).
+  if (!e || countedFrom(ctx, e.day) !== e.day) return null;
   const [rows, recent, series] = await Promise.all([
     loadDays(ctx, addDays(e.day, -30), e.day),
     exercisesBetween(ctx, addDays(e.day, -30), e.day),

@@ -26,7 +26,7 @@ export async function recomputeIfNeeded(userId: number, changed: boolean): Promi
   // Scores need age and sex: before onboarding, sync keeps importing and scoring waits.
   const profile = await getProfile(db, userId);
   if (!profile) return;
-  await recompute(db, { userId, timeZone: profile.timeZone, profile });
+  await recompute(db, { userId, timeZone: profile.timeZone, profile, dataFrom: profile.dataFrom ?? null });
   console.info(`[pipeline] user ${userId} recomputed in ${lastRun.ms} ms (stage 1: ${lastRun.stage1Days.length} days)`);
 }
 

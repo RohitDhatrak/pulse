@@ -72,6 +72,8 @@ and a password; you can sign in later with either the username or the email. Onb
 sex and time zone. Then **Connect Google** on Home or in Settings, pick the account your Fitbit Air uses and allow
 every permission: the import of the last 180 days starts, and Settings shows its progress. Settings › Data source ›
 **Switch Google account** connects another one (data synced from the old account is removed; your journal stays).
+After switching devices, Settings › **Count my data from** starts scores and baselines on a day you pick, without
+deleting older data (Pulse suggests the day when your sleep moves to a new device; see `docs/data-from.md`).
 
 To try every screen on a real-data instance without connecting Google, `pnpm seed:demo` adds a demo account with 180
 days of generated data to your local database: sign in as `demo@pulse.local` / `pulse-demo-generated-data`.

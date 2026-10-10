@@ -11,9 +11,12 @@ import { Progress } from "@/components/ui/progress"
 import { GoogleFit } from "@/components/brand/GoogleFit"
 import { Mark } from "@/components/brand/Mark"
 import { AppSettings, SignOutForm } from "./AppSettings"
+import { DataFrom } from "./DataFrom"
 import { AvatarButtons, ChangePasswordButton, DeleteAccountButton, DisconnectButton, EditProfileButton, SwitchGoogleButton, ThemePicker } from "./SettingsClient"
 import { CAPTION } from "@/components/metrics/primitives"
 
+/** yyyy-MM-dd of an epoch-ms instant (the date input's max; a day early or late across zones only bounds the picker). */
+const formatDayIso = (ms: number) => new Date(ms).toISOString().slice(0, 10)
 const BODY = "max-w-[65ch] text-[15px] leading-[22px] text-pretty text-foreground-secondary"
 /** One settings row: label left, value right, 52 px tall, hairline between rows. */
 const ROW = "flex min-h-13 items-center justify-between gap-3 py-2"
@@ -271,6 +274,8 @@ export function SettingsView({ vm, now, account, coach, pushKey = null }: { vm: 
     <div className="mx-auto flex w-full max-w-[640px] flex-col gap-3 md:gap-4">
       <Account account={account} />
       <DataSource vm={vm} now={now} googleEmail={account.googleEmail} />
+      {/* The shared demo user's data is generated, so there's nothing to start over from. */}
+      {!account.demo && <DataFrom key={vm.dataFrom.day ?? "all"} vm={vm.dataFrom} today={formatDayIso(now)} />}
       <Profile profile={vm.profile} />
       <SectionShell variant="card" level={2} id="appearance" title="Appearance">
         <ThemePicker />

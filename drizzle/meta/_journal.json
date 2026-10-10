@@ -43,6 +43,13 @@
       "when": 1791296734680,
       "tag": "0005_lively_the_enforcers",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791626895384,
+      "tag": "0006_cold_nitro",
+      "breakpoints": true
     }
   ]
 }

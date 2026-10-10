@@ -15,6 +15,10 @@ export type Profile = {
   heightCm: number | null;
   /** IANA zone: the person's days start at local midnight there. */
   timeZone: string;
+  /** "Count my data from": the first local day that counts, or null for all of it. */
+  dataFrom?: string | null;
+  /** A device-switch suggestion the user dismissed (its day), so it isn't offered again. */
+  deviceSwitchDismissed?: string | null;
 };
 
 /** What onboarding and Settings submit. Ages 13 to 100: under 13 Google accounts are restricted anyway. */
@@ -47,7 +51,30 @@ export async function getProfile(db: Db, userId: number, today = new Date().toIS
     // The user's own height wins; else the latest from Google (sync's `height` job).
     heightCm: height,
     timeZone: row.timeZone,
+    dataFrom: row.dataFrom,
+    deviceSwitchDismissed: row.deviceSwitchDismissed,
   };
+}
+
+/**
+ * Sets (or with null, clears) "count my data from" and marks every stored day for recompute, so scores, baselines and
+ * reports are rebuilt from that day (or from the first day again). Earlier data is never deleted. Returns true when it
+ * changed. Needs a profile (onboarding first).
+ */
+export async function setDataFrom(db: Db, userId: number, day: string | null, now = Math.floor(Date.now() / 1000)): Promise<boolean> {
+  const [before] = await db.select({ dataFrom: profile.dataFrom }).from(profile).where(eq(profile.userId, userId));
+  if (!before || before.dataFrom === day) return false;
+  await db.transaction(async (tx) => {
+    await tx.update(profile).set({ dataFrom: day, updatedAt: now }).where(eq(profile.userId, userId));
+    await tx.execute(sql`insert into intraday_dirty (user_id, day)
+      select distinct user_id, day from daily_metrics where user_id = ${userId} on conflict do nothing`);
+  });
+  return true;
+}
+
+/** Hides the device-switch suggestion for `day` without changing anything else. */
+export async function dismissDeviceSwitch(db: Db, userId: number, day: string): Promise<void> {
+  await db.update(profile).set({ deviceSwitchDismissed: day }).where(eq(profile.userId, userId));
 }
 
 const googleHeight = async (db: Db, userId: number) => {

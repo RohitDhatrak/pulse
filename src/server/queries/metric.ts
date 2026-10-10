@@ -24,6 +24,7 @@ import {
   priorStats,
   type QueryCtx,
   todayOf,
+  countedFromTs,
 } from "./common";
 import { TREND_METRICS } from "./trends";
 import type { GoodDirection, KeyStat, Metric } from "./types";
@@ -461,7 +462,7 @@ const BUILD: Record<Exclude<SectionKind, "outliers">, (s: SectionCtx, key: Detai
 async function hourly(s: SectionCtx, still: boolean): Promise<Extract<Section, { kind: "hourly" }>> {
   const start = dayStartOf(s.ctx, s.day);
   const end = dayStartOf(s.ctx, addDays(s.day, 1));
-  const mins = (await readSamples(s.ctx.db, "steps", s.ctx.userId, start, end)).filter((x) => x.v > 0).map((x) => ({ ts: x.ts, steps: x.v }));
+  const mins = (await readSamples(s.ctx.db, "steps", s.ctx.userId, Math.max(start, countedFromTs(s.ctx)), end)).filter((x) => x.v > 0).map((x) => ({ ts: x.ts, steps: x.v }));
   if (!mins.length) return { kind: "hourly", hours: none("no_data"), still: null };
   const n = Math.round((end - start) / 3600);
   const now = s.isToday ? Math.floor((s.ctx.now - start) / 3600) : n;

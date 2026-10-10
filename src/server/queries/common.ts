@@ -3,7 +3,7 @@ import type { ExtraKey } from "@/lib/extraMetrics";
 import { getConfig } from "../config";
 import { and, eq, gte, lte, min } from "drizzle-orm";
 import { type Db, getDb } from "../db";
-import { dailyMetrics, dailyScores, dailyValues, exercises, intradaySeries } from "../db/schema";
+import { dailyMetrics, dailyScores, dailyValues, exercises, intradaySeries, sleepSessions } from "../db/schema";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { currentUser } from "../auth";
@@ -23,6 +23,7 @@ import type {
   TrainingLoadRow,
 } from "../pipeline";
 import { STRENGTH_TYPES } from "@/core/algorithms/healthspan";
+import { detectDeviceSwitch, type DeviceSwitch } from "@/core/deviceSwitch";
 import { toStrainScale } from "@/core/scoring/strain";
 import { stressLevel } from "@/lib/bands";
 import { addDays, localDay, localMidnight } from "../time";
@@ -103,9 +104,44 @@ export type DayRow = {
   extra: Partial<Record<ExtraKey, number>>;
 };
 
+/**
+ * "Count my data from" (Settings, scoring version 34): the first local day that counts, or null. Raw device tables are
+ * read from it; scores, series and reports before it are already gone (the pipeline only keeps the days it scores).
+ */
+export const dataFromOf = (ctx: QueryCtx): string | null => ctx.profile.dataFrom ?? null;
+/** `day` moved up to the first counted day. */
+export const countedFrom = (ctx: QueryCtx, day: string): string => {
+  const f = dataFromOf(ctx);
+  return f && f > day ? f : day;
+};
+/** A `day ≥ first counted day` condition for a raw table's day column, or undefined (no condition) when all counts. */
+export const countedDays = (ctx: QueryCtx, col: Parameters<typeof gte>[0]) => {
+  const f = dataFromOf(ctx);
+  return f ? gte(col, f) : undefined;
+};
+/** Unix seconds of the first counted day's local midnight, or −∞ when everything counts. */
+export const countedFromTs = (ctx: QueryCtx): number => {
+  const f = dataFromOf(ctx);
+  return f ? localMidnight(f, ctx.timeZone) : -Infinity;
+};
+
+/**
+ * A device switch to offer as "count my data from" (version 34), from every main sleep's source; null when there is
+ * none, when it was dismissed, or when the date already starts at or after it.
+ */
+export async function deviceSwitchFor(ctx: QueryCtx): Promise<DeviceSwitch | null> {
+  const s = sleepSessions;
+  const mains = await ctx.db.select({ day: s.day, source: s.source }).from(s).where(and(eq(s.userId, ctx.userId), eq(s.isMain, true)));
+  const sw = detectDeviceSwitch(mains);
+  if (!sw || sw.day === ctx.profile.deviceSwitchDismissed) return null;
+  const from = dataFromOf(ctx);
+  return from && from >= sw.day ? null : sw;
+}
+
 /** Every day in [from, to], one query per table (in parallel); days without rows come back empty. */
-export async function loadDays(ctx: QueryCtx, from: string, to: string): Promise<Map<string, DayRow>> {
+export async function loadDays(ctx: QueryCtx, fromDay: string, to: string): Promise<Map<string, DayRow>> {
   const { db, userId } = ctx;
+  const from = countedFrom(ctx, fromDay);
   const s = dailyScores;
   const m = dailyMetrics;
   const v = dailyValues;
@@ -185,6 +221,7 @@ export async function loadDays(ctx: QueryCtx, from: string, to: string): Promise
 }
 
 export async function loadSeries(ctx: QueryCtx, day: string, kind: string): Promise<(number | null)[] | null> {
+  if (countedFrom(ctx, day) !== day) return null;
   const t = intradaySeries;
   const [r] = await ctx.db
     .select({ data: t.data })
@@ -303,7 +340,7 @@ export function exercisesBetween(ctx: QueryCtx, from: string, to: string): Promi
   return ctx.db
     .select({ id: e.id, day: e.day, startTs: e.startTs, endTs: e.endTs, type: e.type, name: e.name, calories: e.calories, distanceM: e.distanceM })
     .from(e)
-    .where(and(eq(e.userId, ctx.userId), gte(e.day, from), lte(e.day, to)))
+    .where(and(eq(e.userId, ctx.userId), gte(e.day, countedFrom(ctx, from)), lte(e.day, to)))
     .orderBy(e.startTs, e.id);
 }
 

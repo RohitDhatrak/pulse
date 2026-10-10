@@ -125,6 +125,8 @@ export type HomeVM = {
   day: string;
   today: string;
   isToday: boolean;
+  /** A device switch to offer as "count my data from" (scoring version 34), until confirmed or dismissed. */
+  deviceSwitch: { day: string; from: string; to: string } | null;
   /** 30 days ending today (extended back to include `day`). */
   strip: { day: string; recovery: number | null }[];
   dials: {
@@ -481,6 +483,8 @@ export type SettingsVM = {
   import: { done: number; total: number } | null;
   sync: { key: string; label: string; lastSuccessAt: number | null; status: "ok" | "stale" | "error" | "never"; error: string | null }[];
   profile: { birthDate: string; age: number; sex: "male" | "female"; maxHr: number; maxHrSource: "set" | "estimated"; timeZone: string; heightCm: number | null };
+  /** "Count my data from" (scoring version 34): the day, if set, and a device switch to suggest, if any. */
+  dataFrom: { day: string | null; suggestion: { day: string; from: string; to: string } | null };
   version: string;
   scoringVersion: number;
 };

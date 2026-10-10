@@ -65,7 +65,7 @@ export function groupBy<T>(xs: T[], key: (x: T) => string) {
 // Text tie-breaks sort bytewise ("C"), as SQLite did: session and exercise order feeds stage 1's keys and the naps list.
 const byteOrder = (c: AnyPgColumn) => sql`${c} collate "C"`;
 
-export async function load(db: Db, { userId, timeZone: tz }: PipelineOptions) {
+export async function load(db: Db, { userId, timeZone: tz, dataFrom }: PipelineOptions) {
   const m = dailyMetrics;
   const s = sleepSessions;
   const e = exercisesTable;
@@ -96,12 +96,17 @@ export async function load(db: Db, { userId, timeZone: tz }: PipelineOptions) {
       .orderBy(e.startTs, byteOrder(e.id)) as Promise<Exercise[]>,
     sampleRange(db, "hr", userId),
   ]);
-  const candidates = [
-    ...metrics.map((m) => m.day),
-    ...sessions.map((s) => s.day),
-    ...exercises.map((x) => x.day),
-    ...(hrSpan ? [localDay(hrSpan.min, tz), localDay(hrSpan.max, tz)] : []),
-  ].sort();
+  // "Count my data from" (version 34): earlier days don't exist for scoring. The rows stay stored.
+  const counts = (day: string) => !dataFrom || day >= dataFrom;
+  if (dataFrom) {
+    for (const xs of [metrics, sessions, exercises] as { day: string }[][]) {
+      const kept = xs.filter((x) => counts(x.day));
+      xs.splice(0, xs.length, ...kept);
+    }
+  }
+  // Heart rate that runs across the date starts the days at the date itself.
+  const hrDays = hrSpan && counts(localDay(hrSpan.max, tz)) ? [counts(localDay(hrSpan.min, tz)) ? localDay(hrSpan.min, tz) : dataFrom!, localDay(hrSpan.max, tz)] : [];
+  const candidates = [...metrics.map((m) => m.day), ...sessions.map((s) => s.day), ...exercises.map((x) => x.day), ...hrDays].sort();
   if (!candidates.length) return null;
   const first = candidates[0];
   const last = candidates[candidates.length - 1];

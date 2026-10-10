@@ -434,6 +434,13 @@ export const profile = pgTable("profile", {
   heightCm: real("height_cm"),
   /** IANA zone the person lives in: their days start at local midnight there. Chosen at onboarding. */
   timeZone: text("time_zone").notNull(),
+  /**
+   * "Count my data from" (Settings): scores, baselines, charts and reports start on this local day, as if earlier days
+   * didn't exist. Earlier data stays stored; clearing it brings them back. Null: everything counts.
+   */
+  dataFrom: date("data_from", { mode: "string" }),
+  /** The device-switch day the user chose not to use, so that suggestion stays hidden. */
+  deviceSwitchDismissed: date("device_switch_dismissed", { mode: "string" }),
   updatedAt: ts("updated_at").notNull(),
 });
 

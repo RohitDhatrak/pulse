@@ -577,6 +577,29 @@ describe("a lasting step restarts the baselines (SCORING_VERSION 33)", () => {
   });
 });
 
+describe("count my data from (SCORING_VERSION 34)", () => {
+  it("scores start at the date as if earlier days didn't exist, and clearing it restores every score exactly", async () => {
+    const copy = await copyDb(db);
+    const from = dayAt(60);
+    await recompute(copy, { ...OPTS, dataFrom: from });
+    const days = (await rows<{ d: string }>(copy, sql`select to_char(day, 'YYYY-MM-DD') d from daily_scores where user_id = ${USER} order by day`)).map((r) => r.d);
+    expect(days[0]).toBe(from);
+    expect(days).toHaveLength(allDays.length - 60);
+    // Recovery starts over: its first week calibrates again, as on day 1.
+    for (let i = 60; i < 67; i++) expect((await rows<{ r: RecoveryRow }>(copy, sql`select recovery r from daily_scores where user_id = ${USER} and day = ${dayAt(i)}`))[0].r).toMatchObject({ value: null, reason: "calibrating" });
+    // Reports only cover days from the date; intraday series start there too.
+    const reportStarts = (await rows<{ s: string }>(copy, sql`select data->>'start' s from reports where user_id = ${USER}`)).map((r) => r.s);
+    expect(reportStarts.every((s) => s >= addDays(from, -31))).toBe(true);
+    expect((await rows<{ n: number }>(copy, sql`select count(*)::int n from intraday_series where user_id = ${USER} and day < ${from}`))[0].n).toBe(0);
+    // The stored data is untouched.
+    expect((await rows<{ n: number }>(copy, sql`select count(*)::int n from daily_metrics where user_id = ${USER} and day < ${from}`))[0].n).toBe(60);
+    // Clearing the date brings back the full history, scored exactly as before.
+    await recompute(copy, OPTS);
+    expect(await dump(copy, "daily_scores", "day")).toBe(await dump(db, "daily_scores", "day"));
+    expect(await dump(copy, "reports", "period")).toBe(await dump(db, "reports", "period"));
+  });
+});
+
 describe("Recovery's sleep centre on the seed (SCORING_VERSION 17)", () => {
   it("is 0.85 for the first 7 nights, then the mean of the prior 28 nights' sleepPerf", () => {
     const prior: number[] = [];

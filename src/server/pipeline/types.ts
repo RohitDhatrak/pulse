@@ -84,14 +84,21 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * after a 180 ms night 3). The illness hold acts only once a baseline is past its first week.
  * 33: 7 hard-rejected values in a row on one side restart a baseline from them: after a real step bigger than the gate
  * (a new device, a beta-blocker) every night was rejected and the baseline stayed at the old normal for good.
+ * 34: "count my data from" (Settings): days before a person's chosen date are left out of scoring entirely, so a device
+ * switch (offered from the main sleeps' source) can start every baseline fresh. Earlier data stays stored.
  */
-export const SCORING_VERSION = 33;
+export const SCORING_VERSION = 34;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
   userId: number;
   timeZone: string;
   profile: { birthDate: string; sex: "male" | "female"; maxHr: number; heightCm?: number | null };
+  /**
+   * "Count my data from" (Settings, version 34): days before it are left out entirely, so every score, baseline,
+   * report and journal-impact result starts there. Stage 2 then deletes the stored rows outside the loaded days.
+   */
+  dataFrom?: string | null;
 };
 
 export type BaselineSummary = { mean: number; sd: number; status: BaselineState["status"]; nValid: number } | null;

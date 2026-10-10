@@ -48,11 +48,13 @@ beforeAll(async () => {
 describe("getHome", () => {
   it("has every Home section for today", async () => {
     const vm = await getHome(dayAt(179), ctxFor(db));
+    expect(vm.deviceSwitch).toBeNull(); // the seed's sleeps all come from one source
     expect(Object.keys(vm).sort()).toEqual(
       [
         "activities",
         "dashboard",
         "day",
+        "deviceSwitch",
         "dials",
         "energyBank",
         "insights",

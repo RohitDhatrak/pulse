@@ -758,6 +758,30 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.still_hr": "280d884a01803ce9",
     "intraday_series.stress": "a33f4b1f9da388c5",
     "reports": "721e91c4289e73fb",
+  },  // 34: "count my data from" leaves earlier days out of scoring. Moved: only the version stamp and strain's key (the
+  // seed sets no date).
+  34: {
+    "daily_scores.scoring_version": "d26a5f9b186528ab",
+    "daily_scores.strain": "04b9a70b60742a21",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "2d43b5bac6795fc5",
+    "daily_scores.sleep": "68b166fa8ef2ebc4",
+    "daily_scores.training_load": "51845d6b7e4b8fb9",
+    "daily_scores.strain_target": "43374437970ff231",
+    "daily_scores.sleep_planner": "4b65c030adc2879a",
+    "daily_scores.energy_bank": "7e74a03f6ece1f35",
+    "daily_scores.stress": "321b4141d194bc9f",
+    "daily_scores.health_monitor": "adaa05d07bdb74af",
+    "daily_scores.healthspan": "7d5bfef33f56df8c",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "8ec7eb4d651c09ed",
+    "intraday_series.energy_bank": "13ea98a749d96b6a",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "280d884a01803ce9",
+    "intraday_series.stress": "a33f4b1f9da388c5",
+    "reports": "721e91c4289e73fb",
   },
 };
 

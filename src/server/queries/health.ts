@@ -32,6 +32,8 @@ import {
   trendPoints,
   daySpansOf,
   exercisesBetween,
+  countedDays,
+  countedFromTs,
 } from "./common";
 import type {
   ChipTone,
@@ -109,7 +111,7 @@ export async function getHealthHub(ctx: QueryCtx): Promise<HealthHubVM> {
 /** The newest stored band reading, whenever it was. */
 async function latestHr(ctx: QueryCtx) {
   const r = await sampleRange(ctx.db, "hr", ctx.userId);
-  return r ? (await hrMinutes(ctx, r.max, r.max + 1)).latest : null;
+  return r && r.max >= countedFromTs(ctx) ? (await hrMinutes(ctx, r.max, r.max + 1)).latest : null;
 }
 
 // ── Healthspan ──────────────────────────────────────────────────────────────
@@ -406,7 +408,7 @@ async function heartRhythm(ctx: QueryCtx, day: string): Promise<HeartRhythm> {
   const all = await ctx.db
     .select({ id: h.id, kind: h.kind, ts: h.ts, day: h.day, data: h.data })
     .from(h)
-    .where(and(eq(h.userId, ctx.userId), lte(h.day, day)))
+    .where(and(eq(h.userId, ctx.userId), lte(h.day, day), countedDays(ctx, h.day)))
     .orderBy(desc(h.ts));
   const rows = (kind: "ecg" | "irn") => all.filter((r) => r.kind === kind);
   const ecg = rows("ecg").map((r): EcgReading => {
@@ -432,14 +434,14 @@ async function readings(ctx: QueryCtx, col: (typeof MEASUREMENTS)[number]["col"]
     return ctx.db
       .select({ day: v.day, value: v.value })
       .from(v)
-      .where(and(eq(v.userId, ctx.userId), eq(v.key, col)))
+      .where(and(eq(v.userId, ctx.userId), eq(v.key, col), countedDays(ctx, v.day)))
       .orderBy(desc(v.day));
   }
   const m = dailyMetrics;
   const rows = await ctx.db
     .select({ day: m.day, value: col })
     .from(m)
-    .where(and(eq(m.userId, ctx.userId), isNotNull(col)))
+    .where(and(eq(m.userId, ctx.userId), isNotNull(col), countedDays(ctx, m.day)))
     .orderBy(desc(m.day));
   return rows as { day: string; value: number }[];
 }
@@ -578,7 +580,8 @@ export async function getFitness(ctx: QueryCtx): Promise<FitnessVM> {
  * sample so the chart leaves a gap, plus the newest raw sample in the range.
  */
 export async function hrMinutes(ctx: QueryCtx, from: number, to: number): Promise<HeartRateLive> {
-  const hr = await readHr(ctx.db, ctx.userId, from, to);
+  // Minutes before "count my data from" are gaps (version 34).
+  const hr = await readHr(ctx.db, ctx.userId, Math.max(from, countedFromTs(ctx)), to);
   const last = hr.at(-1);
   return {
     points: minuteMeanHr(hr, from, to).map((v, m) => ({ t: ms(from + m * 60), v: v === null ? null : Math.round(v) })),
