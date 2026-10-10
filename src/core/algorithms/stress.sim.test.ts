@@ -3,7 +3,7 @@
 // scores them (stage 1 masking with exertion, stage 2 against the gated baseline). Deterministic.
 import { describe, expect, it } from "vitest";
 import { foldableStillMedian } from "../scoring/stressBase";
-import { caught, highMinutes, people, rng, scoreDay, warmUp, type Scenario, type ScoredDay } from "./__sim__/days";
+import { caught, caughtOfAll, highAroundBouts, highMinutes, people, rng, scoreDay, warmUp, type Scenario, type ScoredDay } from "./__sim__/days";
 
 const PE = people();
 // A cross-section: typical, athlete, older adult, high-reactor, noisy wrist HR, standing job, heavy coffee.
@@ -48,6 +48,21 @@ describe("real stress is still caught", () => {
 
   it("an older adult (smaller stress response, lower max HR): at least 55 %", () => {
     expect(caught(days("stressful_work", [2], 8))).toBeGreaterThanOrEqual(0.55);
+  });
+});
+
+describe("the cool-down after light movement (version 36)", () => {
+  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+  it("a late morning of housework or errands: high minutes during it and the 45 after, mean at most 10 (version 35: 19.2)", () => {
+    const d = days("light_activity", CROSS, 6);
+    expect(mean(d.map((x) => highAroundBouts(x)))).toBeLessThanOrEqual(10);
+    expect(median(d.map((x) => highAroundBouts(x)))).toBeLessThanOrEqual(8); // version 35: 18
+  });
+
+  it("stress right after a 20-minute walk: at least 37 % of it reads high, counting blocked minutes as missed", () => {
+    // The cost of the tail's first 10 minutes: version 35 caught 53 %, this rule 40 %, a 15-minute check 35 %.
+    expect(caughtOfAll(days("stress_after_walk", [0, 1, 3, 5, 6, 7, 8, 9, 10, 11]))).toBeGreaterThanOrEqual(0.37);
   });
 });
 

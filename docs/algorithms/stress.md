@@ -18,6 +18,9 @@ The Stress Monitor scores each still, awake minute on a 0–3 scale from how far
 - **"High" needs 2 minutes in a row** (*version 13*). A lone high minute reads as medium.
 - **Exertion is not stress** (*version 21*). Minutes at 40% or more of heart-rate reserve, and the 30 minutes after an
   exertion run or a logged workout, are not scored.
+- **Light movement and its cool-down are not stress either** (*version 36*). A bout of sustained movement below the
+  exertion line (8 of 15 minutes with steps, at 15% or more of heart-rate reserve) blocks its still minutes too, and the
+  minutes after it while the heart rate is still easing off, for at most 30 minutes.
 - **A slow rise is the day's level, not stress** (*version 21*). Each minute's reference follows the previous 5 hours'
   still heart rate once it sits more than 1σ above your usual level. Heat, caffeine through the day and illness stop
   reading as hours of stress; episodes of minutes to a couple of hours still stand out.
@@ -30,7 +33,7 @@ It is a wellness estimate from heart rate alone, not a measure of psychological 
 ```mermaid
 flowchart TB
   HR[HR samples for the day] --> MM[Mean HR per minute]
-  ST[Steps per minute] --> STILL{Steps = 0 within ±2 min, below 40 % of reserve, not within 30 min after exertion or a workout?}
+  ST[Steps per minute] --> STILL{Steps = 0 within ±2 min, below 40 % of reserve, not within 30 min after exertion or a workout, not in a movement bout or its falling tail?}
   EX[Workouts and sleep sessions] --> OUT{Outside every interval?}
   MM --> STILL
   STILL -->|yes| OUT
@@ -103,7 +106,9 @@ All of these live in `stressConfig`.
 | `fallbackSigmaBpm` | 7.65 | 15 / 1.96, so that +15 bpm lands on stress 2.0 under our curve (noop's intent for its fixed σ) |
 | Waking hours, P10 | 06–22, 0.1 | noop: `isWakingHourOfDay`, `daytimeHRAggregatePercentile` |
 | `exertionShare` | 0.4 of heart-rate reserve | version 21; *tunable* (0.35 cost older adults' stress) |
-| `exertionTailMin`, `exertionRunMin` | 30, 10 min | version 21; *tunable* |
+| `exertionTailMin`, `exertionRunMin` | 30, 10 min | version 21; *tunable*. The tail cap also caps a movement tail |
+| `movementShare`, `movementWindowMin`, `movementStepMin` | 0.15 of reserve, 15 min, 8 | version 36; *tunable* (0.25 missed the owner's 85–100 bpm bouts; 6–7 stepping minutes cut into a real episode) |
+| `tailCheckMin`, `tailFallPerMin` | 10 min, 0.1 bpm a minute | version 36; *tunable* (a 15-minute check cost 5 % of other high minutes and more stress after walks) |
 | `rollWindowMin`, `rollAllowanceSigma`, `rollMinStill` | 300 min, 1σ, 30 | version 21; *tunable* (120 / 180 min absorbed long stress) |
 | `foldGateSigma`, `foldGateMinDays` | 2σ, 7 days | version 21 (`stressBase.ts`) |
 
@@ -250,6 +255,62 @@ sizes are assumptions:**
 - **The effect sizes above are assumptions.** Tuning the new constants on real Fitbit data is what remains of
   fix #27.
 
+## Why version 36: the cool-down after light movement read as stress
+
+**The problem, on the owner's data** (Oct 4–10, a Charge band): **118 of 446** high minutes (26 %, 36–63 % on Oct 5–8)
+came within 40 minutes after movement. Their late mornings are 60–80 minutes of housework and errands:
+- the heart rate runs 85–115 bpm, under the exertion line (68 + 0.4 × (191 − 68) ≈ 117 bpm), so no exertion tail;
+- steps come in runs, with standing stretches of 5–13 minutes at about 100 bpm between them, which the ±2-minute step
+  mask doesn't cover;
+- afterwards the heart rate eases off slowly, about 92 → 80 bpm over 30–40 minutes, against a still reference of
+  about 78.
+
+**The rule** (`blockMovement`, called from `blockExertion` with the minute steps):
+- **A bout:** any 15-minute window with at least 8 minutes of steps whose stepping minutes average at least resting +
+  15 % of reserve (about 86 bpm for the owner). Each such window marks its first to last stepping minute as moving, so
+  the standing stretches inside it are blocked too. Minutes without HR (a band gap) don't count towards the average,
+  and the window needs at least 3 with HR.
+- **The tail:** from the end of each bout, minutes stay blocked while the heart rate is still falling. From minute 10,
+  the least-squares slope of the last 10 minutes must be −0.1 bpm a minute or steeper; otherwise the tail ends there.
+  At most 30 minutes, like the exertion tail.
+- **Why a falling heart rate, not a fixed 30 minutes:** a stress response that holds the heart rate up after a walk
+  stops the tail and is scored from minute 10.
+
+**On the owner's data** (a local copy recomputed with version 35 and 36):
+
+| | v35 | v36 |
+|---|---|---|
+| High minutes within 40 min after movement | 118 | **41** |
+| High minutes elsewhere | 328 | 333 |
+| Oct 10's 100-minute afternoon episode (nothing before it) | 100 | 96 |
+
+The first day (Oct 4) went 35 → 41: with no history its reference is the day's own median still HR, which no longer
+includes the cool-down minutes.
+
+**Options measured on the owner's data:**
+
+| `movementShare`, `tailCheckMin`, `movementStepMin` | After movement | Elsewhere |
+|---|---|---|
+| 0.25, 15, 8 | 62 | 323 |
+| 0.15, 15, 8 | 38 | 311 |
+| 0.10 / 0, 15, 8 | 38 / 38 | 311 / 309 |
+| **0.15, 10, 8 (chosen)** | **41** | **333** |
+| 0.10, 10, 8 | 41 | 338 |
+| 0.15, 20, 8 | 32 | 303 |
+| 0.15, 15, 7 / 6 | 36 / 8 | 285 / 274 (Oct 10's episode 70) |
+
+**On generated days** (`__sim__/days.ts`, two new scenarios):
+- `light_activity`: the owner's pattern, 60–80 minutes, steps in runs of 3–8 between 2–10 minutes of standing, the
+  heart rate 55–80 % of the way to the exertion line, easing off with τ 14 minutes, a 15-minute band gap in half.
+  High minutes during the bout and the 45 after it: mean **19.2 → 8.1**, median 18 → 6.
+- `stress_after_walk`: a 20-minute brisk walk, then 40 minutes of stress. Caught (counting blocked minutes as missed):
+  **53 → 40 %**. This is the cost of the tail's first 10 minutes; a 15-minute check gave 35 %.
+- Every other bound holds: calm desk 59, coffee 131, hot 134, illness 163, unlogged ride 56, the tail after a logged run
+  57 high minutes; stressful workdays caught 74 %, the 2.5-hour episode 81 %, the older adult 57 %; the Energy Bank on
+  a calm day ends at 27. A busy parent's day reads 66 high minutes (was 83).
+
+**On the seed** (`GOLDEN[36]`): the stress, still-HR and Energy Bank series moved; strain and sleep didn't.
+
 ## Tests
 
 - **`stress.test.ts`:**
@@ -266,9 +327,14 @@ sizes are assumptions:**
   - the rolling reference: hand-computed, an episode left alone, the 30-minute minimum, the incremental median vs a
     naive sort;
   - `foldableStillMedian`.
+- **`stress.test.ts` (version 36):** a bout and its falling tail are blocked up to 30 minutes; a heart rate held up after
+  the bout is scored from minute 10; 7 stepping minutes in 15, or stepping below 15 % of reserve, isn't a bout; a band
+  gap inside the bout is tolerated; without steps or the exertion input nothing changes. 3 fail without the rule.
 - **`stress.sim.test.ts`** (generated days): false-high bounds per scenario, real-stress recall (including the 2.5-hour
   episode and the older adult), the Energy Bank on coffee, calm and illness days, the athlete after illness, and
-  sustained stress. 9 of its 15 tests fail on version 20; the 6 that pass both ways guard recall.
+  sustained stress. 9 of its 15 tests fail on version 20; the 6 that pass both ways guard recall. *Version 36:* high
+  minutes around a light-activity bout (mean ≤ 10, median ≤ 8; fails without the rule) and stress after a walk caught
+  ≥ 37 %.
 - **`pipeline.test.ts`:**
   - the stored stress series never holds a lone high minute (allowing for 2-dp rounding), and the daily counts match
     the series;

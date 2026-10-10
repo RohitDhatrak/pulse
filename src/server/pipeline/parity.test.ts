@@ -12,6 +12,9 @@
 // Re-recorded for SCORING_VERSION 35 (Recovery scores the sleeping heart rate against its own baseline once trusted):
 // only recovery moved, by 1.35 points on average (at most 4.8, mean change +0.03, the same 53 / 93 / 24 green, yellow
 // and red days); strain and sleep are byte-identical.
+// Re-recorded for SCORING_VERSION 36 (spread floors that scale with the person; stress skips light movement's cool-down):
+// only recovery moved, by 1.08 points on average (at most 5.1, mean change −0.01; 52 / 93 / 25 green, yellow and red
+// days, from 53 / 93 / 24); strain and sleep are byte-identical.
 import { expect, it } from "vitest";
 import { rows, sql } from "../db";
 import { seeded, USER } from "../testing";

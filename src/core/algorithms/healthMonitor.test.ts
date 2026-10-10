@@ -39,9 +39,13 @@ describe("healthMonitor", () => {
   });
 
   it("the range is the baseline mean ± 2.5σ", () => {
-    const rhr = healthMonitor(history()).vitals.find((v) => v.key === "restingHr")!;
-    // RHR's floor spread is 2 bpm, so σ ≥ 2.506 and the range is at least ±6.27 around ~55.
-    expect(rhr.range!.high - rhr.range!.low).toBeGreaterThanOrEqual(5 * 1.253 * 2 - 1e-9);
+    const days = history();
+    const rhr = healthMonitor(days).vitals.find((v) => v.key === "restingHr")!;
+    const state = foldHistory(days.slice(0, -1).map((d) => d.rhr ?? null), restingHRCfg);
+    expect(rhr.range!.high - rhr.range!.low).toBeCloseTo(5 * zSigma(state), 10);
+    expect((rhr.range!.high + rhr.range!.low) / 2).toBeCloseTo(state.baseline, 10);
+    // Version 36: resting HR's floor spread is 1 bpm (was 2), so σ ≥ 1.253 and the range at least ±3.13.
+    expect(rhr.range!.high - rhr.range!.low).toBeGreaterThanOrEqual(5 * 1.253 * 1 - 1e-9);
     expect((rhr.range!.high + rhr.range!.low) / 2).toBeCloseTo(55, 0);
   });
 
@@ -73,7 +77,7 @@ describe("healthMonitor", () => {
     expect(healthMonitor([]).inRange).toBe(0);
   });
 
-  it("the seeded illness peak flags at least 2 of 5 and raises the illness signal", () => {
+  it("the seeded illness peak flags at least 3 of 5 and raises the illness signal", () => {
     const ill = EFFECTS.illness;
     const base = history();
     const peak = base.at(-1)!;
@@ -89,11 +93,13 @@ describe("healthMonitor", () => {
       },
     ]);
     // Version 16 (± 2.5σ): resting HR and SpO2 flag. On this very smooth history the floor spreads set the ranges, and
-    // respiration +1.5 and HRV −15 ms now fall just inside ±1.57 and ±15.7 (at ± 2σ they flagged too: 4 of 5).
-    expect(r.flagged).toBeGreaterThanOrEqual(2);
+    // respiration +1.5 falls just inside ±1.57 (at ± 2σ it flagged too). Version 36: HRV −15 ms (−25 %) flags as well,
+    // against 49.7–70.2 ms (the floor at 60 ms is 3 ms; the fixed 5 ms floor gave ±15.7).
+    expect(r.flagged).toBeGreaterThanOrEqual(3);
     expect(r.vitals.find((v) => v.key === "restingHr")!.status).toBe("high");
     expect(r.vitals.find((v) => v.key === "spo2")!.status).toBe("low");
-    expect(r.inRange).toBeLessThanOrEqual(3);
+    expect(r.vitals.find((v) => v.key === "hrv")!.status).toBe("low");
+    expect(r.inRange).toBeLessThanOrEqual(2);
     expect(r.illness.level).toBe("raised");
     expect(r.illness.baselineTrusted).toBe(true);
   });

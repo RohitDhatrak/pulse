@@ -373,6 +373,10 @@ version 8 spread was still climbing from its floor seed on the early trusted day
 
 - **HRV** sits above its floor, so the floor never binds on the seed.
 - **Resting HR and respiratory rate** sit on their floors most days. The seed draws them with small night-to-night noise, so the floors set their z-scores. On Fitbit's smoothed nightly values the same may happen. If it does, those two terms are compressed toward zero, and the floors should be tuned per metric with a `scoring_version` bump.
+- **Real data, and scoring version 36.** On the owner's first Fitbit nights (Oct 4–10) the HRV floor bound too: HRV
+  about 25 ms with a night-to-night SD of about 1.7 ms, under the fixed 5 ms floor, so the Health Monitor's HRV range was
+  3.9–45.6 ms. Version 36 sets the HRV floor to 5 % of the centre (at least 1 ms) and resting HR's to 1 bpm, each larger
+  until 14 nights ([baselines](algorithms/baselines.md) § Why version 36). The table above is the version 9 run.
 
 **Recovery bands on the seed.** Of the 170 scored days, 61 are green (36 %), 85 yellow (50 %) and 24 red (14 %) on version 9 (62 / 80 / 28 on version 8 in the same run: early nights read less extreme now). The other 10 days are the 7 calibrating days, the 2 band-off nights and the no-HRV night.
 

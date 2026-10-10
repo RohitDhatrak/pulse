@@ -3,6 +3,7 @@ import {
   cutoffKey,
   deviation,
   earlyHalfLifeB,
+  floorOf,
   foldHistory,
   freshestCarried,
   hrvCfg,
@@ -87,7 +88,7 @@ describe("plan scenarios", () => {
     expect(s).toMatchObject({ baseline: 45, nValid: 1, nightsSinceUpdate: 3 });
     expect(foldHistory([], restingHRCfg)).toEqual({
       baseline: 75,
-      spread: 2,
+      spread: 1.5, // version 36: the 1 bpm floor, 1.5× while young
       nValid: 0,
       nightsSinceUpdate: 0,
       status: "calibrating",
@@ -152,9 +153,11 @@ describe("early spread", () => {
     });
   }
 
-  it("a wobble under the floor still sits on the floor", () => {
-    expect(simulate({ cfg: hrvCfg, mu: 50, sd: 3 }, 7).sigma).toBeCloseTo(1.253 * hrvCfg.floorSpread, 1);
-    expect(simulate({ cfg: restingHRCfg, mu: 55, sd: 1 }, 30).sigma).toBeCloseTo(1.253 * restingHRCfg.floorSpread, 1);
+  it("a wobble under the floor still sits on the floor (version 36: 5 % of HRV, 1 bpm; 2× and 1.5× while young)", () => {
+    // HRV 50 ± 1: 2.5 ms settled, 5 ms in the first fortnight. Resting HR 55 ± 0.5: 1 bpm settled.
+    expect(simulate({ cfg: hrvCfg, mu: 50, sd: 1 }, 7).sigma).toBeCloseTo(1.253 * 5, 1);
+    expect(simulate({ cfg: hrvCfg, mu: 50, sd: 1 }, 60).sigma).toBeCloseTo(1.253 * 2.5, 1);
+    expect(simulate({ cfg: restingHRCfg, mu: 55, sd: 0.5 }, 60).sigma).toBeCloseTo(1.253 * restingHRCfg.floorSpread, 1);
   });
 
   it("the floor seed drops out on night 2: the spread comes from the two values alone", () => {
@@ -172,8 +175,32 @@ describe("early spread", () => {
   });
 
   it("the floor still binds on each night of the running mean", () => {
-    // Deviations of 1 ms average to well under the 5 ms floor.
-    expect(foldHistory([50, 51, 50, 51, 50], hrvCfg).spread).toBe(hrvCfg.floorSpread);
+    // Deviations of 0.5 ms average to well under the young floor at 50 ms: 2 × 5 % × the centre (version 36).
+    const s = foldHistory([50, 51, 50, 51, 50], hrvCfg);
+    expect(s.spread).toBeCloseTo(2 * 0.05 * s.baseline, 12);
+    expect(floorOf(hrvCfg, s.baseline, s.nValid)).toBe(s.spread);
+  });
+
+  it("the HRV floor scales with the centre (version 36); resting HR's is absolute", () => {
+    expect(floorOf(hrvCfg, 25, 30)).toBeCloseTo(1.25, 12);
+    expect(floorOf(hrvCfg, 25, 13)).toBeCloseTo(2.5, 12); // young: 2×
+    expect(floorOf(hrvCfg, 100, 30)).toBeCloseTo(5, 12); // the old fixed floor, reached at 100 ms
+    expect(floorOf(hrvCfg, 10, 30)).toBe(1); // never under 1 ms
+    expect(floorOf(restingHRCfg, 50, 30)).toBe(1);
+    expect(floorOf(restingHRCfg, 50, 13)).toBe(1.5);
+    expect(floorOf(respCfg, 15, 3)).toBe(0.5); // the other metrics keep their absolute floor, young or not
+  });
+
+  it("the floor drops when the baseline is trusted, and the spread follows it down gradually", () => {
+    // HRV 25 ± 0.4: the young floor (2.5 ms) binds to night 13; from night 14 the floor is 1.25 and the spread decays
+    // towards it at the 1/n running-mean rate rather than jumping.
+    const xs = Array.from({ length: 40 }, (_, i) => 25 + (i % 2 ? 0.4 : -0.4));
+    const at = (n: number) => foldHistory(xs.slice(0, n), hrvCfg);
+    expect(at(13).spread).toBeCloseTo(2.5, 1);
+    expect(at(14).spread).toBeLessThan(2.5);
+    expect(at(14).spread).toBeGreaterThan(2.3);
+    expect(at(40).spread).toBeLessThan(at(20).spread);
+    expect(at(40).spread).toBeGreaterThanOrEqual(1.25);
   });
 
   it("hands over from 1/n to the 21-night EWMA after night 31", () => {
@@ -204,8 +231,8 @@ describe("early spread", () => {
   });
 
   it("a constant history keeps the floor and a zero-wobble user is not divided by zero", () => {
-    const s = foldHistory(repeat(50, 40), hrvCfg);
-    expect(s.spread).toBe(hrvCfg.floorSpread);
+    const s = foldHistory(repeat(50, 400), hrvCfg);
+    expect(s.spread).toBeCloseTo(floorOf(hrvCfg, 50, 400), 6);
     expect(Number.isFinite(deviation(55, s).z)).toBe(true);
   });
 });
@@ -327,7 +354,8 @@ describe("deviation and rollingMeanSD", () => {
   it("trailing mean and sample SD, σ floored then stored in abs-dev units", () => {
     const s = rollingMeanSD([10, null, 12, 14, 400], hrvCfg); // 400 is out of range
     expect(s.baseline).toBe(12);
-    expect(s.spread).toBeCloseTo(5 / 1.253, 12); // SD 2 is under the 5 ms floor
+    expect(s.spread).toBeCloseTo(2 / 1.253, 12); // SD 2 is over the floor at 12 ms (version 36; was 5 ms)
+    expect(rollingMeanSD([12, 12.2, 12.1], hrvCfg).spread).toBeCloseTo(floorOf(hrvCfg, 12.1, 3) / 1.253, 12); // under it
     const wide = rollingMeanSD([20, 40, 60], hrvCfg);
     expect(wide.spread).toBeCloseTo(20 / 1.253, 12);
     expect(rollingMeanSD([20, 40, 60], hrvCfg, 2).baseline).toBe(50);
@@ -338,7 +366,8 @@ describe("deviation and rollingMeanSD", () => {
       ["daytime_hr", "daytime_rmssd", "hrv", "readiness_hrv_ln", "resp", "resting_hr", "skin_temp", "strain"].sort(),
     );
     expect(metricCfg.resp.floorSpread).toBe(0.5);
-    expect(metricCfg.resting_hr.floorSpread).toBe(2);
+    expect(metricCfg.resting_hr.floorSpread).toBe(1); // version 36 (was 2)
+    expect(metricCfg.hrv).toMatchObject({ floorSpread: 1, floorRel: 0.05, youngFloorScale: 2 }); // version 36 (was 5)
   });
 });
 
@@ -467,7 +496,7 @@ describe("the robust first week (SCORING_VERSION 32)", () => {
     const xs = [50, 52, 48, 180, 51, 49, 50];
     const s = foldHistory(xs, hrvCfg);
     expect(s.baseline).toBeCloseTo((50 + 52 + 48 + 51 + 49 + 50) / 6, 12);
-    expect(s.spread).toBe(hrvCfg.floorSpread); // the six normal nights barely vary
+    expect(s.spread).toBe(floorOf(hrvCfg, s.baseline, 7)); // the six normal nights barely vary
     expect(foldHistory(xs, hrvCfg, false).spread).toBeGreaterThan(15); // the plain young regime
   });
 

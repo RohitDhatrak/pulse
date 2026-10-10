@@ -142,7 +142,8 @@ function stage1Day(
     start: x.startTs,
     end: x.endTs,
   }));
-  // Exertion and the 30 minutes after it (or after a logged workout) are not still (version 21).
+  // Exertion and the 30 minutes after it (or after a logged workout) are not still (version 21), nor are light movement
+  // bouts and their cool-down while the heart rate is still falling (version 36; blockMovement).
   const exertion = { restingHr, maxHr, workouts: exs.map((e) => ({ start: e.startTs, end: e.endTs })) };
   const probe = stress({ start, end, hr: dayHr, steps, excluded, baseline: MASK_BASELINE, exertion });
   const still = probe.minutes.map((v, m) => (v == null ? null : means[m]));

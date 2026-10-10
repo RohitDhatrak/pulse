@@ -43,7 +43,13 @@ export interface DayPlan {
   wake: number;
   bed: number; // minute of day; may exceed 1440 (after midnight) — capped at 1439 here
   effects: Effect[];
-  walks: { from: number; to: number; spm: number; bpm: number }[];
+  /**
+   * `tauOff`: the HR's off-kinetics (default 2.5 min). `standing`: steps come in runs of 3–8 minutes between 2–10 minutes
+   * of standing still (housework, cooking, errands), the heart rate up throughout; default: steps every minute.
+   */
+  walks: { from: number; to: number; spm: number; bpm: number; tauOff?: number; standing?: boolean }[];
+  /** Minutes the band recorded no HR (taken off, loose). */
+  gaps?: { from: number; to: number }[];
   workouts: { from: number; to: number; bpm: number; logged: boolean; steps: boolean; label: string }[];
   naps: { from: number; to: number }[];
   sleepRhrShift: number; // e.g. illness/alcohol raise the next sleep and whole day
@@ -58,6 +64,8 @@ export interface DayData {
   excluded: { start: number; end: number }[]; // minute indices
   truthStress: Uint8Array; // 1 = psychological stress minute
   truthPhysio: Uint8Array; // 1 = non-psychological HR raise ≥ 5 bpm (meal, standing, heat, illness, tail…)
+  /** Each walk of 30 minutes or more (a bout of activity), minute indices [from, to). */
+  bouts: { from: number; to: number }[];
   wake: number;
   bed: number;
   naps: { from: number; to: number }[];
@@ -86,10 +94,15 @@ export function renderDay(p: DayPlan, r: Rng): DayData {
   // Walks and workouts as effects with exercise kinetics (fast on, slower off: a recovery tail).
   const effects: Effect[] = [
     ...p.effects,
-    ...p.walks.map((w) => ({ from: w.from, to: w.to, bpm: w.bpm, tauOn: 1.5, tauOff: 2.5, kind: "walk" })),
+    ...p.walks.map((w) => ({ from: w.from, to: w.to, bpm: w.bpm, tauOn: 1.5, tauOff: w.tauOff ?? 2.5, kind: "walk" })),
     ...p.workouts.map((w) => ({ from: w.from, to: w.to, bpm: w.bpm, tauOn: 2, tauOff: 12, kind: "workout" })),
   ];
-  for (const w of p.walks) for (let m = w.from; m < w.to; m++) steps[m] = Math.round(w.spm * (0.85 + 0.3 * r.rnd()));
+  for (const w of p.walks) {
+    for (let m = w.from, on = true; m < w.to; on = !on) {
+      const len = !w.standing ? w.to - w.from : on ? 3 + Math.round(5 * r.rnd()) : 2 + Math.round(8 * r.rnd());
+      for (const end = Math.min(w.to, m + len); m < end; m++) if (on) steps[m] = Math.round(w.spm * (0.85 + 0.3 * r.rnd()));
+    }
+  }
   for (const w of p.workouts) if (w.steps) for (let m = w.from; m < w.to; m++) steps[m] = 150 + Math.round(20 * r.g());
   for (let m = 0; m < n; m++) {
     if (asleep(m)) {
@@ -119,11 +132,12 @@ export function renderDay(p: DayPlan, r: Rng): DayData {
     ...p.workouts.filter((w) => w.logged).map((w) => ({ start: w.from, end: w.to })),
   ];
   return {
-    hrMin: Array.from(hr, (v) => Math.max(35, Math.min(210, v))),
+    hrMin: Array.from(hr, (v, m) => (p.gaps?.some((g) => m >= g.from && m < g.to) ? null : Math.max(35, Math.min(210, v)))),
     steps,
     excluded,
     truthStress,
     truthPhysio,
+    bouts: p.walks.filter((w) => w.to - w.from >= 30).map((w) => ({ from: w.from, to: w.to })),
     wake: p.wake,
     bed,
     naps: p.naps,
@@ -151,7 +165,9 @@ export type Scenario =
   | "nap_day"
   | "loose_band"
   | "chaotic_parent"
-  | "long_stress";
+  | "long_stress"
+  | "light_activity"
+  | "stress_after_walk";
 
 /** Everyday background for an awake day: meals, coffee, desk breaks, talking, standing. */
 function everyday(P: Person, wake: number, bed: number, r: Rng, plan: DayPlan) {
@@ -262,6 +278,25 @@ export function planDay(P: Person, s: Scenario, r: Rng): DayPlan {
     case "loose_band":
       plan.artifacts = 3;
       break;
+    case "light_activity": {
+      // Version 36, the owner's late mornings: 60–80 min of housework or errands, steps in runs between standing, the
+      // heart rate 55–80 % of the way from the still level to the exertion line (40 % of reserve), easing off over half an hour or more (τ 14 min), with a
+      // 15-minute band gap in some bouts.
+      const t = Math.round(10.5 * 60 + 15 * r.g());
+      const len = 60 + Math.round(20 * r.rnd());
+      const still = P.sleepRhr + P.stillOffset;
+      const line = P.sleepRhr + 0.4 * (P.maxHr - P.sleepRhr);
+      plan.walks.push({ from: t, to: t + len, spm: 15 + 35 * r.rnd(), bpm: (line - still) * (0.55 + 0.25 * r.rnd()), tauOff: 14, standing: true });
+      if (r.rnd() < 0.5) plan.gaps = [{ from: t + 20, to: t + 35 }];
+      break;
+    }
+    case "stress_after_walk": {
+      // A 20-minute brisk walk to a meeting, then 40 minutes of a stress response, still.
+      const t = Math.round(10.5 * 60 + 15 * r.g());
+      plan.walks.push({ from: t, to: t + 20, spm: 105, bpm: 28 });
+      stress(t + 20, 40);
+      break;
+    }
     case "chaotic_parent":
       for (let k = 0; k < 4; k++) stress(Math.round(7.5 * 60 + k * 200 + 40 * r.rnd()), 15 + Math.round(20 * r.rnd()), 0.7);
       for (let t = plan.wake + 20; t < bed - 20; t += 25 + Math.round(30 * r.rnd())) plan.walks.push({ from: t, to: t + 3 + Math.round(5 * r.rnd()), spm: 60, bpm: 18 });
@@ -366,6 +401,15 @@ export function warmUp(P: Person, seed: number, weeks = 7) {
 
 /** High-stress minutes on a scored day. */
 export const highMinutes = (x: ScoredDay) => x.stress.minutes.filter((v) => v != null && v >= 2).length;
+/** High minutes during each bout of activity and the `after` minutes after it. */
+export const highAroundBouts = (x: ScoredDay, after = 45) =>
+  x.day.bouts.reduce((a, b) => a + x.stress.minutes.slice(b.from, b.to + after).filter((v) => v != null && v >= 2).length, 0);
+/** Share of the labelled stress minutes that read high, counting the ones not scored at all (blocked) as missed. */
+export function caughtOfAll(xs: ScoredDay[]): number {
+  let t = 0, h = 0;
+  for (const x of xs) for (let m = 0; m < 1440; m++) if (x.day.truthStress[m]) { t++; if (x.stress.minutes[m] != null && x.stress.minutes[m]! >= 2) h++; }
+  return t ? h / t : NaN;
+}
 /** Share of the labelled stress minutes that were scored and read high. */
 export function caught(xs: ScoredDay[]): number {
   let t = 0, h = 0;

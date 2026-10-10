@@ -83,13 +83,14 @@ describe("restingPair (SCORING_VERSION 35)", () => {
       }
     }
     const mean = (xs: number[]) => xs.reduce((a, x) => a + x, 0) / xs.length;
-    // Measured: mean |z| 0.46 over the two switch weeks with the rule, 1.45 with one mixed baseline (3x); 0.63 once
-    // settled on the sleeping HR. On the first three switch nights the mixed baseline reads a resting-HR drop of 2.0 SD
-    // (a falsely great Recovery); the rule's mean z there is 0.03.
-    expect(mean(switchZ)).toBeLessThan(0.8);
+    // Measured (version 36): mean |z| 0.82 over the two switch weeks with the rule, 2.85 with one mixed baseline (3.5x);
+    // 0.80 once settled on the sleeping HR, which is what calibrated z gives (E|z| = 0.80 for a standard normal). On the
+    // first three switch nights the mixed baseline reads a resting-HR drop of 3.9 SD (a falsely great Recovery); the
+    // rule's mean z there is 0.06. Version 35's fixed 2 bpm floor muted every z: 0.46, 1.45, 0.63, −2.05 and 0.03.
+    expect(mean(switchZ)).toBeLessThan(0.95);
     expect(mean(mixedZ)).toBeGreaterThan(2.5 * mean(switchZ));
     expect(Math.abs(mean(firstNights.kept))).toBeLessThan(0.5);
-    expect(mean(firstNights.mixed)).toBeLessThan(-1.5);
-    expect(mean(steady)).toBeLessThan(0.9);
+    expect(mean(firstNights.mixed)).toBeLessThan(-2.5);
+    expect(mean(steady)).toBeLessThan(0.95);
   });
 });

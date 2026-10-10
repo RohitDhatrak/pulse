@@ -306,6 +306,61 @@ describe("exertion is not stress (version 21)", () => {
   });
 });
 
+// ── SCORING_VERSION 36 ─────────────────────────────────────────────────────────────────────────────────────────────
+describe("the cool-down after light movement is not stress (version 36)", () => {
+  // Resting 55, max 185: a bout's stepping minutes must average 55 + 0.15 × 130 = 74.5 bpm; exertion starts at 107.
+  const exertion = { restingHr: 55, maxHr: 185, workouts: [] as { start: number; end: number }[] };
+  const B0 = at(10);
+  /** Steps on every other minute from 10:00 to 10:28 (8 of some 15-minute windows); the bout ends at 10:29. */
+  const alternate = (m: number) => m >= B0 && m < at(10, 29) && (m - B0) % 2 === 0;
+  const END = at(10, 29);
+  const stepsBy = (on: (m: number) => boolean) => Array.from({ length: N }, (_, m) => (on(m) ? 40 : 0));
+  /** 95 bpm through the bout (below the exertion line), then `after(k)` for minute k after it, then 70. */
+  const hrBy = (after: (k: number) => number, hours = 40) =>
+    hrFrom((m) => (m >= B0 && m < END ? 95 : m >= END && m < END + hours ? after(m - END) : 70));
+  const falling = (k: number) => 95 - (25 * k) / 30;
+
+  it("blocks the bout's still minutes and up to 30 minutes while the heart rate eases off", () => {
+    const r = run({ hr: hrBy(falling), steps: stepsBy(alternate), exertion });
+    for (let m = B0; m < END + 30; m++) expect(r.minutes[m], `minute ${m - B0}`).toBeNull();
+    expect(r.minutes[END + 30]).not.toBeNull();
+    // Version 35 (no movement rule, as without the exertion input) scored them, and they read high.
+    expect(run({ hr: hrBy(falling), steps: stepsBy(alternate) }).minutes[END + 5]).toBeGreaterThanOrEqual(2);
+  });
+
+  it("a heart rate that stays up after moving (a stress response) is scored again 10 minutes after the bout", () => {
+    const r = run({ hr: hrBy(() => 90), steps: stepsBy(alternate), exertion });
+    for (let m = END; m < END + stressConfig.tailCheckMin; m++) expect(r.minutes[m]).toBeNull();
+    for (let m = END + stressConfig.tailCheckMin; m < END + 40; m++) expect(r.minutes[m]).toBeGreaterThanOrEqual(2);
+  });
+
+  it("7 stepping minutes in every 15 is not a bout", () => {
+    const seven = (m: number) => m >= B0 && m < at(10, 45) && (m - B0) % 15 < 7;
+    const r = run({ hr: hrFrom((m) => (m >= B0 && m < at(11, 30) ? 95 : 70)), steps: stepsBy(seven), exertion });
+    expect(r.minutes[at(10, 10)]).not.toBeNull(); // still minutes between the step runs are scored
+    expect(r.minutes[at(10, 50)]).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stepping below 15 % of heart-rate reserve is not a bout", () => {
+    const r = run({ hr: hrFrom((m) => (m >= B0 && m < END ? 73 : m >= END && m < END + 20 ? 90 : 70)), steps: stepsBy(alternate), exertion });
+    expect(r.minutes[END + 3]).toBeGreaterThanOrEqual(2);
+  });
+
+  it("a band gap inside the bout neither ends it nor counts towards its heart rate", () => {
+    const gap = (m: number) => m >= at(10, 8) && m < at(10, 20);
+    const hr = hrFrom((m) => (gap(m) ? null : m >= B0 && m < END ? 95 : m >= END && m < END + 40 ? falling(m - END) : 70));
+    const r = run({ hr, steps: stepsBy(alternate), exertion });
+    for (let m = END; m < END + 30; m++) expect(r.minutes[m]).toBeNull();
+    expect(r.minutes[END + 30]).not.toBeNull();
+  });
+
+  it("without steps, or without the exertion input, nothing changes", () => {
+    const hr = hrBy(falling);
+    expect(run({ hr, exertion }).minutes[END + 5]).toBeGreaterThanOrEqual(2);
+    expect(run({ hr, steps: stepsBy(alternate) }).minutes[END + 5]).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe("rollingReference: a slow rise is the day's level, not stress (version 21)", () => {
   const sigma = 4;
 

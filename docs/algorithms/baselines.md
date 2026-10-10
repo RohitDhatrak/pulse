@@ -17,7 +17,8 @@ The fold is a port of noop's `Baselines.kt` (a Winsorized EWMA), with two change
 - the spread is learned as a **running mean over the first nights** (§ Spread);
 - z-scores carry a **short-history shrink** (§ The z shrink).
 
-Both fix the same problem, explained in § Why.
+Both fix the same problem, explained in § Why. Since version 36 the floor under each spread can scale with the centre
+and is larger while the baseline is young (§ The floor, § Why version 36).
 
 ## Flow
 
@@ -32,7 +33,7 @@ flowchart TB
   Y -->|yes| W[Winsorize to centre ± 3 × spread<br/>× 2.5 while young]
   W --> C[Centre: EWMA, half-life 14<br/>3 while young]
   C --> D[absDev = unclamped value − new centre]
-  D --> S["Spread: EWMA of absDev with weight max(λ21, 1/n)<br/>floored at the metric's floorSpread"]
+  D --> S["Spread: EWMA of absDev with weight max(λ21, 1/n)<br/>floored at floorOf(centre, n)"]
   S --> ST[State: centre, spread, nValid, status]
   ST --> Z["z = (x − centre) / zSigma<br/>zSigma = 1.253 × spread × (n + 2) / n"]
   Z --> USE[Recovery terms, driver rows, hrvZ for Journal impact, Health Monitor ranges]
@@ -51,7 +52,7 @@ flowchart TB
 
 ## Formula, one night at a time (`update`)
 
-1. **First value.** The centre is the value. The spread starts at the metric's `floorSpread`, and `nValid` = 1. Until
+1. **First value.** The centre is the value. The spread starts at the floor (`floorOf`, § The floor), and `nValid` = 1. Until
    a first value arrives, the centre is a placeholder at the middle of the plausible range.
 2. **Missing or out-of-range value.** Nothing changes except `nightsSinceUpdate + 1`. Such a night does not count
    towards `nValid`, so it does not advance the running mean in step 6 either.
@@ -64,7 +65,7 @@ flowchart TB
 6. **Spread** (*changed in version 9*). absDev = |unclamped value − new centre|, and
 
        w      = max(λ_S, 1 / n)        λ_S = λ(21 nights) ≈ 0.0325,  n = nValid before this night
-       spread ← max(floorSpread, w × absDev + (1 − w) × spread)
+       spread ← max(floor, w × absDev + (1 − w) × spread)        floor = floorOf(cfg, new centre, nValid after)
 
    - On night 2, w = 1, so the floor seed drops out completely.
    - Up to night 31, w = 1/n, so the spread is the plain average of the deviations seen so far. It is floored on
@@ -74,15 +75,27 @@ flowchart TB
 
 7. **The robust first week** (*since version 32*, only when hard-outlier rejection is on). While young (`nValid ≤ 8`
    after this night), steps 4–6 are replaced by a trimmed estimate over the accepted values so far (kept in `early`):
-   - m = their median; MAD = max(median |x − m|, floorSpread ÷ 2);
+   - m = their median; MAD = max(median |x − m|, floor at m ÷ 2);
    - keep the values within 4 × 1.4826 × MAD of m (`earlyTrimSigma`);
    - centre = the mean of the kept values;
-   - spread = max(floorSpread, their mean |x − centre| × √(k ÷ (k − 1))) for k kept values. The factor corrects the
+   - spread = max(floor at the centre, their mean |x − centre| × √(k ÷ (k − 1))) for k kept values. The factor corrects the
      small-sample shortfall of deviations from a sample's own mean.
 
    From night 9 the EWMA (steps 4–6) and the hard gate continue from that state, and `early` is dropped. Readiness'
    re-fold (rejection off) keeps the plain young regime: it re-folds every day, so the robust phase there would move
    readiness daily for no reason.
+
+### The floor (`floorOf`, *since version 36*)
+
+    floor = max(floorSpread, floorRel × |centre|) × (youngFloorScale while nValid < 14, else 1)
+
+| Metric | `floorSpread` | `floorRel` | `youngFloorScale` | Floor at a typical centre |
+|---|---|---|---|---|
+| HRV | 1 ms | 5 % | 2 | 25 ms: 1.25 (2.5 young); 50 ms: 2.5 (5); 100 ms: 5 (10) |
+| Resting HR | 1 bpm | — | 1.5 | 1 bpm (1.5 young) |
+| Others (resp, skin temp, daytime HR, Effort, ln HRV) | as before | — | — | unchanged |
+
+`floorRel` and `youngFloorScale` are optional `MetricCfg` fields; a metric without them keeps its absolute floor.
 
 `foldHistory(values)` runs `update` over nights oldest first. A day's scores use the state folded from earlier nights
 only (AGENTS.md, Causality).
@@ -185,6 +198,55 @@ On the 180-day seed:
 - Weeks 4–9 move 26.2 → 23.8.
 - After about day 67, Recovery is within 0.4 points of before on average.
 - Recovery bands (green / yellow / red) go from 62 / 80 / 28 to 61 / 85 / 24.
+
+## Why version 36: floors that scale with the person
+
+**The problem (audit item R4).** HRV's spread was floored at a fixed 5 ms and resting HR's at 2 bpm. That is a small
+wobble for someone at 60–100 ms, but more than the real one for anyone with low or very steady values: older adults
+(HRV 15–25 ms), or the owner (HRV about 25 ms, night-to-night SD about 1.6–1.8 ms). Their z-scores were divided by a σ
+two to three times too big:
+- Recovery barely moved for them: 4–5 % red days against 18 % for others, and 70–83 % yellow.
+- The Health Monitor's HRV range could never flag. With 6 nights, zSigma = 1.253 × 5 × 8/6 = 8.35 ms, so the owner's
+  range was 25 ± 21 ms (3.9–45.6), where Google's own app shows about 21–29.
+- A −25 % HRV drop over three nights was never flagged at 22 ms.
+
+**The change.** The HRV floor is 5 % of the centre, at least 1 ms; resting HR's is 1 bpm (§ The floor). 5 % is about
+where a person with an HRV CV of 6 % sits; 8 % muted steady sleepers again (sd(z) 0.78 at CV 0.08); 4–6 % behaved alike.
+
+**Why a larger floor while young.** A fixed 5 ms floor had also been hiding small-sample luck: 9 % of 7-night samples at
+HRV 70 ± 15 ms have a spread under 5 ms. With the plain 5 % floor, the first fortnight's z ran wide for everyone (sd 1.21
+at night 7 for HRV 50 ± 10, against 0.99; |z| > 2.5 on 4.6 % of nights against 2.3 %). Doubling the HRV floor (1.5× for
+resting HR) until the baseline is trusted brings those back (`baselines.glitch.sim`, `baselines.test.ts` § early spread).
+At 50 ms the young floor is 5 ms, exactly the old one. After night 14 the spread eases down at the running-mean rate,
+so ranges narrow over weeks, not overnight.
+
+**How it was tested.** A sweep of 60 people per cohort × 180 nights (the test, `baselines.floor.sim.test.ts`, runs 40),
+scored and folded as stage 2 does (the illness hold included), nights 30 on:
+
+| Cohort | sd(z) HRV v35 → v36 | Recovery red / yellow / green v35 → v36 | HRV flag, healthy nights | −25 % HRV × 3 nights flagged |
+|---|---|---|---|---|
+| HRV 15, CV 0.2 | 0.48 → 1.07 | 4 / 73 / 23 → 20 / 48 / 33 % | never → 1 in 42 | 0 → 3 % |
+| HRV 22, CV 0.15 | 0.52 → 1.07 | 5 / 70 / 25 → 21 / 46 / 33 % | never → 1 in 47 | 0 → 14 % |
+| HRV 25, CV 0.08, RHR ± 1.5 | 0.32 → 1.02 | 1 / 83 / 17 → 19 / 48 / 33 % | never → 1 in 64 | 0 → 71 % |
+| HRV 60, CV 0.08 | 0.75 → 1.02 | 13 / 57 / 30 → 20 / 47 / 33 % | 1 in 900 → 1 in 64 | 26 → 72 % |
+| Typical, HRV 50, CV 0.18 | 1.05 → 1.07 | 18 / 49 / 33 → 20 / 47 / 33 % | 1 in 48 → 1 in 44 | 6 → 7 % |
+| HRV 100, CV 0.15, RHR 48 ± 1.5 | 1.06 → 1.06 | 17 / 50 / 33 → 20 / 47 / 33 % | 1 in 47 → 1 in 47 | 15 → 16 % |
+
+- Detection is now **scale-free**: a −25 % drop is flagged as often at 22 ms as at 100 ms with the same CV (14 vs
+  16 %). Whether it flags depends on how big the drop is against *your* wobble, not on your HRV level.
+- Resting HR at ± 1.0 bpm still reads sd(z) 0.76 (was 0.39): the 1 bpm floor still binds for the very steadiest.
+- The illness hold holds 2–3 % of healthy nights (was 0–2 %); the Health Monitor's resting-HR range flags about
+  1 in 55 healthy nights (was 1 in 125 for the typical cohort, never for steady ones).
+- `recovery.illness.sim`: a lasting drop (HRV −22 %, resting HR +4) is absorbed along the same curve about 0.6 points
+  lower (weeks 8–9: 50.0 → 49.4), because +4 bpm is now a larger z.
+- `restingPair.test.ts`: mean |z| over the switch weeks is now 0.82, what calibrated z gives (was 0.46, muted).
+
+**On the seed** (`GOLDEN[36]`, the parity snapshot): Recovery moved by 1.08 points on average (at most 5.1, mean change
+−0.01); green / yellow / red 52 / 93 / 25 (was 53 / 93 / 24). Strain and sleep are byte-identical.
+
+**On the owner's data** (a local copy, Oct 4–10): the HRV range on Oct 10 is **14.4–35.1 ms** (was 3.9–45.6) after 6
+nights, still on the young floor. With their measured wobble it is projected to narrow to about 16–33 ms at 14 nights,
+19–31 at 30 and 20–30 at 60. The resting-HR range narrows from 60.3–77.0 to 62.4–74.9 bpm.
 
 ## Why version 35: the sleeping heart rate gets its own baseline
 
@@ -374,7 +436,7 @@ the Energy Bank, journal impact, reports) move with it.
 | `halfLifeB` / `halfLifeS` | 14 / 21 nights | noop |
 | Spread weight | max(λ(21), 1/n) | Pulse, version 9 (was λ(21)) |
 | `zShrinkK` | 2 | Pulse, version 9: calibrated by simulation (§ Why) |
-| Floor spreads | HRV 5 ms, RHR 2 bpm, resp 0.5, skin temp 0.3 °C, daytime HR 3 bpm, Effort 5 | noop `metricCfg` |
+| Floor spreads | HRV 5 % of the centre (at least 1 ms), RHR 1 bpm, each larger while young (§ The floor); resp 0.5, skin temp 0.3 °C, daytime HR 3 bpm, Effort 5 | Pulse, version 36, for HRV and RHR (noop: 5 ms, 2 bpm); noop `metricCfg` for the rest |
 
 ## Worked example
 
@@ -399,16 +461,10 @@ An HRV baseline after 7 nights of 50, 62, 44, 58, 47, 55, 41 ms (sample SD 7.66 
 
 ## Edge rules
 
-- **Below the floor.** A user whose real wobble is under the floor still gets σ at the floor (a test). Their z-scores
-  are *smaller* than the truth. This is a separate question of tuning the floors, and is not changed here. The
-  effect is large for low HRV, common in older adults. The SD of nightly HRV z over nights 60–120 (40 simulated
-  people each, log-normal nights) is:
-
-  | HRV, night-to-night CV | 20 ms, 12% | 25 ms, 15% | 30 ms, 18% | 50 or 70 ms, 18% |
-  |---|---|---|---|---|
-  | SD of z | 0.39 | 0.60 | 0.86 | 1.05 |
-
-  So a low-HRV user's Recovery moves about half as much as a typical user's for the same relative change.
+- **Below the floor.** A user whose real wobble is under the floor still gets σ at the floor (a test), so their
+  z-scores are *smaller* than the truth. Before version 36 this hit every low-HRV user (sd(z) 0.39 at 20 ms, CV 12 %);
+  since then the HRV floor is 5 % of the centre, so only an HRV CV under about 6 %, or a resting HR steadier than about
+  ± 1.2 bpm, still sits on it (§ Why version 36).
 - **Rejected outliers and gaps** never advance the running-mean count (tests).
 - **A glitch in the first week** (*since version 32*) is trimmed out of the robust first-week estimate if it's more
   than 4σ (by MAD) from the median of the early values. Nearer than that it is kept, at a smaller cost.
@@ -447,7 +503,12 @@ An HRV baseline after 7 nights of 50, 62, 44, 58, 47, 55, 41 ms (sample SD 7.66 
   - σ after 7 nights in [8.5, 11.5] for a true HRV SD of 10 ms;
   - σ within 10 % of the truth at 7, 14, 30 and 60 nights for HRV 10 ms, HRV 15 ms and RHR 4 bpm;
   - sd(z) in (0.85, 1.1) with the shrink, and below the unshrunk sd(z);
-  - a low-wobble user stays on the floor.
+  - a low-wobble user stays on the floor (5 % of the centre, 2× while young; 1 bpm for resting HR).
+- **The floor** (*version 36*): `floorOf` at several centres, young and trusted; the floor drops at night 14 and the
+  spread follows it down gradually; other metrics keep their absolute floors.
+- **`baselines.floor.sim.test.ts`** (*version 36*): sd(z) 0.9–1.15 for HRV 15–100 ms and resting HR ± 1.5–2.5 bpm;
+  Recovery's red and green within 3 points of the typical cohort; at most 1 healthy night in 30 flagged and 4 % held; a
+  −25 % drop flagged as often at 22 ms as at 100 ms. 13 of its 26 checks fail on the version 35 floors.
 - **The shrink:**
   - the formula at several n, and the documented multipliers;
   - it rises strictly every night, with no step at night 14, and tends to 1;

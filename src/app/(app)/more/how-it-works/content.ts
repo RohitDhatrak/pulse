@@ -301,6 +301,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
           { term: "Minute heart rate", detail: "The average heart rate of each minute." },
           { term: "Steps", detail: "Only still minutes count: no steps in that minute or the 2 either side." },
           { term: "Workouts, exercise and sleep", detail: "Minutes inside them are left out, and so are minutes at 40% or more of your heart-rate reserve and the 30\u00a0minutes after a workout or 10+ minutes of exercise, while your heart rate comes down." },
+          { term: "Lighter activity", detail: "Housework, errands or a walk (8 or more minutes with steps in 15, with your heart rate up) is left out too, including the still moments in between, and so are the minutes after it while your heart rate is still coming down, for up to 30\u00a0minutes." },
           { term: "Your usual still level", detail: "The typical heart rate of your still minutes, from earlier days." },
         ],
         paragraphs: [
@@ -391,7 +392,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "How it is weighted",
         paragraphs: [
-          "Resting heart rate and HRV use Google’s personal ranges when Google gives them, and skin temperature uses ± 2 of Google’s 30-night standard deviation around its baseline. Otherwise, and always for respiratory rate and SpO2, a normal range is your baseline ± 2.5 of your usual night-to-night swings, built from earlier nights only. Pulse’s narrowest ranges are about ±6.3\u00a0bpm, ±15.7\u00a0ms, ±1.6\u00a0rpm, ±1.6\u00a0points of SpO2 and ±0.94\u00a0°C. SpO2 is one-sided and compared with your own normal: 2\u00a0points below it, or below 92%, is low, and a high value is never flagged. Overnight averages run a little lower than daytime readings, so many healthy people sit at 94-96% at night. Home only mentions SpO2 when it is below 92% or 3\u00a0points below your normal.",
+          "Resting heart rate and HRV use Google’s personal ranges when Google gives them, and skin temperature uses ± 2 of Google’s 30-night standard deviation around its baseline. Otherwise, and always for respiratory rate and SpO2, a normal range is your baseline ± 2.5 of your usual night-to-night swings, built from earlier nights only. Pulse’s narrowest ranges are about ±3.1\u00a0bpm of resting heart rate, ±16% of your usual HRV, ±1.6\u00a0rpm, ±1.6\u00a0points of SpO2 and ±0.94\u00a0°C, and they are wider for your first 2\u00a0weeks. SpO2 is one-sided and compared with your own normal: 2\u00a0points below it, or below 92%, is low, and a high value is never flagged. Overnight averages run a little lower than daytime readings, so many healthy people sit at 94-96% at night. Home only mentions SpO2 when it is below 92% or 3\u00a0points below your normal.",
           "The illness signal compares resting heart rate, HRV, skin temperature and respiratory rate with your 30\u00a0nights before. A vital fires at 2 standard deviations in the unwell direction and adds 22\u00a0points per extra deviation, up to 40. With at least 2 vitals firing, 25\u00a0points is mild and 50 is raised. If you logged alcohol, sauna or travel the day before, Pulse takes that as the likely cause instead.",
         ],
       },

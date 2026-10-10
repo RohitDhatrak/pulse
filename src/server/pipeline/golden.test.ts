@@ -809,6 +809,32 @@ const GOLDEN: Record<number, Record<string, string>> = {
     "intraday_series.stress": "a33f4b1f9da388c5",
     "reports": "2f2fccdd25f40e0f",
   },
+  // 36: HRV's spread floor is 5 % of the centre (at least 1 ms) and resting HR's 1 bpm, each larger while young; stress
+  // skips sustained light movement and the heart rate easing off after it. Recovery and what reads it moved, and stress
+  // with the still-HR series and the Energy Bank; strain only by its key, sleep not at all.
+  36: {
+    "daily_scores.scoring_version": "6f40486513cddaa9",
+    "daily_scores.strain": "bb6cc83da42e170a",
+    "daily_scores.activities": "1d2f8021722c6b84",
+    "daily_scores.session_rhr_bpm": "2f808b51bd7a0bc8",
+    "daily_scores.recovery": "d3087267697e8215",
+    "daily_scores.sleep": "47099c1ed36f49e0",
+    "daily_scores.training_load": "6c9d19f566a06b41",
+    "daily_scores.strain_target": "77343dd384c534b6",
+    "daily_scores.sleep_planner": "4b65c030adc2879a",
+    "daily_scores.energy_bank": "f78db0d2143ed9a5",
+    "daily_scores.stress": "dd4e2bb2c2474b08",
+    "daily_scores.health_monitor": "41cafe1769a092a4",
+    "daily_scores.healthspan": "7d5bfef33f56df8c",
+    "daily_scores.fitness": "cfad8d1954c878ed",
+    "daily_scores.journal_impact": "09631c79d9ca9e69",
+    "intraday_series.energy_bank": "f8d40738e9f2693a",
+    "intraday_series.hr": "5ca83bb68dad9033",
+    "intraday_series.load": "859d8876596ad379",
+    "intraday_series.still_hr": "137b4b39d61ba03e",
+    "intraday_series.stress": "e912545ff24786c6",
+    "reports": "34aa59cbe8557a90",
+  },
 };
 
 // Numbers are rounded to 10 significant digits first, so a last-ulp difference in Math between Node

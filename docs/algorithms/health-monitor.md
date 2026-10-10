@@ -101,9 +101,11 @@ shown only; nothing is scored from them.
 | `healthMonitorConfig.spo2HomeDropPct` | 3 points | version 22: Home names SpO2 below 92 or this far below your normal |
 | `healthMonitorConfig.spo2Cfg` | plausible 70–100, floor spread 0.5 | *tunable*; there is no noop config for SpO2 |
 | `healthMonitorConfig.skinTempDevCfg` | plausible −5 to 5 °C, floor spread 0.3 | *tunable*; `skin_temp`'s floor, with bounds for a deviation |
-| RHR, HRV, respiration configs | floor spreads 2 bpm, 5 ms, 0.5 | noop: `Baselines.kt` (`metricCfg`) |
+| RHR, HRV, respiration configs | floor spreads 1 bpm, 5 % of the centre (at least 1 ms), 0.5; RHR and HRV larger until 14 nights | version 36 for RHR and HRV (noop: 2 bpm, 5 ms; [baselines](baselines.md) § The floor); noop `metricCfg` for respiration |
 
-**The floors set the narrowest range.** At each floor, on a long history, ±2.5σ is about ±6.3 bpm for RHR, ±15.7 ms for HRV, ±1.57 for respiration, ±1.57 points for SpO2 and ±0.94 °C for skin temperature (at ±2: ±5.0, ±12.5, ±1.25, ±1.25, ±0.75).
+**The floors set the narrowest range.** At each floor, on a long history, ±2.5σ is about ±3.1 bpm for RHR, ±16 % of the centre for HRV (±3.9 ms at 25 ms, ±7.8 at 50), ±1.57 for respiration, ±1.57 points for SpO2 and ±0.94 °C for skin temperature.
+
+**Why low-HRV ranges narrowed (version 36).** The HRV floor was a fixed 5 ms, so ±2.5σ was at least ±15.7 ms on a long history and wider while young: the owner's range at 25 ms was 3.9–45.6 ms after 6 nights and could never flag. Healthy nights flagged never at 22 ms; a −25 % drop over three nights was never caught. With the floor at 5 % of the centre, ranges follow each person's own wobble: healthy nights flag about 1 in 42–64 at every HRV level, and a drop is caught as often at 22 ms as at 100 ms with the same night-to-night CV. The owner's range is 14.4–35.1 ms after 6 nights, projected about 19–31 at 30 nights. [baselines](baselines.md) § Why version 36 has the cohort table.
 
 ## Edge rules
 

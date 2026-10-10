@@ -105,9 +105,11 @@ describe("what the hold must not do", () => {
     expect(Math.abs(mean(held) - mean(plain))).toBeLessThanOrEqual(1);
   });
 
-  it("a lasting drop (HRV −22 %, resting HR +4) is still absorbed: back to at least 50 by weeks 8–9", () => {
+  // Version 35: 50.0; version 36: 49.4. The 1 bpm resting-HR floor reads the +4 bpm step as a larger z, so the curve is
+  // the same shape about 0.6 lower (weeks 1, 2, 3–4: 28.7, 36.5, 44.1 → 27.6, 35.1, 43.0; no step: 55.2 → 54.9).
+  it("a lasting drop (HRV −22 %, resting HR +4) is still absorbed: back to at least 49 by weeks 8–9", () => {
     const step = (i: number, n: Night): Night => (i >= 100 ? { ...n, hrv: n.hrv * 0.78, rhr: n.rhr + 4 } : n);
     const weeks89 = Array.from({ length: 100 }, (_, k) => recoveries(nights(30000 + k, 175, step)).slice(149, 163)).flat();
-    expect(mean(weeks89)).toBeGreaterThanOrEqual(50);
+    expect(mean(weeks89)).toBeGreaterThanOrEqual(49);
   });
 });

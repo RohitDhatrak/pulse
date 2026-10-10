@@ -17,17 +17,24 @@ export const earlyAdaptNights = 8;
 export const earlyHalfLifeB = 3.0;
 export const earlySpreadInflate = 2.5;
 
-const cfg = (minVal: number, maxVal: number, floorSpread: number): MetricCfg => ({
+const cfg = (minVal: number, maxVal: number, floorSpread: number, young?: { floorRel?: number; youngFloorScale: number }): MetricCfg => ({
   minVal,
   maxVal,
   floorSpread,
+  ...young,
   halfLifeB: 14.0,
   halfLifeS: 21.0,
 });
 
 export const metricCfg = {
-  hrv: cfg(5.0, 250.0, 5.0),
-  resting_hr: cfg(30.0, 120.0, 2.0),
+  /**
+   * Version 36: the spread floor is 5 % of your HRV, at least 1 ms (was a fixed 5 ms), and resting HR's is 1 bpm (was 2),
+   * each larger (HRV 2×, resting HR 1.5×) until the baseline is trusted at 14 nights. The fixed floors muted anyone with low or very steady values: at HRV 22 ms sd(z) was 0.52
+   * and Recovery 5 % red (18 % for others); the Health Monitor's HRV range was 25 ± 21 ms.
+   * docs/algorithms/baselines.md § Why version 36.
+   */
+  hrv: cfg(5.0, 250.0, 1.0, { floorRel: 0.05, youngFloorScale: 2 }),
+  resting_hr: cfg(30.0, 120.0, 1.0, { youngFloorScale: 1.5 }),
   resp: cfg(4.0, 40.0, 0.5),
   skin_temp: cfg(20.0, 42.0, 0.3),
   /** Daily Effort on its 0–100 axis. */
@@ -68,6 +75,13 @@ const state = (baseline: number, spread: number, nValid: number, nightsSinceUpda
   nightsSinceUpdate,
   status: computeStatus(nValid, nightsSinceUpdate),
 });
+
+/**
+ * The spread floor for a baseline at `centre` with `nValid` accepted values (SCORING_VERSION 36): the absolute floor, or
+ * floorRel of the centre if larger, times youngFloorScale until the baseline is trusted.
+ */
+export const floorOf = (cfg: MetricCfg, centre: number, nValid: number): number =>
+  Math.max(cfg.floorSpread, (cfg.floorRel ?? 0) * Math.abs(centre)) * (nValid < minNightsTrust ? (cfg.youngFloorScale ?? 1) : 1);
 
 const inRange = (v: number | null, cfg: MetricCfg): v is number => v != null && cfg.minVal <= v && v <= cfg.maxVal;
 
@@ -126,14 +140,15 @@ export function update(
   }
   if (next.nValid > earlyAdaptNights) return next;
   const early = [...(prev?.early ?? []), value!];
+  const k0 = early.length;
   const m = median(early);
-  const mad = Math.max(median(early.map((x) => Math.abs(x - m))), cfg.floorSpread / 2);
+  const mad = Math.max(median(early.map((x) => Math.abs(x - m))), floorOf(cfg, m, k0) / 2);
   const kept = early.filter((x) => Math.abs(x - m) <= earlyTrimSigma * 1.4826 * mad);
   const centre = kept.reduce((a, b) => a + b, 0) / kept.length;
   // Deviations from the sample's own mean run short by √((n − 1) / n): corrected, so σ at night 7 is unbiased.
   const k = kept.length;
   const meanDev = kept.reduce((a, x) => a + Math.abs(x - centre), 0) / k;
-  const spread = Math.max(cfg.floorSpread, k > 1 ? meanDev * Math.sqrt(k / (k - 1)) : meanDev);
+  const spread = Math.max(floorOf(cfg, centre, k0), k > 1 ? meanDev * Math.sqrt(k / (k - 1)) : meanDev);
   return { ...next, baseline: centre, spread, early };
 }
 
@@ -147,9 +162,9 @@ function updateCore(
   const ls = lambda(cfg.halfLifeS);
 
   if (prev == null) {
-    if (inRange(value, cfg)) return { baseline: value, spread: cfg.floorSpread, nValid: 1, nightsSinceUpdate: 0, status: "calibrating" };
+    if (inRange(value, cfg)) return { baseline: value, spread: floorOf(cfg, value, 1), nValid: 1, nightsSinceUpdate: 0, status: "calibrating" };
     const seed = (cfg.minVal + cfg.maxVal) / 2.0;
-    return { baseline: seed, spread: cfg.floorSpread, nValid: 0, nightsSinceUpdate: 1, status: "calibrating" };
+    return { baseline: seed, spread: floorOf(cfg, seed, 0), nValid: 0, nightsSinceUpdate: 1, status: "calibrating" };
   }
 
   if (!inRange(value, cfg)) return state(prev.baseline, prev.spread, prev.nValid, prev.nightsSinceUpdate + 1);
@@ -164,7 +179,7 @@ function updateCore(
 
   // First real value after a placeholder seed.
   if (prev.nValid === 0) {
-    return { baseline: value, spread: cfg.floorSpread, nValid: 1, nightsSinceUpdate: 0, status: "calibrating" };
+    return { baseline: value, spread: floorOf(cfg, value, 1), nValid: 1, nightsSinceUpdate: 0, status: "calibrating" };
   }
 
   const effSpread = isYoung ? prev.spread * earlySpreadInflate : prev.spread;
@@ -178,7 +193,7 @@ function updateCore(
   // floor seed drops out on night 2); it hands over to the long EWMA once 1/n falls below it (about night 30).
   const absDev = Math.abs(value - newBaseline);
   const effLs = Math.max(ls, 1.0 / prev.nValid);
-  const newSpread = Math.max(cfg.floorSpread, effLs * absDev + (1.0 - effLs) * prev.spread);
+  const newSpread = Math.max(floorOf(cfg, newBaseline, prev.nValid + 1), effLs * absDev + (1.0 - effLs) * prev.spread);
   return state(newBaseline, newSpread, prev.nValid + 1, 0);
 }
 
@@ -221,7 +236,7 @@ export function foldHistory(values: (number | null)[], cfg: MetricCfg, rejectHar
   for (const v of values) s = update(s, v, cfg, rejectHardOutliers);
   if (s) return s;
   const seed = (cfg.minVal + cfg.maxVal) / 2.0;
-  return { baseline: seed, spread: cfg.floorSpread, nValid: 0, nightsSinceUpdate: 0, status: "calibrating" };
+  return { baseline: seed, spread: floorOf(cfg, seed, 0), nValid: 0, nightsSinceUpdate: 0, status: "calibrating" };
 }
 
 /** Gaussian σ from the abs-dev spread: 1.253 × spread, floored away from zero. */
@@ -247,7 +262,7 @@ export function rollingMeanSD(values: (number | null)[], cfg: MetricCfg, window 
   const valid = values.filter((v): v is number => inRange(v, cfg));
   if (valid.length === 0) {
     const seed = (cfg.minVal + cfg.maxVal) / 2.0;
-    return { baseline: seed, spread: cfg.floorSpread, nValid: 0, nightsSinceUpdate: 0, status: "calibrating" };
+    return { baseline: seed, spread: floorOf(cfg, seed, 0), nValid: 0, nightsSinceUpdate: 0, status: "calibrating" };
   }
   const trailing = valid.slice(-window);
   const n = trailing.length;
@@ -258,9 +273,9 @@ export function rollingMeanSD(values: (number | null)[], cfg: MetricCfg, window 
     for (const v of trailing) ss += (v - mean) * (v - mean);
     sd = Math.sqrt(ss / (n - 1));
   } else {
-    sd = cfg.floorSpread * 1.253;
+    sd = floorOf(cfg, mean, n) * 1.253;
   }
-  return state(mean, Math.max(cfg.floorSpread, sd) / 1.253, n, 0);
+  return state(mean, Math.max(floorOf(cfg, mean, n), sd) / 1.253, n, 0);
 }
 
 // ── Civil-day arithmetic (replaces java.time) ──────────────────────────────

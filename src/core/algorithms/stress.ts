@@ -6,6 +6,8 @@
 // days read about half as many high minutes while a real 30-minute episode is still caught. Since SCORING_VERSION 21:
 // exertion (≥ 40 % of heart-rate reserve) and the 30 minutes after it are not stress, and each minute's reference
 // follows a slow rise over hours (heat, caffeine, illness) above your usual level, so only episodes stand out.
+// Since SCORING_VERSION 36: sustained light movement (housework, a stroll, errands) below the exertion line also blocks
+// its still minutes and the heart rate easing off after it, for as long as it is still falling (at most 30 minutes).
 import { isUsable, sigma } from "../scoring/baselines";
 import {
   daytimeHRAggregatePercentile,
@@ -37,6 +39,21 @@ export const stressConfig = {
   exertionTailMin: 30,
   /** An exertion run this long (1-minute gaps allowed) starts a tail. */
   exertionRunMin: 10,
+  /**
+   * Version 36: a movement bout is a window of movementWindowMin minutes with at least movementStepMin minutes of steps,
+   * whose stepping minutes average at least resting + movementShare × reserve (*tunable*). Below the exertion line, so
+   * light activity's cool-down read as stress: 26 % of the owner's high minutes came within 40 minutes of movement.
+   */
+  movementShare: 0.15,
+  movementWindowMin: 15,
+  movementStepMin: 8,
+  /**
+   * After a bout, minutes stay blocked while the heart rate is still falling: from tailCheckMin minutes on, the slope of
+   * the last tailCheckMin minutes must be at most −tailFallPerMin bpm a minute (*tunable*). A stress response that holds
+   * the heart rate up after moving stops the tail and is scored. Capped at exertionTailMin.
+   */
+  tailCheckMin: 10,
+  tailFallPerMin: 0.1,
   /** Version 21: the trailing window (minutes) whose still-minute median can lift the reference (*tunable*). */
   rollWindowMin: 300,
   /** The median must exceed the reference by more than this many σ before it lifts it. */
@@ -129,7 +146,7 @@ export function stress(input: StressInput): StressResult {
     if (!steps[m]) continue;
     for (let j = Math.max(0, m - c.stillWindowMin); j <= Math.min(n - 1, m + c.stillWindowMin); j++) blocked[j] = 1;
   }
-  if (input.exertion) blockExertion(blocked, means, input.exertion, start);
+  if (input.exertion) blockExertion(blocked, means, input.exertion, start, steps);
 
   const still = means.map((bpm, m) => (bpm == null || blocked[m] ? null : bpm));
 
@@ -177,10 +194,13 @@ export function blockExertion(
   means: (number | null)[],
   ex: { restingHr: number; maxHr: number; workouts: Interval[] },
   start: number,
+  steps?: ArrayLike<number | undefined>,
 ) {
   const c = stressConfig;
   const n = means.length;
-  const threshold = ex.restingHr + c.exertionShare * Math.max(1, ex.maxHr - ex.restingHr);
+  const reserve = Math.max(1, ex.maxHr - ex.restingHr);
+  if (steps) blockMovement(blocked, means, steps, ex.restingHr + c.movementShare * reserve);
+  const threshold = ex.restingHr + c.exertionShare * reserve;
   const hot = means.map((v) => v != null && v >= threshold);
   const tailFrom: number[] = ex.workouts.map((w) => Math.ceil((w.end - start) / 60));
   for (let m = 0; m < n; ) {
@@ -195,6 +215,62 @@ export function blockExertion(
     m = end + 1;
   }
   for (const t of tailFrom) for (let m = Math.max(0, t); m < Math.min(n, t + c.exertionTailMin); m++) blocked[m] = 1;
+}
+
+/**
+ * Version 36: blocks each sustained movement bout (its still minutes too: standing, a pause between rooms) and the minutes
+ * after it while the heart rate is still easing off. See stressConfig.movementShare and tailFallPerMin.
+ */
+export function blockMovement(blocked: Uint8Array, means: (number | null)[], steps: ArrayLike<number | undefined>, threshold: number) {
+  const c = stressConfig;
+  const n = means.length;
+  const W = c.movementWindowMin;
+  const moving = new Uint8Array(n);
+  for (let w = 0; w + W <= n; w++) {
+    let stepping = 0, sum = 0, count = 0, first = -1, last = -1;
+    for (let m = w; m < w + W; m++) {
+      if (!steps[m]) continue;
+      stepping++;
+      if (first < 0) first = m;
+      last = m;
+      if (means[m] != null) {
+        sum += means[m]!;
+        count++;
+      }
+    }
+    // A band gap (no HR) neither counts towards the average nor breaks the window; a few HR minutes must remain.
+    if (stepping >= c.movementStepMin && count >= 3 && sum / count >= threshold) for (let m = first; m <= last; m++) moving[m] = 1;
+  }
+  for (let m = 0; m < n; ) {
+    if (!moving[m]) {
+      m++;
+      continue;
+    }
+    let end = m;
+    while (end < n && moving[end]) end++;
+    for (let j = m; j < end; j++) blocked[j] = 1;
+    for (let k = 0; k < c.exertionTailMin && end + k < n; k++) {
+      if (k >= c.tailCheckMin && slope(means, end + k - c.tailCheckMin, end + k) > -c.tailFallPerMin) break;
+      blocked[end + k] = 1;
+    }
+    m = end + 1;
+  }
+}
+
+/** Least-squares slope (bpm a minute) of the HR minutes in [from, to), or 0 with fewer than half of them present. */
+function slope(means: (number | null)[], from: number, to: number): number {
+  let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let m = from; m < to; m++) {
+    const y = means[m];
+    if (y == null) continue;
+    n++;
+    sx += m;
+    sy += y;
+    sxx += m * m;
+    sxy += m * y;
+  }
+  const d = n * sxx - sx * sx;
+  return n * 2 >= to - from && d > 0 ? (n * sxy - sx * sy) / d : 0;
 }
 
 /**

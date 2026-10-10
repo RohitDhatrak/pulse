@@ -53,6 +53,17 @@ export interface MetricCfg {
   /** Hard reject above. */
   maxVal: number;
   floorSpread: number;
+  /**
+   * The spread floor as a share of the centre (SCORING_VERSION 36): the floor is max(floorSpread, floorRel × |centre|).
+   * HRV's night-to-night wobble scales with its level, so a fixed floor muted low-HRV people.
+   */
+  floorRel?: number;
+  /**
+   * The floor is this many times larger while the baseline is young (nValid < minNightsTrust; version 36). A week of
+   * nights sometimes looks far steadier than the person is (9 % of 7-night samples at HRV 70 ± 15 had a spread under
+   * 5 ms); without the larger floor the first fortnight's z ran wide (sd up to 1.3 against about 1).
+   */
+  youngFloorScale?: number;
   /** Centre half-life, nights. */
   halfLifeB: number;
   /** Spread half-life, nights. */
@@ -64,7 +75,7 @@ export type BaselineStatus = "calibrating" | "provisional" | "trusted" | "stale"
 export interface BaselineState {
   /** Robust EWMA centre. */
   baseline: number;
-  /** EWMA of absolute deviations, floored at cfg.floorSpread. σ ≈ 1.253 × spread. */
+  /** EWMA of absolute deviations, floored at floorOf(cfg, baseline). σ ≈ 1.253 × spread. */
   spread: number;
   nValid: number;
   nightsSinceUpdate: number;
