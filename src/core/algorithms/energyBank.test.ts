@@ -106,8 +106,8 @@ describe("the start counts last night's sleep once, composed with the real recov
   const B = { hrvBaseline: { mean: 0, spread: 1 }, rhrBaseline: { mean: 0, spread: 1 }, respBaseline: { mean: 0, spread: 1 } };
   type Night = { hrvZ?: number; rhrZ?: number; sp?: number; centre?: number };
   const args = (n: Night) => ({ hrv: n.hrvZ ?? 0, rhr: n.rhrZ ?? 0, resp: 0, ...B, sleepCentre: n.centre ?? 0.88, skinTempDev: 0 });
-  /** Version 20, as the pipeline composes it: Recovery with no sleep term, then energyStart. */
-  const now = (n: Night) => energyStart(recovery({ ...args(n), sleepPerf: null })!, (n.sp ?? 0.88) * 100);
+  /** Version 20, as the pipeline composes it: Recovery with no sleep term (left out on purpose, version 37), then energyStart. */
+  const now = (n: Night) => energyStart(recovery({ ...args(n), sleepPerf: null, omit: ["sleep"] })!, (n.sp ?? 0.88) * 100);
   /** Version 19: the shown Recovery (with its sleep term) and sleep performance again. */
   const v19 = (n: Night) => 0.6 * recovery({ ...args(n), sleepPerf: n.sp ?? 0.88 })! + 0.4 * (n.sp ?? 0.88) * 100;
   /** The fix list's rejected design: the shown Recovery alone. */

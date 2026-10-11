@@ -16,6 +16,9 @@ import {
   parasympatheticSaturation,
   recovery,
   recoveryFromStates,
+  compositeSd,
+  missingInputScale,
+  type RecoveryTerm,
   satEnterZ,
   satMaxDampFraction,
   skinTempDevScale,
@@ -113,7 +116,8 @@ describe("RecoverySaturationGuardTest", () => {
   };
   const hrvB = baseline(50, 6.265);
   const rhrB = baseline(55, 5.0);
-  const score = (hrv: number, rhr: number) => recoveryFromStates({ hrv, rhr, hrvBaseline: hrvB, rhrBaseline: rhrB })!;
+  // HRV and resting HR only, the others left out on purpose, so the composite is the plain two-term average.
+  const score = (hrv: number, rhr: number) => recoveryFromStates({ hrv, rhr, hrvBaseline: hrvB, rhrBaseline: rhrB, omit: ["resp", "sleep", "skin"] })!;
 
   it("fires on the saturation signature and would ease but never remove the penalty", () => {
     const s = parasympatheticSaturation(-1.5, 1.5);
@@ -204,6 +208,58 @@ describe("RecoveryIndexActivityBalanceTest", () => {
     expect(t(80, null)).toBeCloseTo(t(null, null), 9);
     expect(t(null, baseline(40, 15))).toBeCloseTo(t(null, null), 9);
     expect(t(80, baseline(40, 15))).not.toBeCloseTo(t(null, null), 9);
+  });
+});
+
+describe("missing inputs (SCORING_VERSION 37)", () => {
+  const ALL: RecoveryTerm[] = ["hrv", "rhr", "resp", "sleep", "skin"];
+  const full = { hrv: 44, rhr: 58, resp: 15.6, hrvBaseline: baseline(50, 6), rhrBaseline: baseline(55, 3), respBaseline: baseline(15, 1), sleepPerf: 0.8, sleepCentre: 0.85, skinTempDev: 0.3 };
+  const zOf = (r: number) => logisticZ0 - Math.log(100 / r - 1) / logisticK;
+
+  it("every input: the factor is 1 and the score is the plain weighted average, as before", () => {
+    expect(missingInputScale(ALL)).toBe(1);
+    expect(recoveryFromStates(full)).toBeCloseTo(recoveryFromStates({ ...full, omit: [] })!, 12);
+  });
+
+  it("HRV only: the composite is scaled by SD(all) ÷ SD(HRV), by hand 0.664", () => {
+    // SD(HRV alone) = 1. SD(all) = √(wᵀCw) / Σw with the termSd and termCorr constants.
+    const w = { hrv: 0.55, rhr: 0.2, resp: 0.05, sleep: 0.15, skin: 0.05 };
+    const v =
+      w.hrv ** 2 + w.rhr ** 2 + (w.resp * 0.6) ** 2 + (w.sleep * 0.4) ** 2 + (w.skin * 0.15) ** 2 +
+      2 * (w.hrv * w.rhr * 0.35 + w.hrv * w.sleep * 0.4 * 0.2 + w.rhr * w.sleep * 0.4 * 0.15);
+    expect(compositeSd(["hrv"])).toBeCloseTo(1, 12);
+    expect(missingInputScale(["hrv"])).toBeCloseTo(Math.sqrt(v), 12);
+    expect(missingInputScale(["hrv"])).toBeCloseTo(0.664, 3);
+    const hrvOnly = { hrv: 44, rhr: null, hrvBaseline: baseline(50, 6) };
+    const plain = zOf(recoveryFromStates({ ...hrvOnly, omit: ["rhr", "resp", "sleep", "skin"] })!);
+    expect(zOf(recoveryFromStates(hrvOnly)!)).toBeCloseTo(plain * missingInputScale(["hrv"]), 9);
+  });
+
+  it("a fewer-input night is pulled toward the middle, never pushed away from it", () => {
+    for (const keep of [["hrv"], ["hrv", "rhr"], ["hrv", "sleep"], ["hrv", "rhr", "sleep"], ["hrv", "rhr", "resp", "sleep"]] as RecoveryTerm[][]) {
+      expect(missingInputScale(keep)).toBeLessThan(1);
+      expect(missingInputScale(keep)).toBeGreaterThan(0.6);
+    }
+  });
+
+  it("adding a term never lowers the factor", () => {
+    const subsets: RecoveryTerm[][] = [[]];
+    for (const t of ALL.slice(1)) for (const s of [...subsets]) subsets.push([...s, t]);
+    for (const s of subsets) for (const t of ALL.slice(1)) {
+      if (s.includes(t)) continue;
+      expect(missingInputScale(["hrv", ...s, t])).toBeGreaterThanOrEqual(missingInputScale(["hrv", ...s]) - 1e-12);
+    }
+  });
+
+  it("a term left out on purpose isn't scaled for: the Energy Bank's start leaves sleep out", () => {
+    expect(missingInputScale(["hrv", "rhr", "resp", "skin"], ["sleep"])).toBe(1);
+    const body = { ...full, sleepPerf: null };
+    expect(zOf(recoveryFromStates(body)!)).toBeCloseTo(zOf(recoveryFromStates({ ...body, omit: ["sleep"] })!) * missingInputScale(["hrv", "rhr", "resp", "skin"]), 9);
+  });
+
+  it("a term at its baseline (the drivers' counterfactual) keeps the factor: the score at baseline is still neutral", () => {
+    const hrvOnly = { hrv: 50, rhr: null, hrvBaseline: baseline(50, 6) };
+    expect(recoveryFromStates(hrvOnly)).toBeCloseTo(100 / (1 + Math.exp(logisticK * logisticZ0)), 12);
   });
 });
 
@@ -329,17 +385,19 @@ describe("short-history z shrink in Recovery", () => {
   });
 
   it("the HRV term's z is exactly the raw z × n / (n + 2)", () => {
-    // Only the HRV term: Recovery = logistic(z), so invert it to read back the z that was used.
+    // Only the HRV term: Recovery = logistic(z), so invert it to read back the z that was used. Since version 37 an
+    // HRV-only night is also scaled to the full set's spread (missingInputScale).
     const b = baseline(50, 10, 7);
-    const r = recoveryFromStates({ hrv: 40, rhr: null, hrvBaseline: b })!;
-    const z = logisticZ0 - Math.log(100 / r - 1) / logisticK;
-    expect(z).toBeCloseTo((-10 / 10) * (7 / 9), 9);
+    const zOf = (r: number) => logisticZ0 - Math.log(100 / r - 1) / logisticK;
+    expect(zOf(recoveryFromStates({ hrv: 40, rhr: null, hrvBaseline: b, omit: ["rhr", "resp", "sleep", "skin"] })!)).toBeCloseTo((-10 / 10) * (7 / 9), 9);
+    expect(zOf(recoveryFromStates({ hrv: 40, rhr: null, hrvBaseline: b })!)).toBeCloseTo((-10 / 10) * (7 / 9) * missingInputScale(["hrv"]), 9);
   });
 });
 
 describe("sleep term centred on your own usual night (SCORING_VERSION 17)", () => {
   const atBaseline = { hrv: 60, hrvBaseline: { mean: 60, spread: 8 }, rhr: 55, rhrBaseline: { mean: 55, spread: 2.5 } };
-  const R = (sleepPerf: number | null, sleepCentre?: number) => recovery({ ...atBaseline, sleepPerf, sleepCentre })!;
+  // HRV, resting HR and sleep, with breathing and skin left out on purpose: the sleep term's own size (version 17).
+  const R = (sleepPerf: number | null, sleepCentre?: number) => recovery({ ...atBaseline, sleepPerf, sleepCentre, omit: ["resp", "skin"] })!;
 
   it("personalSleepCentre: 0.85 under 7 nights, else the mean of the last 28", () => {
     expect(minSleepCentreNights).toBe(7);

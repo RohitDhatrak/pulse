@@ -18,7 +18,7 @@ import { healthMonitor, healthMonitorConfig, type HealthMonitorDay, type VitalKe
 import { healthspan, healthspanConfig, STRENGTH_TYPES, type HealthspanDay } from "@/core/algorithms/healthspan";
 import type { OutcomeDay } from "@/core/algorithms/journalImpact";
 import type { ReportDay } from "@/core/algorithms/reports";
-import { sleepPlan, type SleepPlan } from "@/core/algorithms/sleepPlanner";
+import { sleepPlan } from "@/core/algorithms/sleepPlanner";
 import { sleepRegularityIndex, sriConsistency, sriDisplay } from "@/core/algorithms/sleepRegularity";
 import { strainTarget } from "@/core/algorithms/strainTarget";
 import { hardOrLateWorkout, typicalSession } from "@/core/scoring/load";
@@ -320,11 +320,9 @@ export function scoreRecovery(f: Fold, d: Day, sleep: SleepRow): RecoveryRow {
     } else {
       value = g.recovery;
       // The same Recovery from its body signals only, for the Energy Bank's start (version 20): it adds sleep
-      // performance itself, so sleep counts once. Missing terms renormalise, as they do for any night.
-      withoutSleep =
-        sleepPerf == null
-          ? value
-          : gatedRecovery({ hrv, rhr, resp, hrvBaseline: hrvB!, rhrBaseline: rhrUsable, respBaseline: respUsable, sleepPerf: null, skinTempDev }).recovery;
+      // performance itself, so sleep counts once. Sleep is left out on purpose, so only a missing body signal pulls
+      // it toward the middle (version 37).
+      withoutSleep = gatedRecovery({ hrv, rhr, resp, hrvBaseline: hrvB!, rhrBaseline: rhrUsable, respBaseline: respUsable, sleepPerf: null, skinTempDev, omit: ["sleep"] }).recovery;
       drivers = chargeDrivers({ hrv, rhr, resp, hrvBaseline: hrvB!, rhrBaseline: rhrUsable, respBaseline: respUsable, sleepPerf, sleepCentre, skinTempDev });
     }
   }
@@ -443,16 +441,18 @@ export function scorePlanner(f: Fold, d: Day, sleep: SleepRow, tz: string) {
   return { row, plan, tonightNeed };
 }
 
-/** Tomorrow's Recovery forecast; needs 14 scored days. */
-export const forecastOf = (f: Fold, d: Day, rec: RecoveryRow, plan: SleepPlan, tonightNeed: number) =>
+/**
+ * Tomorrow's Recovery forecast; needs 14 scored days. Since version 38 it takes no plan: the sleep nudge comes from your
+ * recent nights' Sleep Performance, not the Sleep Planner's advice (audit R9).
+ */
+export const forecastOf = (f: Fold, d: Day, rec: RecoveryRow) =>
   rec.value != null && f.recoveries.length >= 14
     ? recoveryForecast({
         recentCharge: f.recoveries,
+        illnessHeld: rec.heldBaseline,
         todayLoad: todayLoad(d),
         typicalSession: priorTypicalSession(f),
-        plannedSleepHours: plan.needMin / 60,
-        needHours: tonightNeed,
-        needNights: f.nights.length,
+        sleepPerfs: f.sleepPerfs,
       })
     : null;
 

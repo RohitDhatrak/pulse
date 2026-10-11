@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { zShrinkK } from "./baselines";
 import { forCharge } from "./confidence";
 import { baselineVerdict, chargeDrivers, displayRounded, skinTempVerdict, type ChargeDriverVerdict } from "./drivers";
-import { logisticScore, recoveryFromStates } from "./recovery";
+import { logisticScore, recoveryFromStates, type RecoveryTerm } from "./recovery";
 import type { BaselineState, BaselineStatus } from "./types";
 
 const baseline = (mean: number, sigma: number, nValid = 14): BaselineState => ({
@@ -28,9 +28,11 @@ const row = (drivers: ReturnType<typeof chargeDrivers>, label: string) => driver
 describe("RecoveryDriversTest", () => {
   it("point rounding is nearest with half-ties away from zero", () => {
     const marginal = (hrv: number, rhr: number, hrvBaseline: BaselineState, rhrBaseline: BaselineState | null = null) => {
-      const full = recoveryFromStates({ hrv, rhr, hrvBaseline, rhrBaseline })!;
-      const neutral = recoveryFromStates({ hrv: hrvBaseline.baseline, rhr, hrvBaseline, rhrBaseline })!;
-      const r = row(chargeDrivers({ hrv, rhr, hrvBaseline, rhrBaseline }), "HEART_RATE_VARIABILITY");
+      // The noop half-tie inputs assume the plain average: the absent terms are left out on purpose (version 37).
+      const omit: RecoveryTerm[] = rhrBaseline ? ["resp", "sleep", "skin"] : ["rhr", "resp", "sleep", "skin"];
+      const full = recoveryFromStates({ hrv, rhr, hrvBaseline, rhrBaseline, omit })!;
+      const neutral = recoveryFromStates({ hrv: hrvBaseline.baseline, rhr, hrvBaseline, rhrBaseline, omit })!;
+      const r = row(chargeDrivers({ hrv, rhr, hrvBaseline, rhrBaseline, omit }), "HEART_RATE_VARIABILITY");
       return [full - neutral, r.deltaPoints] as const;
     };
     const neg = raw(30, 0.55);
@@ -62,10 +64,11 @@ describe("RecoveryDriversTest", () => {
   it("issue 51: a negative half-tie row (V8-exact tie, see above)", () => {
     const hrvBaseline = raw(30, 0.767);
     const hrv = 29.987696285650618;
-    const before = recoveryFromStates({ hrv, rhr: 60, hrvBaseline })!;
-    const neutral = recoveryFromStates({ hrv: 30, rhr: 60, hrvBaseline })!;
+    const omit: RecoveryTerm[] = ["rhr", "resp", "sleep", "skin"];
+    const before = recoveryFromStates({ hrv, rhr: 60, hrvBaseline, omit })!;
+    const neutral = recoveryFromStates({ hrv: 30, rhr: 60, hrvBaseline, omit })!;
     expect(before - neutral).toBe(-0.5);
-    expect(chargeDrivers({ hrv, rhr: 60, hrvBaseline })).toEqual([
+    expect(chargeDrivers({ hrv, rhr: 60, hrvBaseline, omit })).toEqual([
       {
         label: "HEART_RATE_VARIABILITY",
         deltaPoints: -1,

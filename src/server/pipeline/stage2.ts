@@ -90,7 +90,7 @@ export async function stage2(db: Db, data: Data, opts: PipelineOptions) {
     const trainingLoad = scoreTrainingLoad(f, d, recovery);
     const strainTarget = scoreStrainTarget(f, recovery);
     const planner = scorePlanner(f, d, sleep, tz);
-    recovery.forecast = forecastOf(f, d, recovery, planner.plan, planner.tonightNeed);
+    recovery.forecast = forecastOf(f, d, recovery);
     const stress = scoreStress(f, d, inputs);
     const energy = scoreEnergyBank(data, inputs, d, recovery, sleep, stress.minutes);
     pending.push({ day, stress: stress.series, energy: energy.curve });

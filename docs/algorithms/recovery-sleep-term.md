@@ -9,7 +9,8 @@ respiration and skin temperature (0.05 each). This page is about the sleep part.
 
 `recovery()` also accepts two more terms ported from noop, a recovery index (`recoveryIndexSlope`, weight 0.05) and
 activity balance (weight 0.05). The pipeline never passes them, so they never count. Missing terms renormalise, so
-the weights above are the ones in use.
+the weights above are the ones in use; since version 37 a night with a term missing is also scaled back to the full
+set's spread ([recovery-missing-inputs](recovery-missing-inputs.md)).
 
 ## Formula (scoring version 17)
 

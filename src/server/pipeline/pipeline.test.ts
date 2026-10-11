@@ -19,9 +19,8 @@ import { healthspanWornAwakeMin } from "./scores";
 import { energyStart } from "@/core/algorithms/energyBank";
 import { healthspanConfig } from "@/core/algorithms/healthspan";
 import { hardOrLateWorkout, typicalSession } from "@/core/scoring/load";
-import { logisticK, logisticScore, logisticZ0, sleepPerfScale, wHRV, wResp, wRHR, wSkinTemp, wSleep } from "@/core/scoring/recovery";
+import { logisticK, logisticScore, logisticZ0, missingInputScale, sleepPerfScale, wHRV, wResp, wRHR, wSkinTemp, wSleep, type RecoveryTerm } from "@/core/scoring/recovery";
 import { journalImpactConfig } from "@/core/algorithms/journalImpact";
-import { forecast as recoveryForecast } from "@/core/scoring/forecast";
 import { ledger, personalizedNeedHours, rest } from "@/core/scoring/sleep";
 import { mergeSamples } from "../samples";
 import { trimpToStrain } from "@/core/scoring/strain";
@@ -306,7 +305,7 @@ describe("scale contracts", () => {
 
 describe("forecast strain nudge on the seed (SCORING_VERSION 12)", () => {
   it("never raises the forecast, and is no less accurate than leaving the strain term out", () => {
-    type Fc = { charge: number; plannedSleepHours: number; needHours: number };
+    type Fc = { charge: number; baseline: number; phi: number; sleepAdj: number };
     const recs: number[] = [];
     let withTerm = 0;
     let withoutTerm = 0;
@@ -316,8 +315,8 @@ describe("forecast strain nudge on the seed (SCORING_VERSION 12)", () => {
       if (rec.value != null) recs.push(rec.value);
       const fc = rec.forecast;
       if (!fc) continue;
-      // The same forecast without the strain term (null typical session).
-      const plain = recoveryForecast({ recentCharge: recs, todayLoad: null, plannedSleepHours: fc.plannedSleepHours, needHours: fc.needHours })!;
+      // The same forecast without the strain term: level + φ̂ × (today − level) + the sleep nudge (version 38).
+      const plain = { charge: Math.round(Math.min(100, Math.max(0, fc.baseline + fc.phi * (rec.value! - fc.baseline) + fc.sleepAdj))) };
       expect(fc.charge).toBeLessThanOrEqual(plain.charge);
       const next = js<RecoveryRow>("recovery", allDays[i + 1]).value;
       if (next == null) continue;
@@ -763,24 +762,29 @@ describe("the Energy Bank counts last night's sleep once (SCORING_VERSION 20)", 
         continue;
       }
       expect(r.withoutSleep).not.toBeNull();
+      // Version 37: the shown score's composite is scaled by missingInputScale(its terms); the body-only one by the same
+      // for its terms with sleep left out on purpose (factor 1 when every body signal is there).
+      const present = r.terms.map((t) => (t === "skinTemp" ? "skin" : t)) as RecoveryTerm[];
+      const body = present.filter((t) => t !== "sleep");
+      const fShown = missingInputScale(present);
+      const fBody = missingInputScale(body, ["sleep"]);
+      const z = (logisticZ0 - Math.log(100 / r.value - 1) / logisticK) / fShown; // the plain weighted average
       if (!r.terms.includes("sleep")) {
-        expect(r.withoutSleep).toBe(r.value);
+        if (r.value > 0.5 && r.value < 99.5) expect(r.withoutSleep!).toBeCloseTo(logisticScore(z * fBody), 6);
         continue;
       }
-      // Rebuild: the shown score's composite z, minus the sleep term, renormalised over the remaining weights.
+      // Rebuild: the composite, minus the sleep term, renormalised over the remaining weights.
       const total = r.terms.reduce((a, t) => a + W[t], 0);
-      const z = logisticZ0 - Math.log(100 / r.value - 1) / logisticK;
       const zSleep = (r.inputs.sleepPerf! - r.inputs.sleepCentre!) / sleepPerfScale;
-      const expected = logisticScore((z * total - zSleep * wSleep) / (total - wSleep));
+      const zBody = (z * total - zSleep * wSleep) / (total - wSleep);
       if (r.value > 0.5 && r.value < 99.5) {
-        expect(r.withoutSleep!).toBeCloseTo(expected, 6);
+        expect(r.withoutSleep!).toBeCloseTo(logisticScore(zBody * fBody), 6);
         checked++;
       }
-      // The composite is a weighted average: the shown score sits above the body-only one exactly when the sleep term
-      // beat the other terms' average (not merely when sleep beat your usual night).
-      const zBody = (z * total - zSleep * wSleep) / (total - wSleep);
+      // The composite is a weighted average: with every input (both factors 1) the shown score sits above the body-only
+      // one exactly when the sleep term beat the other terms' average (not merely when sleep beat your usual night).
       const gap = r.value - r.withoutSleep!;
-      if (Math.abs(zSleep - zBody) > 1e-6 && r.value > 0.5 && r.value < 99.5) expect(Math.sign(gap)).toBe(Math.sign(zSleep - zBody));
+      if (fShown === 1 && fBody === 1 && Math.abs(zSleep - zBody) > 1e-6 && r.value > 0.5 && r.value < 99.5) expect(Math.sign(gap)).toBe(Math.sign(zSleep - zBody));
     }
     expect(checked).toBeGreaterThan(120);
   });

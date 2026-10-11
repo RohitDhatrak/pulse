@@ -377,7 +377,7 @@ export function scoreDay(P: Person, s: Scenario, dayIndex: number, history: (num
   const B = { hrvBaseline: { mean: 0, spread: 1 }, rhrBaseline: { mean: 0, spread: 1 }, respBaseline: { mean: 0, spread: 1 } };
   const eb = energyBank({
     start, wake: start + d.wake * 60, until: start + d.bed * 60,
-    recoveryWithoutSleep: recovery({ hrv: n.hz, rhr: -n.rz, resp: 0, ...B, sleepPerf: null, skinTempDev: 0 })!,
+    recoveryWithoutSleep: recovery({ hrv: n.hz, rhr: -n.rz, resp: 0, ...B, sleepPerf: null, skinTempDev: 0, omit: ["sleep"] })!,
     sleepPerformance: n.sp,
     load: minuteLoad(d.hrMin, restingHr, P.maxHr),
     stress: st.minutes,

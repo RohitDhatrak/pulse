@@ -99,7 +99,7 @@ flowchart TB
   - RHR and resp: `(m − x) / zSigma`, so a value **below** baseline scores positive.
   - Sleep: `(perf − your mean sleep performance over the prior 28 nights) / 0.12` since scoring version 17 (0.85 until 7 nights). Before, a fixed population centre of 0.85. See `docs/algorithms/recovery-sleep-term.md`.
   - Skin temperature: `−|dev| / 1.0 °C`, a symmetric penalty in raw °C, not a z.
-- **Composite**: weights HRV 0.55, RHR 0.20, sleep 0.15, resp 0.05, skin 0.05, recovery index 0.05, activity balance 0.05. Missing terms drop out and the remaining weights renormalise. In practice the five live terms sum to 1.0.
+- **Composite**: weights HRV 0.55, RHR 0.20, sleep 0.15, resp 0.05, skin 0.05, recovery index 0.05, activity balance 0.05. Missing terms drop out and the remaining weights renormalise. In practice the five live terms sum to 1.0. *Since scoring version 37* the renormalised composite is also scaled back to the full set's spread, so a fewer-input night isn't jumpier ([recovery-missing-inputs](../algorithms/recovery-missing-inputs.md)).
 - **Mapping**: `Charge = 100 / (1 + exp(−1.6 · (Z + 0.2)))`, clamped to 0–100. Z = 0 maps to 57.9. The slope at the centre is about 40 points per unit of composite z.
 - **Bands**: red < 34, yellow < 67, green ≥ 67 (the reference app's published bands).
 - **Gate**: tonight's HRV must exist, the HRV baseline must be usable (≥ 4 valid nights and not stale), and it must hold ≥ 7 accepted nights.

@@ -37,7 +37,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "How it is weighted",
         paragraphs: [
-          "Each input is measured in units of your usual night-to-night swing from baseline. Sleep moves one unit per 12\u00a0points away from your own average, skin temperature one unit per 1\u00a0°C. A missing input’s weight is shared among the rest.",
+          "Each input is measured in units of your usual night-to-night swing from baseline. Sleep moves one unit per 12\u00a0points away from your own average, skin temperature one unit per 1\u00a0°C. A missing input’s weight is shared among the rest, and because fewer signals mean less evidence, the score then leans a little toward the middle: a night with only HRV swings as much as one with every input, not more.",
         ],
         rows: [
           { term: "HRV", detail: "55%" },
@@ -567,18 +567,17 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "What goes in",
         rows: [
-          { term: "Recent Recovery", detail: "Your last 14\u00a0scores." },
+          { term: "Recent Recovery", detail: "Your scores over the last 60\u00a0days, and today’s." },
           { term: "Today’s Strain", detail: "So far, against your typical training session over the last 28\u00a0days. Only a day harder than that counts." },
-          { term: "Tonight’s sleep", detail: "Pulse assumes you sleep tonight’s Peak need." },
+          { term: "Tonight’s sleep", detail: "Pulse assumes tonight goes like your last 3\u00a0nights." },
         ],
       },
       {
         title: "How it is weighted",
-        paragraphs: ["The forecast starts from your 14-day average Recovery and adds three nudges:"],
+        paragraphs: ["The forecast starts from your usual Recovery (your 60-day average, drawn toward 58 while you have little history) and leans toward today’s score by how much your days usually carry over to the next, more while Pulse sees you may be getting ill. Then two nudges:"],
         rows: [
           { term: "Strain", detail: "3\u00a0points off for each Strain point today goes above your typical session, up to 12. A lighter day, or a day you have not trained yet, adds nothing." },
-          { term: "Sleep", detail: "Planned sleep 10% above your usual need adds 1.4\u00a0points, up to 3.5; less than your need takes points off." },
-          { term: "Trend", detail: "If Recovery has been climbing or falling, it eases back by the daily slope, up to 8\u00a0points." },
+          { term: "Sleep", detail: "What Recovery’s sleep part would add if tonight’s sleep scores like your last 3\u00a0nights against your usual: a run of poor nights takes points off, a run of good ones adds a little. Sleep debt and naps don’t change it." },
         ],
       },
       {
@@ -592,7 +591,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "The forecast starts after 14\u00a0nights of Recovery. Its uncertainty is the spread of your last 14\u00a0scores, at least ±8\u00a0points, so read it as a rough guide. It cannot know tonight’s alcohol, stress or illness, or whether you actually sleep the plan.",
+          "The forecast starts after 14\u00a0nights of Recovery. Its uncertainty is the spread of your last 14\u00a0scores, at least ±8\u00a0points, so read it as a rough guide. Most of each morning’s Recovery is that night’s own ups and downs, so even a good forecast is typically about 17\u00a0points off. It cannot know tonight’s alcohol, stress or illness, or how you will actually sleep.",
         ],
       },
     ],

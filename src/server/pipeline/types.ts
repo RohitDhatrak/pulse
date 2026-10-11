@@ -93,8 +93,14 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * 36: HRV's baseline spread floor is 5 % of your HRV, at least 1 ms (was 5 ms), and resting HR's 1 bpm (was 2), each
  * larger until 14 nights: low-HRV and steady people's Recovery, illness signal and Health Monitor ranges were muted.
  * Stress also skips sustained light movement below the exertion line and the heart rate easing off after it.
+ * 37: Recovery on a night with fewer inputs (no breathing, skin temperature, sleep or resting HR, or one not yet usable)
+ * is scaled back to the full set's spread, so it is as calm as a full night: HRV alone read 30 % red days against 20 %.
+ * 38: Tomorrow's Recovery forecast leans from your 60-day level (held toward 58) toward today by your own persistence,
+ * more while the illness hold runs, instead of the 14-day mean minus its slope; its sleep nudge is what Recovery's
+ * sleep term would add if tonight goes like your last 3 nights, not the Sleep Planner's advice (debt raised it, naps
+ * lowered it).
  */
-export const SCORING_VERSION = 36;
+export const SCORING_VERSION = 38;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */

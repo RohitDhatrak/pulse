@@ -45,6 +45,42 @@ export const satEnterZ = 0.5;
 export const satFullZ = 1.5;
 export const satMaxDampFraction = 0.5;
 
+/**
+ * Missing inputs (SCORING_VERSION 37). The composite averages its terms, and averaging partly independent signals cancels
+ * noise, so a night with fewer terms swung more: on healthy simulated nights HRV alone read 30 % red days against 20 %
+ * with every input, and a day-to-day swing of 29.5 against 22.6. The composite is now scaled by SD(full set) ÷ SD(terms
+ * present), capped at 1, so a fewer-input night is as calm as a full one and never more extreme. The spreads and
+ * correlations are each term's on healthy simulated nights (docs/algorithms/recovery-missing-inputs.md).
+ */
+export const termSd = { hrv: 1, rhr: 1, resp: 0.6, sleep: 0.4, skin: 0.15 } as const;
+export type RecoveryTerm = keyof typeof termSd;
+/** Pairwise correlations of the terms on healthy nights; pairs not listed are 0. */
+export const termCorr: Partial<Record<`${RecoveryTerm}:${RecoveryTerm}`, number>> = { "hrv:rhr": 0.35, "hrv:sleep": 0.2, "rhr:sleep": 0.15 };
+const termWeight: Record<RecoveryTerm, number> = { hrv: wHRV, rhr: wRHR, resp: wResp, sleep: wSleep, skin: wSkinTemp };
+const RECOVERY_TERMS = Object.keys(termSd) as RecoveryTerm[];
+const corr = (a: RecoveryTerm, b: RecoveryTerm) => (a === b ? 1 : (termCorr[`${a}:${b}`] ?? termCorr[`${b}:${a}`] ?? 0));
+
+/** The SD of the weighted average of `terms` on healthy nights: √(wᵀ C w) ÷ Σw. */
+export function compositeSd(terms: RecoveryTerm[]): number {
+  let v = 0;
+  let sw = 0;
+  for (const a of terms) {
+    sw += termWeight[a];
+    for (const b of terms) v += termWeight[a] * termWeight[b] * termSd[a] * termSd[b] * corr(a, b);
+  }
+  return sw > 0 ? Math.sqrt(v) / sw : 0;
+}
+
+/**
+ * The factor a composite of `present` terms is scaled by: SD(full) ÷ SD(present), at most 1. The full set is every
+ * term but those the caller leaves out on purpose (`omit`: the Energy Bank's start leaves sleep out).
+ */
+export function missingInputScale(present: RecoveryTerm[], omit: RecoveryTerm[] = []): number {
+  const sp = compositeSd(present);
+  if (sp <= 0) return 1;
+  return Math.min(1, compositeSd(RECOVERY_TERMS.filter((t) => !omit.includes(t))) / sp);
+}
+
 /** Accepted (nValid) prior nights before a daily-aggregate HRV source is scored. */
 export const minBaselineNights = 7;
 
@@ -111,21 +147,43 @@ export interface RecoveryArgs {
   effortBaseline?: DriverBaseline | null;
   /** Yesterday's Effort, 0–100. */
   priorDayEffort?: number | null;
+  /**
+   * Terms left out on purpose, so their absence isn't scaled for (version 37): the Energy Bank's start passes
+   * `["sleep"]`, since it adds sleep itself.
+   */
+  omit?: RecoveryTerm[];
 }
 
-/** Charge in [0, 100], or null on cold start or a missing HRV baseline. Missing terms drop and renormalize. */
+/**
+ * Charge in [0, 100], or null on cold start or a missing HRV baseline. Missing terms drop and renormalize, and since
+ * version 37 the composite is scaled back to the full set's spread (missingInputScale).
+ */
 export function recovery(a: RecoveryArgs): number | null {
   if (!(a.hrvBaselineUsable ?? true)) return null;
   const hrvB = a.hrvBaseline;
   if (!hrvB) return null;
 
   const terms: [z: number, w: number][] = [];
+  const present: RecoveryTerm[] = ["hrv"];
   // Raw HRV z: the saturation easing is not applied here (instrument-first).
   terms.push([zScore(a.hrv, hrvB.mean, hrvB.spread), wHRV]);
-  if (a.rhrBaseline && a.rhr != null) terms.push([zScore(a.rhrBaseline.mean, a.rhr, a.rhrBaseline.spread), wRHR]);
-  if (a.resp != null && a.respBaseline) terms.push([zScore(a.respBaseline.mean, a.resp, a.respBaseline.spread), wResp]);
-  if (a.sleepPerf != null) terms.push([(a.sleepPerf - (a.sleepCentre ?? sleepPerfCenter)) / sleepPerfScale, wSleep]);
-  if (a.skinTempDev != null) terms.push([-Math.abs(a.skinTempDev) / skinTempDevScale, wSkinTemp]);
+  if (a.rhrBaseline && a.rhr != null) {
+    terms.push([zScore(a.rhrBaseline.mean, a.rhr, a.rhrBaseline.spread), wRHR]);
+    present.push("rhr");
+  }
+  if (a.resp != null && a.respBaseline) {
+    terms.push([zScore(a.respBaseline.mean, a.resp, a.respBaseline.spread), wResp]);
+    present.push("resp");
+  }
+  if (a.sleepPerf != null) {
+    terms.push([(a.sleepPerf - (a.sleepCentre ?? sleepPerfCenter)) / sleepPerfScale, wSleep]);
+    present.push("sleep");
+  }
+  if (a.skinTempDev != null) {
+    terms.push([-Math.abs(a.skinTempDev) / skinTempDevScale, wSkinTemp]);
+    present.push("skin");
+  }
+  // noop's two extra terms (never passed by the pipeline) are averaged in but left out of the missing-input scale.
   if (a.recoveryIndexSlope != null) terms.push([-a.recoveryIndexSlope / recoveryIndexScaleBpmPerHr, wRecoveryIndex]);
   if (a.priorDayEffort != null && a.effortBaseline) {
     terms.push([zScore(a.effortBaseline.mean, a.priorDayEffort, a.effortBaseline.spread), wActivityBalance]);
@@ -134,7 +192,7 @@ export function recovery(a: RecoveryArgs): number | null {
   const totalWeight = terms.reduce((s, [, w]) => s + w, 0);
   if (totalWeight <= 0.0) return null;
   const z = terms.reduce((s, [t, w]) => s + t * w, 0) / totalWeight;
-  return logisticScore(z);
+  return logisticScore(z * missingInputScale(present, a.omit));
 }
 
 export function logisticScore(compositeZ: number): number {

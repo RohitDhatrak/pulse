@@ -42,10 +42,12 @@ flowchart TB
 
 1. **Start** (*scoring version 20*). E₀ = clamp(0.6 · R_body + 0.4 · sleep performance, 0, 100) at the minute of wake,
    which is the main sleep's end (`energyStart`).
-   - **R_body** is today's Recovery computed without its own sleep term: `recovery()` with no `sleepPerf`. The
-     remaining terms (HRV, resting HR, breathing, skin temperature) renormalise, as for any night with a missing
-     input. The pipeline stores it as `recovery.withoutSleep`.
-   - On a night without sleep data it equals Recovery.
+   - **R_body** is today's Recovery computed without its own sleep term: `recovery()` with no `sleepPerf` and
+     `omit: ["sleep"]`. The remaining terms (HRV, resting HR, breathing, skin temperature) renormalise, and sleep is
+     left out on purpose, so with every body signal there is no missing-input scaling (*version 37*;
+     [recovery-missing-inputs](recovery-missing-inputs.md)). The pipeline stores it as `recovery.withoutSleep`.
+   - On a night without sleep data it is the shown Recovery's body terms, scaled against the four body terms only
+     (before version 37 it equalled Recovery).
    - Before version 20, E₀ used the shown Recovery, so last night's sleep counted twice (see "Why version 20").
 2. **Each minute** *m* from wake until `until`:
    - **Inside a nap:** E += k₄. Nothing else applies. A nap is the whole session, so awake minutes in bed recharge too, and there is no cap on a nap's length.

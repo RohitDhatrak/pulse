@@ -15,6 +15,9 @@
 // Re-recorded for SCORING_VERSION 36 (spread floors that scale with the person; stress skips light movement's cool-down):
 // only recovery moved, by 1.08 points on average (at most 5.1, mean change −0.01; 52 / 93 / 25 green, yellow and red
 // days, from 53 / 93 / 24); strain and sleep are byte-identical.
+// Re-recorded for SCORING_VERSION 37 (a fewer-input night scaled back to the full set's spread): only recovery moved,
+// on the 16 nights without skin temperature (0.74 points on average, at most 1.4); the 154 full-input nights, strain
+// and sleep are byte-identical, and the bands stay 52 / 93 / 25.
 import { expect, it } from "vitest";
 import { rows, sql } from "../db";
 import { seeded, USER } from "../testing";

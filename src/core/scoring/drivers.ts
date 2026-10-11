@@ -2,7 +2,7 @@
 // the score minus the score with that term held at its baseline (z = 0): a marginal effect, so the rows
 // are not additive far from baseline.
 import { isUsable } from "./baselines";
-import { driverBaseline, parasympatheticSaturation, recoveryFromStates, sleepPerfCenter, zScore } from "./recovery";
+import { driverBaseline, parasympatheticSaturation, recoveryFromStates, sleepPerfCenter, zScore, type RecoveryTerm } from "./recovery";
 import type { BaselineState } from "./types";
 
 export type ChargeDriverLabel =
@@ -57,6 +57,8 @@ export interface ChargeDriverArgs {
   /** Your usual sleep performance (personalSleepCentre); absent → the fixed sleepPerfCenter. */
   sleepCentre?: number | null;
   skinTempDev?: number | null;
+  /** Terms left out on purpose (version 37), passed through to the score; see RecoveryArgs.omit. */
+  omit?: RecoveryTerm[];
 }
 
 /** Driver rows sorted biggest mover first; empty when the score itself cannot compute. */
