@@ -19,9 +19,10 @@ flowchart TB
   SA --> NEED
   DB[Sleep debt this morning] --> DR[+ debt × 0.2]
   DR --> NEED
-  NAP[Today's nap minutes] --> NEED
+  NAP[Today's nap minutes] --> NC["Offsets only the strain and debt extras (version 42)"]
+  NC --> NEED
   N14[Last 14 main sleeps] --> WK{Tomorrow a weekend day?}
-  WK --> WAKE[Median wake time of nights of that kind]
+  WK --> WAKE["Median wake time on the 24 h clock, of nights of that kind like last night's (version 41)"]
   N14 --> EFF[Median efficiency]
   EFF --> PE[Planning efficiency = max of it and 0.85]
   AGE[Age] --> CAP[Time-in-bed cap: 12 / 11 / 10 / 9 h]
@@ -37,12 +38,17 @@ flowchart TB
 
 1. **Need tonight**, in minutes:
 
-   need = baseline + strain + debt − nap, floored at 0, where:
-   - **baseline** = `personalizedNeedHours` × 60: the median of the last 28 nights' sleep, floored at 7 h asleep for adults (9 h under 18) and capped at 9.5 h; 7.5 h before 7 nights (scoring version 15; it was the upper quartile with an 8 h floor; see [sleep-need](sleep-need.md)).
+   need = baseline + max(0, strain + debt − nap), where:
+   - **baseline** = `personalizedNeedHours` × 60: the median of the last 28 nights' sleep, floored at the lower bound of your age's guideline range (7 h asleep for adults, 8 h for 13–17, 9 h to 12, sliding between them by exact age since version 42) and capped at 9.5 h; 7.5 h before 7 nights (scoring version 15; it was the upper quartile with an 8 h floor; see [sleep-need](sleep-need.md)).
    - **strain** = min(30, 0.05 h × 60 × `strainPointsAbove(todayLoad, typicalSession)`): 3 minutes per Day Strain point that today's load (TRIMP so far) goes above your **typical training session** (`typicalSession`, the median of the training days in the 28 days before today, as Strain Target uses). Both are converted to the 0–21 scale through `trimpToStrain` and `toStrainScale`. A rest day, a routine session or a day not yet past your session adds 0; a light day never lowers the need. *Before scoring version 12* it compared with the 28-day **average** Strain, rest days included (see § Why the strain term changed).
-   - **debt** = 0.2 × this morning's sleep debt in minutes (`ledger(...).magnitudeMin`). Since version 25 a night spent awake counts as 0 h in that debt ([sleep-need](sleep-need.md) § A night spent awake), so the evening after an all-nighter plans more sleep. Most of the repayment comes from the ledger, not this term: each night the ledger keeps only 0.55 of what is still owed (`DEBT_CARRY`), so the next debt is 0.55 × 0.8 = 0.44 × this one when you sleep the 100% plan. A 105-minute debt goes 105 → 46 → 20 → 9 (under the 10-minute band), cleared in about **3 nights**; sleeping exactly your baseline need clears it in about 4 (0.55 per night).
-   - **nap** = today's minutes asleep in naps.
-2. **Typical wake time.** Over the last 14 main sleeps, take the median local wake time of the nights whose wake day is the same kind as tomorrow: weekday (Monday to Friday) or weekend (Saturday and Sunday). If none of the 14 is of that kind, use all 14.
+   - **debt** = 0.2 × this morning's sleep debt in minutes (`ledger(...).magnitudeMin`). Since version 25 a night spent awake counts as 0 h in that debt ([sleep-need](sleep-need.md) § A night spent awake), so the evening after an all-nighter plans more sleep. Since version 40 the ledger carries 60 % of what is owed and adds each night's whole shortfall (beyond a 30-minute tolerance) ([sleep-need](sleep-need.md) § Why version 40), so debts read larger and fade more slowly. Sleeping the 100 % plan repays the 20 % on top of the 60 % carry: the next debt is 0.6 × debt − 0.2 × debt = 0.4 × this one. A 105-minute debt goes 105 → 42 → 17 → 7 (under the 10-minute band), about **3 nights**; sleeping exactly your baseline need clears it at 0.6 a night, in about 5. The time-in-bed cap still applies (in the 8 → 7 h simulation it never bound).
+   - **nap** = today's minutes asleep in naps (`napAsleepMin`). Since version 42 it offsets only the strain and debt terms, never the baseline: `parts.napMin` = min(nap, strain + debt), the minutes it actually took off. Before, it came off minute for minute, down to 0 (§ Why version 42).
+2. **Typical wake time** (*version 41*). Over the last 14 main sleeps:
+   - keep the nights whose wake day is the same kind as tomorrow: weekday (Monday to Friday) or weekend (Saturday and Sunday); if none is, all 14;
+   - of those, keep the ones whose wake time is within **2 h** (on the 24 h clock) of **last night's**, if at least 2 are; else within 2 h of the latest night of tomorrow's kind, if at least 2 are; else all of them;
+   - take their **circular median** (`circularMedianMin`): the times are cut at the point opposite their circular mean and unrolled from there, so 23:40 and 00:20 give 00:00. Times that don't straddle that point, such as anyone waking in the morning, give exactly the plain median. Times spread right round the clock (resultant under 0.2) keep the plain median.
+   - `wakeNights` says how many nights it came from.
+   Before version 41 it was the plain median of tomorrow's kind of nights.
 3. **Efficiency** = the median of the same nights' efficiency (asleep ÷ in bed). With none, use 0.9.
    - *Since version 24* bedtimes use the **planning efficiency** = max(efficiency, 0.85)
      (`minPlanningEfficiency`). `efficiencyFloored` is true when the median was under 0.85.
@@ -62,27 +68,30 @@ flowchart TB
 
 | Input | Unit | Notes |
 |---|---|---|
-| `baselineNeedHours` | hours | `personalizedNeedHours(nightlyHours, age)`, the same need the debt ledger used. |
+| `baselineNeedHours` | hours | `personalizedNeedHours(nightlyHours, ageYears)` (held, version 40), the same need the debt ledger used. The pipeline passes the exact age, `d.age.years` (version 42). |
 | `todayLoad` | TRIMP, or null | Today's load so far (`strain.trimp`; 0 when worn with too little heart rate). null skips the strain term. |
 | `typicalSession` | TRIMP, or null | `typicalSession` over the 28 days before today. null skips the strain term. |
 | `debtMin` | minutes | This morning's debt magnitude. |
-| `napMin` | minutes | Asleep minutes in today's non-main sessions. |
+| `napMin` | minutes | Asleep minutes in today's non-main sessions. Offsets only the strain and debt terms (version 42). |
 | `nights` | `{ day, wakeMin, efficiency }[]`, oldest first | Recent main sleeps. `day` is the wake day, `yyyy-MM-dd`. `wakeMin` is the **local** wake time in minutes after midnight; U10 converts from unix seconds in the user's time zone. The last 14 are used. |
 | `wakeDay` | `yyyy-MM-dd` | Tomorrow, the morning being planned for. |
 | `age` | whole years, or null | Sets the time-in-bed cap (*version 24*). The pipeline passes `d.age.whole`. |
 
 ## Outputs
 
-`{ needMin, parts, wakeMin, weekend, efficiency, planningEfficiency, efficiencyFloored, inBedCapMin, capped, plans }`.
-Each plan is `{ share, sleepMin, inBedMin, bedtimeMin }`. The Recovery forecast reads only `needMin`, which the bounds
-don't touch.
+`{ needMin, parts, wakeMin, wakeNights, weekend, efficiency, planningEfficiency, efficiencyFloored, inBedCapMin, capped, plans }`. `wakeMin` is 0–1439.
+`parts` is `{ baselineMin, strainMin, debtMin, napMin, napAsleepMin }`: needMin = baselineMin + strainMin + debtMin −
+napMin, where napMin is the nap minutes taken off and napAsleepMin the minutes napped (version 42).
+Each plan is `{ share, sleepMin, inBedMin, bedtimeMin }`. Since version 38 the Recovery forecast reads none of it.
 
 **On screen** (`planVM`, `src/server/queries/common.ts`):
 - each goal's caption is the share of need it delivers, `round(sleepMin ÷ needMin × 100)` %: its share uncapped, less
   when capped;
 - when `efficiencyFloored`: "You've been awake in bed for a good part of recent nights. These bedtimes plan for 85% of
   your time in bed asleep. Going to bed earlier usually adds time awake, not sleep.";
-- when `capped`: "Time in bed is capped at {cap} h for your age."
+- when `capped`: "Time in bed is capped at {cap} h for your age.";
+- when a nap was longer than the extras (`napAsleepMin > napMin`, version 42): "Today's {1 h 50 min} nap covers your
+  extra need, not your night's sleep."
 
 
 ## Constants
@@ -95,6 +104,7 @@ All of these live in `sleepPlannerConfig`.
 | `maxStrainMin` | 30 | Pulse v12: bounds an extreme day |
 | `debtRepayShare` | 0.2 | *tunable* (spec) |
 | `windowNights` | 14 | spec |
+| `similarWakeMin` / `minSimilarNights` | 120 min / 2 | version 41; *tunable* (90 and 180 min measured the same; 3 nights left the rotation's weekends on the other schedule) |
 | `defaultEfficiency` | 0.9 | *tunable*: a typical healthy-adult efficiency, used only before any night has one |
 | `shares` | 1, 0.85, 0.7 | spec |
 | `minPlanningEfficiency` | 0.85 | version 24; cited: the ≥ 85 % efficiency target of CBT-I sleep restriction (Edinger 2021) |
@@ -104,7 +114,8 @@ All of these live in `sleepPlannerConfig`.
 ## Edge rules
 
 - **No nights** give `wakeMin: null` and no plans. The need is still returned.
-- **A big nap** can bring the need to 0, which gives every bedtime at the wake time.
+- **A big nap** brings the need down to the baseline and no further (version 42; before, it could reach 0, which put
+  every bedtime at the wake time).
 - **One glitchy night** (efficiency 0.05 while it is the only night) used to give 150 h in bed. It is now planned at
   0.85: 8.8 h for a 7.5 h need (a test).
 - **The cap is on time in bed, not on need.** A large debt still raises `needMin` (and the forecast); the cap only
@@ -123,6 +134,65 @@ All of these live in `sleepPlannerConfig`.
    | 70 % | 343 min | 381.1 min | **00:39** |
 
 3. **A weekend morning** (a test). With weekend wakes at 09:00 and weekday wakes at 07:00, the same need gives bedtimes exactly 2 h later on a Friday night than on a Wednesday.
+
+## Why version 42: a nap took tonight's need below the baseline
+
+**The problem.** The need was baseline + strain + debt − nap, floored only at 0, so every nap minute came off the
+night. The owner napped 1 h 50 min on 2026-10-11 and the Tonight card asked for **5 h 40 min** of a 7.5 h need: at a 07:00 wake
+and 90 % efficiency, a 100 % bedtime of 00:42. Three reasons that is wrong:
+- the nap is already counted: the debt ledger credits yesterday's naps to last night (`creditedSleepMin`), so taking it
+  off tonight too counts it twice;
+- a nap is mostly light sleep. It eases sleep pressure but doesn't replace the night's deep and REM sleep, or its timing
+  on the body clock, and sleep guidance treats naps as a top-up, not a substitute;
+- planning a short night after every nap teaches short nights.
+
+**The change.** need = baseline + max(0, strain + debt − nap). A nap pays for the extra sleep a hard day or a debt
+asks for, and nothing below your baseline (itself at least 7 h for adults). `parts.napMin` is the minutes it took off;
+the new `parts.napAsleepMin` is the minutes napped, and the card says when the nap was longer than the extras.
+Worked example 2 (a 20-minute nap against 30 minutes of extras) is unchanged.
+
+**Measured.**
+- The owner's day: 340 → **450 min** (the baseline); at a 07:00 wake and 90 % efficiency the 100 % bedtime moves from
+  00:42 to 22:40.
+- The seed: 21 of 174 plans have a nap; 19 now plan the baseline, the other 2 a nap the extras absorbed. Before, those
+  nights planned as little as 380 of a 446-minute need (a week of 1-hour naps in August). No score moved: since
+  version 38 nothing reads the plan.
+
+The debt ledger is unchanged, so napping still lowers the next morning's debt, and with it the 20 % repayment.
+
+## Why version 41: the typical wake time failed around midnight and for shift workers (audit S6)
+
+**The problem.** A plain median of clock times treats the clock as a line, and the 14-night window mixes schedules.
+- Wakes alternating 23:40 and 00:20 (1,420 and 20 minutes) gave a median of **12:00**, so the 100 % bedtime was 03:40,
+  12 h off. An evening-shift sleeper waking at 00:10 ± 30 min was over 2 h off on 26 % of plans.
+- A weekly day/night rotation (06:40 one week, 15:30 the next) always had 7 + 7 nights in the window, so the median
+  fell between them: **265 min** off, over 2 h on every plan.
+
+**The change:** the circular median, of nights like last night's, within tomorrow's kind of day (§ Formula, step 2).
+
+**Why this order.** "Like last night" first, then the weekday/weekend split, got weekend lie-ins wrong: after a
+Sunday 09:30 wake, Monday's plan drew on weekend nights (over 2 h off on 22.5 % of plans). The weekday/weekend split
+first, anchored only on the latest night of tomorrow's kind, put a rotation's Saturday plan on the previous weekend's
+schedule (28.6 % over 2 h). Anchoring on last night within tomorrow's kind, then on the latest night of that kind,
+gets both right.
+
+**How it was tested** (`sleepPlanner.sim.test.ts`). 40 people × 56 plans per pattern, each plan's wake time against the morning that followed, with v40's rule kept for comparison:
+
+| Pattern | v40 median error / plans over 2 h off | v41 |
+|---|---|---|
+| Weekly rotation 06:40 ↔ 15:30 | 265 min / 100 % | **24 min / 14.4 %** (the first night after each switch) |
+| Evening shift, 00:10 ± 30 | 45 min / 26 % | **21 min / 0.1 %** |
+| Alternating 23:40 / 00:20 | 700 min / 100 % | **20 min / 0 %** |
+| Weekday 07:00, weekend lie-in to 09:30 | 14 min / 0 % | 15 min / 0 % |
+| Steady 07:00 | 18 min / 0 % | 18 min / 0 % |
+
+**Still not handled:** a rotation that changes every night or two (2 early, 2 late). Tomorrow then differs from last
+night half the time, which no rule based on recent nights can predict: 86 → 57 % of plans over 2 h off, but the median
+error rises from 402 to 500 min. Fixing it would need the user's roster.
+
+**On the seed** (174 plans): 7 wake times moved, by at most 17.5 min, where a night over 2 h from the others was left
+out of the median; the other 167 are identical. **On the owner's data** the first plan (Oct 10, wake 08:45) is
+unchanged.
 
 ## Why version 24: time in bed was unbounded
 

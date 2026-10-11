@@ -5,7 +5,9 @@
 // Since SCORING_VERSION 24 time in bed is bounded: it was need ÷ your median efficiency, so the worst sleepers got
 // the earliest bedtimes (12.6 h in bed at 60 % efficiency, an 18:26 bedtime). Efficiency is planned at no less than
 // 85 %, the efficiency CBT-I aims for (more time in bed mostly adds time awake), and time in bed is capped by age at
-// the National Sleep Foundation's "may be appropriate" upper bound.
+// the National Sleep Foundation's "may be appropriate" upper bound. Since SCORING_VERSION 42 a nap covers only the
+// extras (strain and debt repayment), never the baseline need: a 1 h 50 min nap took a 7.5 h need to 5 h 40 min, though
+// a nap is mostly light sleep, doesn't replace the night, and is already credited to the debt ledger.
 import { strainPointsAbove } from "../scoring/load";
 
 export const sleepPlannerConfig = {
@@ -17,6 +19,14 @@ export const sleepPlannerConfig = {
   debtRepayShare: 0.2,
   /** Nights behind the typical wake time and efficiency (spec). */
   windowNights: 14,
+  /**
+   * Version 41 (audit S6): the wake time comes from nights within this many minutes (on the 24 h clock) of last night's,
+   * when at least `minSimilarNights` of tomorrow's kind are; else of the latest night of tomorrow's kind. A weekly
+   * day/night rotation always had 7 + 7 nights in the window, so the median fell between the two schedules (265 min
+   * off); it now follows the current one (24 min, wrong only on the first night after a switch) (*tunable*).
+   */
+  similarWakeMin: 120,
+  minSimilarNights: 2,
   /** Efficiency when no night has one (*tunable*). */
   defaultEfficiency: 0.9,
   /** Shares of need to plan bedtimes for (spec). */
@@ -64,7 +74,7 @@ export interface SleepPlannerInput {
   typicalSession: number | null;
   /** ledger(...).magnitudeMin as of this morning. */
   debtMin: number;
-  /** Minutes asleep in today's naps. */
+  /** Minutes asleep in today's naps (they offset only the strain and debt extras, version 42). */
   napMin: number;
   /** Recent main sleeps, oldest first; the last `windowNights` are used. */
   nights: WakeNight[];
@@ -87,9 +97,15 @@ export interface BedtimePlan {
 
 export interface SleepPlan {
   needMin: number;
-  parts: { baselineMin: number; strainMin: number; debtMin: number; napMin: number };
-  /** Typical wake time for `wakeDay`, minutes after local midnight; null without nights. */
+  /**
+   * The need's terms: needMin = baselineMin + strainMin + debtMin − napMin. napMin is the minutes the naps took off,
+   * at most strainMin + debtMin (version 42); napAsleepMin is the minutes napped.
+   */
+  parts: { baselineMin: number; strainMin: number; debtMin: number; napMin: number; napAsleepMin: number };
+  /** Typical wake time for `wakeDay`, minutes after local midnight (0–1439); null without nights. */
   wakeMin: number | null;
+  /** How many recent nights the wake time came from (version 41). */
+  wakeNights: number;
   weekend: boolean;
   /** Median efficiency of the recent nights (or the default). */
   efficiency: number;
@@ -108,6 +124,33 @@ export interface SleepPlan {
 /** Saturday or Sunday. */
 export const isWeekendDay = (day: string): boolean => [0, 6].includes(new Date(`${day}T00:00:00Z`).getUTCDay());
 
+/** Minutes apart on the 24 h clock, 0–720. */
+const clockDistanceMin = (a: number, b: number): number => {
+  const d = Math.abs(a - b) % 1440;
+  return Math.min(d, 1440 - d);
+};
+
+/**
+ * The median of clock times (minutes after midnight) on the 24 h circle (version 41; was a plain median, so 23:40 and
+ * 00:20 gave 12:00). The times are cut at the point opposite their circular mean and unrolled from there, so times that
+ * don't straddle that point (anyone waking in the morning) give exactly the plain median. Times spread right round the
+ * clock (resultant under 0.2) have no meaningful centre, so they keep the plain median. Returns 0–1439.
+ */
+export function circularMedianMin(mins: number[]): number | null {
+  if (mins.length === 0) return null;
+  let c = 0;
+  let sn = 0;
+  for (const m of mins) {
+    c += Math.cos((2 * Math.PI * m) / 1440);
+    sn += Math.sin((2 * Math.PI * m) / 1440);
+  }
+  if (Math.hypot(c, sn) / mins.length < 0.2) return median(mins);
+  const mean = (((Math.atan2(sn, c) / (2 * Math.PI)) * 1440) % 1440 + 1440) % 1440;
+  const cut = (mean + 720) % 1440;
+  const unrolled = mins.map((v) => (mean < 720 ? (v >= cut ? v - 1440 : v) : v < cut ? v + 1440 : v));
+  return ((median(unrolled)! % 1440) + 1440) % 1440;
+}
+
 function median(xs: number[]): number | null {
   if (xs.length === 0) return null;
   const s = [...xs].sort((a, b) => a - b);
@@ -119,19 +162,27 @@ export function sleepPlan(input: SleepPlannerInput): SleepPlan {
   const c = sleepPlannerConfig;
   // One-sided: a rest day, a routine session or a day not yet past your usual session adds nothing.
   const strainAbove = strainPointsAbove(input.todayLoad, input.typicalSession);
-  const parts = {
-    baselineMin: input.baselineNeedHours * 60,
-    strainMin: Math.min(c.maxStrainMin, strainAbove * c.hoursPerStrainPoint * 60),
-    debtMin: Math.max(0, input.debtMin) * c.debtRepayShare,
-    napMin: Math.max(0, input.napMin),
-  };
-  const needMin = Math.max(0, parts.baselineMin + parts.strainMin + parts.debtMin - parts.napMin);
+  const baselineMin = input.baselineNeedHours * 60;
+  const strainMin = Math.min(c.maxStrainMin, strainAbove * c.hoursPerStrainPoint * 60);
+  const debtMin = Math.max(0, input.debtMin) * c.debtRepayShare;
+  const napAsleepMin = Math.max(0, input.napMin);
+  // A nap covers tonight's extras, not the baseline need (version 42).
+  const napMin = Math.min(napAsleepMin, strainMin + debtMin);
+  const parts = { baselineMin, strainMin, debtMin, napMin, napAsleepMin };
+  const needMin = Math.max(0, baselineMin + strainMin + debtMin - napMin);
 
   const recent = input.nights.slice(-c.windowNights);
   const weekend = isWeekendDay(input.wakeDay);
   const sameKind = recent.filter((n) => isWeekendDay(n.day) === weekend);
   // No night of tomorrow's kind yet: fall back to every recent night.
-  const wakeMin = median((sameKind.length ? sameKind : recent).map((n) => n.wakeMin));
+  const kind = sameKind.length ? sameKind : recent;
+  // Version 41: nights like last night (a shift worker's current schedule), else like the latest night of tomorrow's
+  // kind (so a Monday plan after a Sunday lie-in still comes from weekdays), else all of them.
+  const near = (anchor: number | undefined) => (anchor == null ? [] : kind.filter((n) => clockDistanceMin(n.wakeMin, anchor) <= c.similarWakeMin));
+  const likeLast = near(recent.at(-1)?.wakeMin);
+  const likeKind = near(kind.at(-1)?.wakeMin);
+  const pool = likeLast.length >= c.minSimilarNights ? likeLast : likeKind.length >= c.minSimilarNights ? likeKind : kind;
+  const wakeMin = circularMedianMin(pool.map((n) => n.wakeMin));
   const efficiency = median(recent.flatMap((n) => (n.efficiency != null && n.efficiency > 0 ? [n.efficiency] : []))) ?? c.defaultEfficiency;
 
   const planningEfficiency = Math.max(efficiency, c.minPlanningEfficiency);
@@ -147,5 +198,5 @@ export function sleepPlan(input: SleepPlannerInput): SleepPlan {
           const sleepMin = capped ? inBedMin * planningEfficiency : share * needMin;
           return { share, sleepMin, inBedMin, bedtimeMin: wakeMin - inBedMin };
         });
-  return { needMin, parts, wakeMin, weekend, efficiency, planningEfficiency, efficiencyFloored: efficiency < c.minPlanningEfficiency, inBedCapMin, capped, plans };
+  return { needMin, parts, wakeMin, wakeNights: pool.length, weekend, efficiency, planningEfficiency, efficiencyFloored: efficiency < c.minPlanningEfficiency, inBedCapMin, capped, plans };
 }

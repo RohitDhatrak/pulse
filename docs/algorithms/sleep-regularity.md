@@ -9,7 +9,7 @@ The Sleep Regularity Index (SRI) measures how likely you are to be in the same s
 ```mermaid
 flowchart LR
   S[Sleep sessions, main and naps] --> M[Minute grid over 7 noon-to-noon days: asleep or awake]
-  W[Minutes with HR per day] --> C{At least 720?}
+  W["Each day's night: a main sleep, or spent awake? (version 44)"] --> C{Known?}
   C -->|yes| P
   C -->|no| X[Day skipped]
   M --> P[Pairs t, t + 24 h where both days are covered]
@@ -43,7 +43,33 @@ This is Phillips et al.'s definition, SRI = −100 + 200 / (M(N − 1)) · Σⱼ
 
 **Naps count as sleep.** SRI is defined over every epoch of the 24 h day, and a nap is sleep at an irregular time, which is what SRI measures. UK Biobank's accelerometer SRI cannot tell naps apart either, so including them keeps us comparable to the SRI that Healthspan's curve was fitted on. The cost is that one nap lowers SRI by about (2 × nap minutes) ÷ (6 × 1,440) × 200, which is 2.8 points for a 1 h nap in a 7-day window.
 
-**What counts as covered.** The pipeline (`sleepRegularity` in `src/server/pipeline/scores.ts`) marks a noon-to-noon day covered when it has at least 720 minutes with heart rate, that is the band was worn for at least half of it: the afternoon of one calendar day (`hrMinutesPm`) plus the morning of the next (`hrMinutesAm`). A covered day with no sleep at all counts every minute as awake. A day with a few stray heart-rate minutes is skipped, so a mostly-unworn day cannot read as a night awake.
+**What counts as covered** (*since version 44*, `nightCovered`). The pipeline (`sleepRegularity` in `src/server/pipeline/scores.ts`) marks a noon-to-noon day covered when we know how its night went:
+- a **main sleep** overlaps it (a day sleeper's main sleep crossing noon covers both days it touches); or
+- its night was **spent awake**: no session, and the band showed you up and about from midnight to 06:00 (`awakeAllNight`, version 25; [sleep-need](sleep-need.md) § A night spent awake).
+
+Naps alone don't cover a day, since the night is still unknown. Daytime wear doesn't matter: unworn daytime minutes count as awake, as they would anyway (a nap taken without the band is missed). *Before version 44* a day was covered at 720+ minutes with heart rate (`hrMinutesPm` + the next `hrMinutesAm`), see § Why version 44.
+
+## Why version 44: coverage asked about the day, not the night (audit S9)
+
+**The problem.** A day was covered at 720+ minutes with heart rate, half of the noon-to-noon day.
+- Someone who wears the band only in bed (about 22:30–07:00, around 510 minutes) was never covered, so their SRI was always null and Sleep Performance used the neutral 0.5 for consistency.
+- That made a missing SRI score better than an irregular one (the audit: 88.2 against 83.2 at SRI 0), so an irregular sleeper gained by taking the band off in the day.
+- A day worn 12 h whose night the band missed read as a whole night awake: 100 → **77.8** for a week.
+
+**The change.** Coverage asks whether we know how the night went: a main sleep overlaps the day, or the night was spent awake (§ What counts as covered).
+
+**Measured** (`sleepRegularity.coverage.sim.test.ts`, 40 people per case, 60 nights):
+
+| Case | Version 43 | Version 44 |
+|---|---|---|
+| Regular sleeper (bedtime ± 20 min), band only in bed | no SRI, ever | SRI every day, mean 92: identical to wearing it all day |
+| Irregular sleeper (bedtime ± 3.5 h) | band off by day: Sleep Performance 87.4 against 86.4 worn (consistency 0.5 against an SRI of 40) | the same either way |
+| A night the band missed, schedule otherwise identical | 77.8 for the week it is in | 100 |
+| A night spent awake | counted | counted, unchanged |
+
+In the pipeline (`pipeline.test.ts`), the seed with the band off from 30 minutes after waking to 30 minutes before sleep for 8 days (under 720 minutes a day) keeps every SRI and Sleep Performance exactly; version 43 dropped those days and the SRI moved. The seed itself (a main sleep every night, worn all day) and the owner's data didn't move.
+
+**Still open.** When the SRI is null (the first days, or after a wear gap), consistency is still the neutral 0.5 (fix 2 of the audit, a usual SRI, was not taken). It can no longer be reached by taking the band off by day, only by not wearing it at night, which loses the night's score too.
 
 ## Constants
 
@@ -64,7 +90,7 @@ All of these are tests, except example 4, which was computed with the code.
 
 1. **Identical schedule.** Asleep 23:00–07:00 every night gives **SRI = 100**, shown as 100, and 1.0 for `rest()`.
 2. **12 h apart on alternate days.** Even days are asleep 00:00–08:00 and odd days 12:00–20:00. Each consecutive pair agrees only when both are awake, 08:00–12:00 and 20:00–24:00, which is 8 h of 24. P = 1/3, so **SRI = −33.3**, shown as 0.
-3. **A missing day.** The same schedule as example 1, with no data on day 4. With day 4 marked uncovered, its two pairs are skipped and **SRI = 100**. Marked covered, day 4 counts as awake all night, two of six pairs disagree for 8 h, and SRI = −100 + 200 × (1 − 960 / 8,640) = **77.8**.
+3. **A missing day.** The same schedule as example 1, with no data on day 4. With day 4 marked uncovered, its two pairs are skipped and **SRI = 100**. Marked covered, day 4 counts as awake all night, two of six pairs disagree for 8 h, and SRI = −100 + 200 × (1 − 960 / 8,640) = **77.8**. Since version 44 a night without a main sleep that wasn't spent awake is uncovered, so a night the band missed gives 100; before, a day worn 12 h gave 77.8.
 4. **Weekend shift.** Weekdays 23:00–07:00, Friday and Saturday nights 01:00–09:00, Monday to Sunday. The result depends on where the days are cut:
    - **Midnight to midnight: SRI = 93.1.** The schedule changes across three pairs (Thursday → Friday 60 min, Friday → Saturday 180 min, Saturday → Sunday 60 min), so −100 + 200 × (1 − 300 / 8,640) = 93.1.
    - **Noon to noon, as the pipeline cuts them: SRI = 88.9.** Each night now sits whole inside one day, so there are two transitions of 240 min (into and out of the late nights): −100 + 200 × (1 − 480 / 8,640) = 88.9.

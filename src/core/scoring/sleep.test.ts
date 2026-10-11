@@ -16,6 +16,7 @@ import {
   restFromTotals,
   restorativeTargetShare,
   restorativeScore,
+  restorativeTargets,
   round1,
   sleepConsistency,
   minUsualRestorativeNights,
@@ -24,6 +25,10 @@ import {
   wDuration,
   wEfficiency,
   wRestorative,
+  DEBT_CARRY,
+  DEBT_TOLERANCE_MIN,
+  heldNeedHours,
+  needFallPerNightMin,
 } from "./sleep";
 
 const H = 3600;
@@ -121,9 +126,10 @@ describe("RestNeedTest", () => {
 });
 
 describe("plan scenarios: need (SCORING_VERSION 15: median, adult floor 7 h, 7.5 h before 7 nights)", () => {
-  it("under 7 nights is 7.5 h (9 under 18); the clamp holds at 7–9.5 h", () => {
+  it("under 7 nights is 7.5 h (8 at 13–17, version 42); the clamp holds at 7–9.5 h", () => {
     expect(personalizedNeedHours([9.5, 9.5, 9.5, 9.5, 9.5, 9.5], 30)).toBe(7.5);
-    expect(personalizedNeedHours([9.5, 9.5, 9.5], 16)).toBe(9);
+    expect(personalizedNeedHours([9.5, 9.5, 9.5], 16)).toBe(8);
+    expect(personalizedNeedHours([9.5, 9.5, 9.5], 10)).toBe(9);
     expect(personalizedNeedHours(Array(7).fill(6), 30)).toBe(7);
     expect(personalizedNeedHours(Array(7).fill(12), 30)).toBe(maxNeedHours);
     // Median of 7..13 (step 1) is 10.
@@ -133,8 +139,23 @@ describe("plan scenarios: need (SCORING_VERSION 15: median, adult floor 7 h, 7.5
     expect(personalizedNeedHours([8.0, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6], 30)).toBeCloseTo(8.3, 12);
   });
 
-  it("the floor is 7 h asleep for adults (and an unknown age), 9 h under 18", () => {
-    expect([17, 18, 30, 70, null, 0].map(populationNeedFloorHours)).toEqual([9, 7, 7, 7, 7, 7]);
+  it("the floor is each guideline range's lower bound: 9 h to 12, 8 h at 13–17, 7 h from 19 (and an unknown age)", () => {
+    expect([10, 12, 13, 16, 17, 19, 30, 70, null, 0].map(populationNeedFloorHours)).toEqual([9, 9, 8, 8, 8, 7, 7, 7, 7, 7]);
+  });
+
+  it("version 42 (audit S7): it slides by exact age, with no step on a birthday (it was 9 h to 7 h at 18)", () => {
+    expect(populationNeedFloorHours(12.5)).toBeCloseTo(8.5, 12);
+    expect(populationNeedFloorHours(18)).toBeCloseTo(7.5, 12);
+    expect(populationNeedFloorHours(17.5)).toBeCloseTo(7.75, 12);
+    let worst = 0;
+    for (let d = 11 * 365; d < 21 * 365; d++) worst = Math.max(worst, Math.abs(populationNeedFloorHours((d + 1) / 365) - populationNeedFloorHours(d / 365)));
+    expect(worst).toBeLessThan(0.01); // 1 h a year at most: 0.16 min a day, under the held need's 0.5 min fall
+    // Between the adult and child lower bounds, and under 18 never above the old 9 h.
+    for (let a = 1; a <= 80; a += 0.25) {
+      expect(populationNeedFloorHours(a)).toBeLessThanOrEqual(9);
+      expect(populationNeedFloorHours(a)).toBeGreaterThanOrEqual(7);
+    }
+    expect(populationNeedFloorHours(16.9)).toBe(8);
   });
 
   it("the median interpolates on an even count, and ignores nights of 0 or less", () => {
@@ -179,7 +200,9 @@ describe("sleepers over 45 nights (SCORING_VERSION 15 design check)", () => {
       expect(n.debt).toBe(0);
       expect(n.durationScore).toBe(100);
     }
-    expect(late(simulate(7, 0, () => null, v14Need))).toBeCloseTo(73.3, 0);
+    // Version 14's 8 h need on this 7 h sleeper: 60 min short every night, 150 min under the version 40 ledger (73.3 under
+    // version 39's, which wrote 45 % of each night off).
+    expect(late(simulate(7, 0, () => null, v14Need))).toBeCloseTo(149.9, 0);
   });
 
   it("healthy 7, 7.5 and 8 h sleepers who vary ±0.5 h carry at most 15 min of debt", () => {
@@ -212,6 +235,34 @@ describe("sleepers over 45 nights (SCORING_VERSION 15 design check)", () => {
   });
 });
 
+describe("the held need: rises at once, falls slowly (SCORING_VERSION 40, audit S4)", () => {
+  it("falls at most needFallPerNightMin a night, rises at once, and starts from the raw need", () => {
+    expect(needFallPerNightMin).toBe(0.5);
+    expect(heldNeedHours(7.5, null)).toBe(7.5);
+    expect(heldNeedHours(8.2, 8)).toBe(8.2); // up at once
+    expect(heldNeedHours(7, 8)).toBeCloseTo(8 - 0.5 / 60, 12); // down by half a minute
+    expect(heldNeedHours(7, 8, 30)).toBeCloseTo(7.75, 12); // 15 minutes a month
+    expect(heldNeedHours(7, 7.004, 1)).toBe(7); // never below the raw need
+  });
+
+  it("an 8 h sleeper cut to 7 h keeps an 8 h-ish need for months (version 39: 7 h within about 15 nights)", () => {
+    let held: number | null = null;
+    const nights: number[] = Array(28).fill(8);
+    const needs: number[] = [];
+    for (let n = 0; n < 140; n++) {
+      nights.push(7);
+      held = heldNeedHours(personalizedNeedHours(nights.slice(-28), 35), held);
+      needs.push(held);
+    }
+    expect(personalizedNeedHours(nights.slice(-28), 35)).toBe(7);
+    // The median itself stays 8 h for the first 13 short nights; from the 14th the held need falls half a minute a night.
+    expect(needs[12]).toBe(8);
+    expect(needs[55]).toBeCloseTo(8 - (43 * 0.5) / 60, 9); // week 8: 7.64 h
+    expect(needs[131]).toBeGreaterThan(7);
+    expect(needs[132]).toBeCloseTo(7, 9); // absorbed after about four and a half months
+  });
+});
+
 describe("SleepDebtTest", () => {
   it("on target nets to zero", () => {
     const l = ledger([["2026-06-01", 480], ["2026-06-02", 480], ["2026-06-03", 480]], 8);
@@ -219,35 +270,37 @@ describe("SleepDebtTest", () => {
     expect(l.balanceMin).toBeCloseTo(0, EPS);
   });
 
-  it("debt carries at 55% and a surplus does not bank", () => {
+  it("debt carries at 60 % plus each night's whole shortfall, and a surplus repays but does not bank (version 40)", () => {
+    // 120 short → 120; 60 over → 0.6 × 120 − 60 = 12; 60 short → 0.6 × 12 + 60 = 67.2 (version 39: 33).
     const l = ledger([["2026-06-01", 360], ["2026-06-02", 540], ["2026-06-03", 420]], 8);
-    expect(l.balanceMin).toBeCloseTo(-33, EPS);
+    expect(l.balanceMin).toBeCloseTo(-67.2, EPS);
     expect(l.isDebt).toBe(true);
-    expect(l.magnitudeMin).toBeCloseTo(33, EPS);
+    expect(l.magnitudeMin).toBeCloseTo(67.2, EPS);
     expect(l.nights.map((n) => n.deltaMin)).toEqual([-120, 60, -60]);
   });
 
   it("skips no-data (null) nights", () => {
     const l = ledger([["2026-06-01", 480], ["2026-06-02", null], ["2026-06-04", 420]], 8);
     expect(l.nightCount).toBe(2);
-    expect(l.balanceMin).toBeCloseTo(-33, EPS);
+    expect(l.balanceMin).toBeCloseTo(-60, EPS);
     expect(l.nights.map((n) => n.day)).toEqual(["2026-06-01", "2026-06-04"]);
   });
 
   it("counts a 0 as a night without sleep (SCORING_VERSION 25; noop skipped it like null)", () => {
-    // 480 → 0; 0 → 0.55 × 480 = 264; 420 → 0.55 × (480 + 264 − 420) = 178.2.
+    // 480 → 0; 0 → 480; 420 → 0.6 × 480 + 60 = 348 (version 39: 264, then 178.2).
     const l = ledger([["2026-06-01", 480], ["2026-06-02", null], ["2026-06-03", 0], ["2026-06-04", 420]], 8);
     expect(l.nightCount).toBe(3);
     expect(l.nights.map((n) => n.day)).toEqual(["2026-06-01", "2026-06-03", "2026-06-04"]);
-    expect(l.balanceMin).toBeCloseTo(-178.2, EPS);
-    expect(debtSeries([["2026-06-01", 480], ["2026-06-03", 0]], 8).at(-1)).toEqual(["2026-06-03", 264]);
+    expect(l.balanceMin).toBeCloseTo(-348, EPS);
+    expect(debtSeries([["2026-06-01", 480], ["2026-06-03", 0]], 8).at(-1)).toEqual(["2026-06-03", 480]);
   });
 
   it("the window cap keeps the most recent 14", () => {
     const series = Array.from({ length: 16 }, (_, i) => [`2026-06-${String(i + 1).padStart(2, "0")}`, 420] as [string, number]);
     const l = ledger(series, 8, 14);
     expect(l.nightCount).toBe(14);
-    expect(l.balanceMin).toBeCloseTo(-73.3, EPS);
+    // 60 short every night: 60 × (1 − 0.6¹⁴) / 0.4 = 149.9, about 2.5 nights' shortfall (version 39: 73.3, 1.2 nights').
+    expect(l.balanceMin).toBeCloseTo(-149.9, EPS);
     expect(l.nights[0].day).toBe("2026-06-03");
     expect(l.nights.at(-1)!.day).toBe("2026-06-16");
   });
@@ -258,22 +311,32 @@ describe("SleepDebtTest", () => {
     expect(ledger([["2026-06-01", null]]).nightCount).toBe(0);
     const l = ledger([["2026-06-01", 420]]);
     expect(l.needMin).toBe(defaultSleepNeedHours * 60);
-    expect(l.balanceMin).toBeCloseTo(-0.55 * 30, EPS); // 450 − 420 = 30 short
-    expect(ledger([["2026-06-01", 420]], 8).balanceMin).toBeCloseTo(-33, EPS); // noop: 0.55 × 60
+    expect(l.balanceMin).toBeCloseTo(0, EPS); // 450 − 420 = 30 short: within the 30-minute tolerance (version 40)
+    expect(ledger([["2026-06-01", 420]], 8).balanceMin).toBeCloseTo(-60, EPS); // 60 short counts in full (noop: 0.55 × 60)
   });
 
   it("nap minutes add repayment credit", () => {
     const credited = creditedSleepMin(392, 48)!;
     expect(credited).toBe(440);
-    expect(ledger([["2026-06-01", credited]], 8).balanceMin).toBeCloseTo(-22, EPS);
+    expect(ledger([["2026-06-01", credited]], 8).balanceMin).toBeCloseTo(-40, EPS);
     expect(creditedSleepMin(null, 48)).toBeNull();
     expect(creditedSleepMin(0, 48)).toBeNull();
     expect(creditedSleepMin(392, -10)).toBe(392);
   });
 
   it("debt under ten minutes clears; exactly ten remains", () => {
-    expect(ledger([["2026-06-01", 480 - 9.9 / 0.55]], 8).balanceMin).toBeCloseTo(0, EPS);
-    expect(ledger([["2026-06-01", 480 - 10 / 0.55]], 8).balanceMin).toBeCloseTo(-10, EPS);
+    // 40 short → 40; then 0.6 × 40 = 24 less a surplus of 14.1 → 9.9 clears, of 14 → exactly 10 remains.
+    expect(ledger([["2026-06-01", 440], ["2026-06-02", 494.1]], 8).balanceMin).toBeCloseTo(0, EPS);
+    expect(ledger([["2026-06-01", 440], ["2026-06-02", 494]], 8).balanceMin).toBeCloseTo(-10, EPS);
+  });
+
+  it("a night within 30 minutes of need adds nothing; beyond that, the whole shortfall counts (version 40)", () => {
+    expect(DEBT_TOLERANCE_MIN).toBe(30);
+    expect(ledger([["2026-06-01", 450]], 8).balanceMin).toBeCloseTo(0, EPS); // 30 short
+    expect(ledger([["2026-06-01", 449]], 8).balanceMin).toBeCloseTo(-31, EPS); // 31 short, all of it
+    // A within-tolerance night still lets the carried debt fade: 60 → 0.6 × 60 = 36.
+    expect(ledger([["2026-06-01", 420], ["2026-06-02", 460]], 8).balanceMin).toBeCloseTo(-36, EPS);
+    expect(DEBT_CARRY).toBe(0.6);
   });
 
   it("meeting need including the current debt clears it", () => {
@@ -285,12 +348,12 @@ describe("SleepDebtTest", () => {
   it("imported debt is verbatim but does not seed the local fallback", () => {
     const values = debtSeries([["2026-06-01", 420], ["2026-06-02", 480]], 8, new Map([["2026-06-01", 61.25]]));
     expect(values[0][1]).toBe(61.25);
-    expect(round1(values[1][1])).toBeCloseTo(18.2, EPS);
+    expect(round1(values[1][1])).toBeCloseTo(36, EPS); // 60, then 0.6 × 60 + 0
   });
 
   it("debtSeries rounds like the ledger", () => {
     const series: [string, number][] = [["2026-06-01", 420], ["2026-06-02", 410]];
-    expect(debtSeries(series, 8).at(-1)![1]).toBeCloseTo(56.7, EPS);
+    expect(debtSeries(series, 8).at(-1)![1]).toBeCloseTo(106, EPS); // 60, then 0.6 × 60 + 70
     expect(debtSeries(series, 8).at(-1)![1]).toBe(ledger(series, 8).magnitudeMin);
   });
 
@@ -371,8 +434,8 @@ describe("a night spent awake (SCORING_VERSION 25)", () => {
 
   it("debt is now monotonic in sleep: an all-nighter costs more than a 1 h night (version 24: it cost nothing)", () => {
     const after = (slept: number | null) => ledger([["2026-06-01", 450], ["2026-06-02", slept]], 7.5).magnitudeMin;
-    expect(after(60)).toBeCloseTo(214.5, EPS);
-    expect(after(0)).toBeCloseTo(247.5, EPS);
+    expect(after(60)).toBeCloseTo(390, EPS); // version 40: the whole 390-minute shortfall (version 39: 214.5)
+    expect(after(0)).toBeCloseTo(450, EPS);
     expect(after(null)).toBe(0);
     const curve = Array.from({ length: 9 }, (_, h) => after(h * 60));
     for (let h = 1; h < curve.length; h++) expect(curve[h]).toBeLessThanOrEqual(curve[h - 1]);
@@ -410,5 +473,49 @@ describe("a night without stages (SCORING_VERSION 31)", () => {
   it("the usual is the median of the last 28 staged nights, from 5 of them", () => {
     expect(usualRestorativeNights).toBe(28);
     expect(minUsualRestorativeNights).toBe(5);
+  });
+});
+
+describe("restorative targets by age (SCORING_VERSION 43, audit S8)", () => {
+  /** Version 42's component: 50 % deep + REM and 13 % deep at every age. */
+  const v42 = (deep: number, rem: number, asleep: number) =>
+    Math.min(100, ((deep + rem) / asleep / 0.5) * 100) * (0.5 + 0.5 * Math.min(1, Math.max(0, deep / asleep / 0.13)));
+
+  it("13 % deep and 50 % deep + REM to 40 (and an unknown age), sliding to 9.1 % and 42 % at 60, flat after", () => {
+    for (const a of [null, 0, 12, 18, 35, 40]) expect(restorativeTargets(a)).toEqual({ deep: 0.13, restorative: restorativeTargetShare });
+    expect(restorativeTargets(50).deep).toBeCloseTo(0.1105, 12);
+    expect(restorativeTargets(50).restorative).toBeCloseTo(0.46, 12);
+    for (const a of [60, 70, 95]) {
+      expect(restorativeTargets(a).deep).toBeCloseTo(0.091, 12);
+      expect(restorativeTargets(a).restorative).toBeCloseTo(0.42, 12);
+    }
+  });
+
+  it("changes smoothly with age: no step on a birthday", () => {
+    let worst = 0;
+    for (let d = 35 * 365; d < 65 * 365; d++) worst = Math.max(worst, Math.abs(restorativeTargets((d + 1) / 365).deep - restorativeTargets(d / 365).deep));
+    expect(worst).toBeLessThan(1e-5);
+  });
+
+  it("under 40 the component is version 42's to the bit", () => {
+    for (const [deep, rem] of [[1, 1.6], [0.2, 1], [0.6, 1.2], [1.5, 2.5], [0, 0]]) {
+      for (const age of [null, 22, 36, 40]) expect(restorativeScore(deep * H, rem * H, 7 * H, age)).toBe(v42(deep * H, rem * H, 7 * H));
+    }
+  });
+
+  it("the audit's 70-year-old (7 % deep, 19 % REM): 40 → 55 restorative, about 3 points of Sleep Performance", () => {
+    const deep = 0.07 * 7.2 * H, rem = 0.19 * 7.2 * H, asleep = 7.2 * H;
+    expect(v42(deep, rem, asleep)).toBeCloseTo(40, 0);
+    expect(restorativeScore(deep, rem, asleep, 70)).toBeCloseTo(((0.26 / 0.42) * 100) * (0.5 + 0.5 * (0.07 / 0.091)), 9); // 54.8
+    const now = rest(asleep, 0.85, deep, rem, 7.2, 0.8, { ageYears: 70 })!;
+    const before = rest(asleep, 0.85, deep, rem, 7.2, 0.8)!;
+    expect(now - before).toBeCloseTo(0.2 * (restorativeScore(deep, rem, asleep, 70) - v42(deep, rem, asleep)), 1);
+  });
+
+  it("little deep sleep still costs up to half at any age: 2 % deep at 70 keeps a deep factor of 0.61", () => {
+    const deep = 0.02 * 7 * H, rem = 0.2 * 7 * H;
+    const factor = restorativeScore(deep, rem, 7 * H, 70) / Math.min(100, (0.22 / 0.42) * 100);
+    expect(factor).toBeLessThanOrEqual(0.62);
+    expect(restorativeScore(deep, rem, 7 * H, 70)).toBeLessThan(35);
   });
 });

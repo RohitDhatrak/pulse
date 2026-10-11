@@ -38,6 +38,16 @@ export function sleepRegularityIndex(
   return pairs === 0 ? null : -100 + (200 * same) / pairs;
 }
 
+/**
+ * Whether a noon-to-noon period is covered (SCORING_VERSION 44, audit S9): we know how its night went, because a main
+ * sleep overlaps it or the band showed the night spent awake (`awakeAllNight`, version 25). Naps alone don't cover it.
+ * It was at least 720 minutes with heart rate: night-only wearers (about 510) never had an SRI, and a day worn 12 h
+ * whose night the band missed read as a whole night awake.
+ */
+export function nightCovered(periodStart: number, periodEnd: number, mainSessions: { start: number; end: number }[], awakeAllNight: boolean): boolean {
+  return awakeAllNight || mainSessions.some((s) => s.start < periodEnd && s.end > periodStart);
+}
+
 /** The 0–100 display value: max(0, SRI). */
 export const sriDisplay = (sri: number): number => Math.max(0, sri);
 

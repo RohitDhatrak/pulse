@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sleepRegularityIndex, sriConsistency, sriDisplay } from "./sleepRegularity";
+import { nightCovered, sleepRegularityIndex, sriConsistency, sriDisplay } from "./sleepRegularity";
 
 const H = 3600;
 const DAY = 24 * H;
@@ -63,5 +63,24 @@ describe("display helpers", () => {
     expect(sriDisplay(85)).toBe(85);
     expect(sriConsistency(85)).toBe(0.85);
     expect(sriConsistency(null)).toBeNull();
+  });
+});
+
+describe("nightCovered (SCORING_VERSION 44, audit S9)", () => {
+  // The period from noon on day 0 to noon on day 1.
+  const from = ws + 12 * H;
+  const to = ws + DAY + 12 * H;
+  it("a main sleep overlapping the period covers it, however little the band was worn by day", () => {
+    expect(nightCovered(from, to, [at(0, 22.5, 31)], false)).toBe(true);
+    // A day sleeper's main sleep crossing noon covers both periods it touches.
+    expect(nightCovered(from, to, [at(1, 8, 15)], false)).toBe(true);
+    expect(nightCovered(to, to + DAY, [at(1, 8, 15)], false)).toBe(true);
+  });
+  it("a night spent awake covers it; nothing, or a main sleep outside it, does not", () => {
+    expect(nightCovered(from, to, [], true)).toBe(true);
+    expect(nightCovered(from, to, [], false)).toBe(false);
+    expect(nightCovered(from, to, [at(2, 0, 8)], false)).toBe(false);
+    // Touching at the boundary is not overlapping.
+    expect(nightCovered(from, to, [{ start: to, end: to + 8 * H }], false)).toBe(false);
   });
 });

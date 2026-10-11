@@ -8,7 +8,7 @@ import { chargeDrivers, type ChargeDriver } from "@/core/scoring/drivers";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
 import { evaluateWithTrainingLoad, type ReadinessDay } from "@/core/scoring/readiness";
 import { gatedRecovery, minBaselineNights, personalSleepCentre } from "@/core/scoring/recovery";
-import { allNighterConfig, awakeAllNight, creditedSleepMin, hypnogramMetrics, ledger, minNeedNights, minUsualRestorativeNights, personalizedNeedHours, rest, restorativeScore, usualRestorativeNights } from "@/core/scoring/sleep";
+import { allNighterConfig, awakeAllNight, creditedSleepMin, hypnogramMetrics, heldNeedHours, ledger, minNeedNights, minUsualRestorativeNights, personalizedNeedHours, rest, restorativeScore, usualRestorativeNights } from "@/core/scoring/sleep";
 import { percentile, toStrainScale } from "@/core/scoring/strain";
 import { foldableStillMedian, foldDaytimeBaseline } from "@/core/scoring/stressBase";
 import type { BaselineState } from "@/core/scoring/types";
@@ -19,7 +19,7 @@ import { healthspan, healthspanConfig, STRENGTH_TYPES, type HealthspanDay } from
 import type { OutcomeDay } from "@/core/algorithms/journalImpact";
 import type { ReportDay } from "@/core/algorithms/reports";
 import { sleepPlan } from "@/core/algorithms/sleepPlanner";
-import { sleepRegularityIndex, sriConsistency, sriDisplay } from "@/core/algorithms/sleepRegularity";
+import { nightCovered, sleepRegularityIndex, sriConsistency, sriDisplay } from "@/core/algorithms/sleepRegularity";
 import { strainTarget } from "@/core/algorithms/strainTarget";
 import { hardOrLateWorkout, typicalSession } from "@/core/scoring/load";
 import { stress } from "@/core/algorithms/stress";
@@ -70,6 +70,10 @@ export const newFold = () => ({
   respB: null as BaselineState | null,
   skinB: null as BaselineState | null,
   nights: [] as { day: string; hours: number }[],
+  /** Tonight's sleep need as last set by the planner (version 40): it rises at once and falls slowly (heldNeedHours). */
+  need: null as number | null,
+  /** Wake days whose night was spent awake (version 25's awakeAllNight): they cover their SRI period (version 44). */
+  awakeDays: new Set<string>(),
   ledgerSeries: [] as [string, number | null][],
   readinessRows: [] as (ReadinessDay & RestingPair)[],
   monitorRows: [] as (HealthMonitorDay & RestingPair)[],
@@ -109,7 +113,8 @@ export function dayOf(data: Data, inputs: Inputs, day: string, opts: PipelineOpt
     naps: (data.sessionsByDay.get(day) ?? [])
       .filter((s) => s !== mainSession && !s.isMain)
       .map((s) => ({ id: s.id, start: s.startTs, end: s.endTs, asleepMin: s.asleepMin ?? 0 })),
-    // noop truncates to whole years for sleep need; healthspan and fitness take the fraction.
+    // Whole years for the planner's in-bed cap; the sleep need floor (version 42), healthspan and fitness
+    // take the fraction.
     age: { whole: wholeYears(opts.profile.birthDate, day), years: fractionalYears(opts.profile.birthDate, day) },
   };
 }
@@ -167,8 +172,12 @@ function nightOf(main: Session, segments: Segment[] | undefined, awakenings: num
 export function scoreSleep(data: Data, inputs: Inputs, f: Fold, d: Day, tz: string): SleepRow {
   const { day, main, naps, mainSession } = d;
   const recentNights = f.nights.slice(-28).map((n) => n.hours);
-  const needHours = personalizedNeedHours(recentNights, d.age.whole);
-  const sri = sleepRegularity(data, inputs.cached, day, tz);
+  // This morning's need is the one last night's plan used (version 40); before any plan, the median of earlier nights.
+  const needHours = f.need ?? personalizedNeedHours(recentNights, d.age.years);
+  // Before the SRI: tonight's period is covered by a night spent awake too (version 44).
+  const awake = !mainSession && wasAwakeAllNight(data, f, d);
+  if (awake) f.awakeDays.add(day);
+  const sri = sleepRegularity(data, f, day, tz);
   const consistency = sriConsistency(sri);
   // A night without stages takes your usual restorative component, the median of recent staged nights (version 31);
   // scoring deep and REM as 0 cost 9–16 points.
@@ -177,12 +186,11 @@ export function scoreSleep(data: Data, inputs: Inputs, f: Fold, d: Day, tz: stri
   const usualRestorative = recentRestorative.length >= minUsualRestorativeNights ? percentile(recentRestorative, 50) : null;
   const performance =
     main && main.asleepMin > 0
-      ? rest(main.asleepMin * 60, main.efficiency, staged ? main.deepMin! * 60 : null, staged ? main.remMin! * 60 : null, needHours, consistency, { usualRestorative })
+      ? rest(main.asleepMin * 60, main.efficiency, staged ? main.deepMin! * 60 : null, staged ? main.remMin! * 60 : null, needHours, consistency, { usualRestorative, ageYears: d.age.years })
       : null;
-  if (main && staged && main.asleepMin > 0) f.restoratives.push(restorativeScore(main.deepMin! * 60, main.remMin! * 60, main.asleepMin * 60));
+  if (main && staged && main.asleepMin > 0) f.restoratives.push(restorativeScore(main.deepMin! * 60, main.remMin! * 60, main.asleepMin * 60, d.age.years));
   const restorative: SleepRow["restorative"] = performance == null ? null : staged ? "measured" : usualRestorative != null ? "usual" : "omitted";
   const yesterdayNaps = (data.sessionsByDay.get(addDays(day, -1)) ?? []).filter((s) => !s.isMain);
-  const awake = !mainSession && wasAwakeAllNight(data, f, d);
   const creditedMin = creditedSleepMin(main?.asleepMin ?? null, yesterdayNaps.reduce((a, s) => a + (s.asleepMin ?? 0), 0), { awakeAllNight: awake });
   f.ledgerSeries.push([day, creditedMin]);
   const debtMin = ledger(f.ledgerSeries, needHours).magnitudeMin;
@@ -228,19 +236,21 @@ function wasAwakeAllNight(data: Data, f: Fold, d: Day): boolean {
 }
 
 /** SRI over the 7 nights ending on D: noon-to-noon periods, so tonight's sleep never counts toward today. */
-function sleepRegularity(data: Data, cached: Map<string, Cached>, day: string, tz: string): number | null {
+function sleepRegularity(data: Data, f: Fold, day: string, tz: string): number | null {
   const noon = (d: string) => localMidnight(d, tz) + 12 * 3600;
   const windowStart = noon(addDays(day, -7));
   const sessions = [];
   for (let k = -7; k <= 0; k++) {
     for (const s of data.sessionsByDay.get(addDays(day, k)) ?? []) sessions.push({ start: s.startTs, end: s.endTs });
   }
-  // A period is covered when the band was worn for at least half of it.
-  const covered = Array.from({ length: 7 }, (_, k) => {
-    const pm = cached.get(addDays(day, k - 7))?.s1.hrMinutesPm ?? 0;
-    const am = cached.get(addDays(day, k - 6))?.s1.hrMinutesAm ?? 0;
-    return pm + am >= 720;
-  });
+  // A period is covered when we know how its night went: a main sleep overlaps it, or its night (wake day D − 6 + k)
+  // was spent awake (version 44; it was 720+ minutes with heart rate, which night-only wearers never reach).
+  const mains: { start: number; end: number }[] = [];
+  for (let k = -7; k <= 1; k++) {
+    const m = data.mainOf.get(addDays(day, k));
+    if (m) mains.push({ start: m.startTs, end: m.endTs });
+  }
+  const covered = Array.from({ length: 7 }, (_, k) => nightCovered(noon(addDays(day, k - 7)), noon(addDays(day, k - 6)), mains, f.awakeDays.has(addDays(day, k - 6))));
   return sleepRegularityIndex(sessions, windowStart, covered);
 }
 
@@ -249,19 +259,23 @@ function sleepRegularity(data: Data, cached: Map<string, Cached>, day: string, t
 /**
  * The night's resting HR and the baseline to compare it with. Fitbit's non-REM heart rate (about 6 bpm under Google's
  * daily resting HR on the owner's nights) has its own baseline and is used once that baseline is trusted (14 nights),
- * or as soon as it is usable when Google's has no usable baseline either. Otherwise Google's daily value (else Pulse's
- * session estimate) against the resting-HR baseline, as before. One value, one baseline: the two series never mix.
+ * or as soon as it is usable when Google's has no usable baseline either. Otherwise Google's daily value against the
+ * resting-HR baseline. One value, one baseline: the two series never mix.
+ * Version 39 (audit R10): Pulse's session estimate (the lowest 5 minutes of sleep, 8.6 ± 1.7 bpm under Google's value
+ * on the owner's nights) no longer stands in for a missing Google value. Such a night uses the sleeping HR if its
+ * baseline is usable, else no resting-HR term (Recovery's missing-input scale keeps it calm).
  */
-export function restingPair(f: Pick<Fold, "rhrB" | "sleepHrB">, d: Pick<Day, "dm" | "cache">) {
+export function restingPair(f: Pick<Fold, "rhrB" | "sleepHrB">, d: Pick<Day, "dm">) {
   const sleepHr = d.dm?.nonRemHrBpm ?? null;
-  const dailyRhr = d.dm?.rhrBpm ?? d.cache.sessionRhr;
+  const dailyRhr = d.dm?.rhrBpm ?? null;
   const sB = f.sleepHrB;
+  const sleepUsable = sleepHr != null && !!sB && isUsable(sB);
   const dailyUsable = !!f.rhrB && isUsable(f.rhrB);
-  if (sleepHr != null && sB && isUsable(sB) && (isTrusted(sB) || !dailyUsable)) {
+  if (sleepUsable && (isTrusted(sB!) || !dailyUsable || dailyRhr == null)) {
     return { rhr: sleepHr, baseline: sB, source: "sleep" as RestingSource, sleepHr, dailyRhr };
   }
-  const source: RestingSource | null = d.dm?.rhrBpm != null ? "daily" : d.cache.sessionRhr != null ? "session" : null;
-  return { rhr: dailyRhr, baseline: f.rhrB, source, sleepHr, dailyRhr };
+  if (dailyRhr != null) return { rhr: dailyRhr, baseline: f.rhrB, source: "daily" as RestingSource, sleepHr, dailyRhr };
+  return { rhr: null, baseline: f.rhrB, source: null, sleepHr, dailyRhr };
 }
 
 /** A history of nights with `rhr` set to the series tonight is scored on (never a mix of the two). */
@@ -372,7 +386,8 @@ function skinDeviation(d: Day, skinB: BaselineState | null): number | null {
 export function scoreTrainingLoad(f: Fold, d: Day, rec: RecoveryRow): TrainingLoadRow {
   const { hrv, rhr, resp } = rec.inputs;
   // Linear TRIMP, not Effort: a worn day with too little HR is a measured 0, an unworn day has no load.
-  f.readinessRows.push({ day: d.day, hrv, rhr, resp, load: d.s1.trimp ?? (d.worn ? 0 : null), sleepHr: rec.inputs.sleepHr ?? null, dailyRhr: rec.inputs.dailyRhr ?? rhr });
+  // Each column holds its own series only: a night that scored the sleeping HR never fills the daily column (version 39).
+  f.readinessRows.push({ day: d.day, hrv, rhr, resp, load: d.s1.trimp ?? (d.worn ? 0 : null), sleepHr: rec.inputs.sleepHr ?? null, dailyRhr: rec.inputs.dailyRhr ?? null });
   // The resting-HR signal compares tonight with the same series' history (version 35).
   const { readiness, trainingLoad } = evaluateWithTrainingLoad(onSeries(f.readinessRows, rec.inputs.rhrSource), d.day);
   return {
@@ -423,7 +438,12 @@ export function scorePlanner(f: Fold, d: Day, sleep: SleepRow, tz: string) {
     f.wakeNights.push({ day, wakeMin: localMinutes(main.end, tz), efficiency: main.efficiency });
     f.nights.push({ day, hours: main.asleepMin / 60 });
   }
-  const tonightNeed = personalizedNeedHours(f.nights.slice(-28).map((n) => n.hours), d.age.whole);
+  // Rises at once with your nights, falls at most needFallPerNightMin a night (version 40, audit S4). Only a learned
+  // need is held: last evening's came from at least minNeedNights nights (the 7.5 h default before that isn't yours).
+  // The age floor tapers since version 42 (at most 1 h a year, under the fall rate), so the hold follows it down.
+  const raw = personalizedNeedHours(f.nights.slice(-28).map((n) => n.hours), d.age.years);
+  const learned = f.nights.length - (main ? 1 : 0) >= minNeedNights;
+  const tonightNeed = (f.need = heldNeedHours(raw, learned ? f.need : null));
   const plan = sleepPlan({
     baselineNeedHours: tonightNeed,
     todayLoad: todayLoad(d),
@@ -576,7 +596,7 @@ function yesterdayHardOrLate(data: Data, f: Fold, d: Day): boolean {
 export function scoreHealthMonitor(data: Data, f: Fold, d: Day, inputs: Inputs, rec: RecoveryRow): HealthMonitorRow {
   const { hrv, rhr, resp, skinTempDev } = rec.inputs;
   const spo2 = d.dm?.spo2Pct ?? null;
-  f.monitorRows.push({ day: d.day, rhr, hrv, resp, spo2, skinTempDev, sleepHr: rec.inputs.sleepHr ?? null, dailyRhr: rec.inputs.dailyRhr ?? rhr });
+  f.monitorRows.push({ day: d.day, rhr, hrv, resp, spo2, skinTempDev, sleepHr: rec.inputs.sleepHr ?? null, dailyRhr: rec.inputs.dailyRhr ?? null });
   const sleeping = rec.inputs.rhrSource === "sleep";
   const ranges = googleRanges(d);
   // Google's resting-HR range describes its daily value, not the sleeping heart rate.

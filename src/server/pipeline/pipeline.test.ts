@@ -21,7 +21,7 @@ import { healthspanConfig } from "@/core/algorithms/healthspan";
 import { hardOrLateWorkout, typicalSession } from "@/core/scoring/load";
 import { logisticK, logisticScore, logisticZ0, missingInputScale, sleepPerfScale, wHRV, wResp, wRHR, wSkinTemp, wSleep, type RecoveryTerm } from "@/core/scoring/recovery";
 import { journalImpactConfig } from "@/core/algorithms/journalImpact";
-import { ledger, personalizedNeedHours, rest } from "@/core/scoring/sleep";
+import { heldNeedHours, ledger, personalizedNeedHours, rest } from "@/core/scoring/sleep";
 import { mergeSamples } from "../samples";
 import { trimpToStrain } from "@/core/scoring/strain";
 import { load } from "./data";
@@ -353,15 +353,27 @@ describe("stress on the seed (SCORING_VERSION 13)", () => {
 });
 
 describe("sleep need on the seed (SCORING_VERSION 15)", () => {
-  it("is the median of the prior 28 main nights, never below 7 h for an adult (7.5 h before 7 nights)", () => {
+  it("is the median of the prior 28 main nights held so it falls slowly (version 40), never below 7 h for an adult (7.5 h before 7 nights)", () => {
     const prior: number[] = [];
+    let held: number | null = null;
+    let lastPlanNeed: number | null = null;
+    let fallen = 0;
     for (const day of allDays) {
       const row = js<{ needHours: number; main: { asleepMin: number } | null }>("sleep", day);
       expect(row.needHours).toBeGreaterThanOrEqual(7);
-      expect(row.needHours).toBeCloseTo(personalizedNeedHours(prior.slice(-28), 36), 9);
+      expect(row.needHours).toBeCloseTo(held ?? personalizedNeedHours(prior.slice(-28), 36), 9);
       if (prior.length < 7) expect(row.needHours).toBe(7.5);
+      // This morning's need is the one last evening's plan used.
+      if (lastPlanNeed != null) expect(row.needHours * 60).toBeCloseTo(lastPlanNeed, 9);
+      const learned = prior.length >= 7; // last evening's need came from 7+ nights, not the 7.5 h default
       if (row.main) prior.push(row.main.asleepMin / 60);
+      const raw = personalizedNeedHours(prior.slice(-28), 36);
+      const next = heldNeedHours(raw, learned ? held : null);
+      if (held != null && next > raw) fallen++;
+      held = next;
+      lastPlanNeed = js<{ parts?: { baselineMin: number }; needMin?: number }>("sleep_planner", day).parts?.baselineMin ?? null;
     }
+    expect(fallen).toBeGreaterThan(0); // the hold mattered on some seed days
   });
 });
 
@@ -386,6 +398,80 @@ describe("the Sleep Planner on the seed (SCORING_VERSION 24)", () => {
         expect(x.inBedMin).toBeCloseTo((x.share * p.needMin) / p.planningEfficiency, 9);
         expect(x.sleepMin).toBeCloseTo(x.share * p.needMin, 9);
       }
+    }
+  });
+});
+
+describe("naps on the seed (SCORING_VERSION 42)", () => {
+  type Parts = { baselineMin: number; strainMin: number; debtMin: number; napMin: number; napAsleepMin: number };
+  const planned = () => allDays.map((day) => js<{ reason: string | null; needMin: number; parts: Parts }>("sleep_planner", day)).filter((p) => p.reason === null);
+
+  it("a nap never takes tonight's need under the baseline; it covers only the strain and debt extras", () => {
+    const ps = planned();
+    const napped = ps.filter((p) => p.parts.napAsleepMin > 0);
+    expect(napped.length).toBeGreaterThanOrEqual(15); // 21 nap days; version 41 planned as little as 380 of a 446 min need
+    for (const p of ps) {
+      expect(p.needMin).toBeGreaterThanOrEqual(p.parts.baselineMin - 1e-9);
+      expect(p.parts.napMin).toBeCloseTo(Math.min(p.parts.napAsleepMin, p.parts.strainMin + p.parts.debtMin), 9);
+      expect(p.needMin).toBeCloseTo(p.parts.baselineMin + p.parts.strainMin + p.parts.debtMin - p.parts.napMin, 9);
+    }
+    expect(napped.filter((p) => p.parts.napAsleepMin > p.parts.napMin).length).toBeGreaterThanOrEqual(15); // 19
+  });
+});
+
+describe("restorative targets by age on the seed (SCORING_VERSION 43)", () => {
+  it("the seed (36) keeps 13 % / 50 %; the same nights at 70 score higher restorative sleep, and nothing else moves", async () => {
+    const older = await seeded([NOW], { compute: false });
+    await recompute(older, { ...OPTS, profile: { ...PROFILE, birthDate: "1956-01-01" } });
+    const perf = async (d: Db) => new Map((await rows<{ d: string; s: SleepRow }>(d, sql`select day::text d, sleep s from daily_scores where user_id = ${USER} order by day`)).map((r) => [r.d, r.s]));
+    const at36 = await perf(db);
+    const at70 = await perf(older);
+    let staged = 0;
+    let lift = 0;
+    for (const [day, s] of at36) {
+      const o = at70.get(day)!;
+      if (s.performance == null) {
+        expect(o.performance).toBeNull();
+        continue;
+      }
+      // Same nights, same need (both adults above the floor's taper), same duration and efficiency.
+      expect(o.needHours).toBe(s.needHours);
+      expect(o.main).toEqual(s.main);
+      expect(o.performance!).toBeGreaterThanOrEqual(s.performance - 1e-9);
+      if (s.restorative === "measured") {
+        staged++;
+        lift += o.performance! - s.performance;
+      }
+    }
+    expect(staged).toBeGreaterThan(100);
+    // The seed's deep sleep is a 36-year-old's, so at 70 it sits above the eased targets: mean 91.4 → 94.2.
+    expect(lift / staged).toBeGreaterThan(2);
+    expect(lift / staged).toBeLessThan(4);
+  });
+});
+
+describe("sleep regularity for night-only wear (SCORING_VERSION 44)", () => {
+  it("with the band off by day for 8 days, the SRI and Sleep Performance are unchanged (version 43: those days dropped out, and the SRI moved)", async () => {
+    const copy = await copyDb(db);
+    const mains = await rows<{ day: string; s: number; e: number }>(
+      copy,
+      sql`select day::text as day, start_ts s, end_ts e from sleep_sessions where user_id = ${USER} and is_main and day between ${dayAt(99)} and ${dayAt(108)} order by day`,
+    );
+    // Off from 30 minutes after waking to 30 minutes before the next sleep: about 8.5 h of wear a day, under 720 minutes.
+    for (let k = 0; k + 1 < mains.length; k++) {
+      await mergeSamples(copy, "hr", USER, { start: Number(mains[k].e) + 1800, end: Number(mains[k + 1].s) - 1800 }, new Map(), "replace");
+    }
+    const dirty = Array.from({ length: 12 }, (_, k) => dayAt(98 + k));
+    for (const day of dirty) await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${day}) on conflict do nothing`);
+    await recompute(copy, OPTS);
+    const worn = await rows<{ m: number }>(copy, sql`select ((strain->>'hrMinutesAm')::int + (strain->>'hrMinutesPm')::int) m from daily_scores where user_id = ${USER} and day between ${dayAt(101)} and ${dayAt(106)}`);
+    for (const w of worn) expect(w.m).toBeLessThan(720);
+    for (let i = 101; i <= 110; i++) {
+      const before = js<SleepRow>("sleep", dayAt(i));
+      const after = await json<SleepRow>(copy, "sleep", dayAt(i));
+      expect(after.sri).not.toBeNull();
+      expect(after.sri).toBe(before.sri);
+      expect(after.performance).toBe(before.performance);
     }
   });
 });
@@ -664,6 +750,24 @@ describe("Google's inputs first (docs/research/google-vs-pulse-metrics.md)", () 
     // Until the sleeping-HR baseline is trusted (14 nights), Google's daily value against its own baseline.
     const early = js<RecoveryRow>("recovery", dayAt(10)).inputs;
     expect(early).toMatchObject({ rhr: metric(dayAt(10), "rhr_bpm"), rhrSource: "daily", sleepHr: metric(dayAt(10), "non_rem_hr_bpm") });
+  });
+
+  it("Recovery never scores or folds Pulse's session estimate (version 39, audit R10)", () => {
+    let scored = 0;
+    for (const d of allDays) {
+      const r = js<RecoveryRow>("recovery", d);
+      if (r.value == null) continue;
+      scored++;
+      const google = metrics.get(d)?.rhr_bpm ?? null;
+      // The daily column is Google's value only, and the scored value is one of the two real series.
+      expect(r.inputs.dailyRhr ?? null, d).toBe(google);
+      expect([null, "sleep", "daily"]).toContain(r.inputs.rhrSource ?? null);
+      if (r.inputs.rhrSource === "sleep") expect(r.inputs.rhr).toBe(r.inputs.sleepHr);
+      else if (r.inputs.rhrSource === "daily") expect(r.inputs.rhr).toBe(google);
+      else expect(r.inputs.rhr).toBeNull();
+    }
+    // The seed always has Google's daily value, so this guards the columns; restingPair.test.ts covers the missing case.
+    expect(scored).toBeGreaterThan(150);
   });
 
   it("skin temperature: nightly − Google's baseline; Health Monitor takes Google's ranges (resting HR's only for Google's own value)", () => {

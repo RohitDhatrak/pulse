@@ -18,6 +18,9 @@
 // Re-recorded for SCORING_VERSION 37 (a fewer-input night scaled back to the full set's spread): only recovery moved,
 // on the 16 nights without skin temperature (0.74 points on average, at most 1.4); the 154 full-input nights, strain
 // and sleep are byte-identical, and the bands stay 52 / 93 / 25.
+// Re-recorded for SCORING_VERSION 40 (the held sleep need, the new debt ledger): sleep moved on 61 nights by at most
+// 1.14 points (mean 91.56 → 91.40) where the held need sits above the plain median, and recovery by at most 0.44 through
+// its sleep term; strain is byte-identical.
 import { expect, it } from "vitest";
 import { rows, sql } from "../db";
 import { seeded, USER } from "../testing";

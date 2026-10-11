@@ -28,7 +28,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
         ],
         rows: [
           { term: "Heart rate variability", detail: "Fitbit’s nightly HRV, in ms. Higher is better." },
-          { term: "Resting heart rate", detail: "Fitbit’s sleeping heart rate (its non-REM heart rate) once 14\u00a0nights of it make a steady baseline; until then, and on a night without it, Fitbit’s daily resting heart rate from Google, or the lowest 5-minute average during sleep on a day Google has none. Each is compared only with its own history, never mixed. In bpm; lower is better." },
+          { term: "Resting heart rate", detail: "Fitbit’s sleeping heart rate (its non-REM heart rate) once 14\u00a0nights of it make a steady baseline; until then, and on a night without it, Fitbit’s daily resting heart rate from Google. On a night Google has none, the sleeping heart rate is used as soon as it has 4\u00a0nights of history; otherwise resting heart rate is left out that night. Each is compared only with its own history, never mixed. In bpm; lower is better." },
           { term: "Sleep performance", detail: "Last night’s Sleep Performance against your own average over the last 28\u00a0nights (85% until you have 7)." },
           { term: "Respiratory rate", detail: "Breaths per minute asleep, in rpm. Higher counts against you." },
           { term: "Skin temperature", detail: "Distance from Google’s skin-temperature baseline (your 30-night median), in °C; Pulse’s own baseline only when Google gives none. Either direction counts against you." },
@@ -171,7 +171,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
           { term: "Sleep consistency", detail: "Your Sleep Regularity over the last 7\u00a0days." },
         ],
         paragraphs: [
-          "Your sleep need is the median of your last 28\u00a0nights, at least 7\u00a0hours asleep (9 under 18) and at most 9.5. Until you have 7\u00a0nights, it is 7.5\u00a0hours.",
+          "Your sleep need is the median of your last 28\u00a0nights, at least 7\u00a0hours asleep (8 for teens, easing down to 7 between 17 and 19) and at most 9.5. Until you have 7\u00a0nights, it is 7.5\u00a0hours. It rises as soon as you sleep longer, but drops by at most about 15\u00a0minutes a month, so weeks of short nights show up as debt instead of quietly becoming your new normal.",
           "The Sleep page also shows Disturbances: Fitbit’s brief awakenings, moments of waking too short to count as awake time, marked on the stage chart. They are shown, not scored. Last night’s overnight HRV and blood oxygen readings sit under the heart-rate chart.",
         ],
       },
@@ -180,7 +180,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
         rows: [
           { term: "Hours vs. need, 50%", detail: "Full marks at 100% of your need." },
           { term: "Efficiency, 20%", detail: "Scored as the percentage itself." },
-          { term: "Restorative, 20%", detail: "Full marks when deep plus REM reach 50% of your sleep and deep alone reaches 13%. Less deep sleep scales this part down, to half at none." },
+          { term: "Restorative, 20%", detail: "Full marks when deep plus REM reach 50% of your sleep and deep alone reaches 13%. Deep sleep naturally declines with age, so from 40 these ease to 42% and 9% at 60. Less deep sleep scales this part down, to half at none." },
           { term: "Consistency, 10%", detail: "Scored as the consistency percentage." },
         ],
       },
@@ -212,19 +212,19 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "What goes in",
         rows: [
-          { term: "Your sleep need", detail: "The median of your last 28\u00a0nights, between 7 and 9.5\u00a0hours asleep (at least 9 under 18)." },
+          { term: "Your sleep need", detail: "The median of your last 28\u00a0nights, between 7 and 9.5\u00a0hours asleep (at least 8 for teens). It rises at once but drops slowly, about 15\u00a0minutes a month at most." },
           { term: "Today’s Strain", detail: "Strain above your 28-day average adds to the need." },
           { term: "Sleep debt", detail: "What you owe from recent nights." },
-          { term: "Naps", detail: "Today’s naps take time off tonight’s need." },
+          { term: "Naps", detail: "Today’s naps take off the extra time from strain and debt, never your baseline need." },
           { term: "Your last 14 main sleeps", detail: "Your usual wake time and sleep efficiency." },
         ],
       },
       {
         title: "How it is weighted",
         paragraphs: [
-          "Tonight’s need = your sleep need + 3\u00a0minutes for each Strain point today goes above your typical training session (up to 30\u00a0minutes) + 20% of your sleep debt − today’s nap time. A rest day or a usual session adds nothing; twice your usual session adds about 5\u00a0minutes.",
-          "Sleep debt runs over your last 14\u00a0nights with sleep. Each night, debt becomes 55% of (need + the debt so far − sleep), with the previous day’s naps counted as sleep; anything under 10\u00a0minutes clears to zero. A night you stayed up through counts as no sleep, when the band shows you awake and moving from midnight to 6 am; a night with no sleep and no data is skipped.",
-          "Bedtimes count back from your median wake time on recent weekday or weekend mornings, to match tomorrow, allowing for your median efficiency (90% until known). A need of 8\u00a0hours, a 07:00 wake and 90% efficiency give a Peak bedtime of 22:07.",
+          "Tonight’s need = your sleep need + 3\u00a0minutes for each Strain point today goes above your typical training session (up to 30\u00a0minutes) + 20% of your sleep debt, less today’s nap time; a nap can cancel those extras but never takes the need below your baseline. A rest day or a usual session adds nothing; twice your usual session adds about 5\u00a0minutes.",
+          "Sleep debt runs over your last 14\u00a0nights with sleep. Each night, 60% of the debt so far carries over and the night’s whole shortfall is added (a night within 30\u00a0minutes of your need adds nothing; extra sleep pays debt off), with the previous day’s naps counted as sleep; anything under 10\u00a0minutes clears to zero. An hour short every night builds to about 2.5\u00a0hours. A night you stayed up through counts as no sleep, when the band shows you awake and moving from midnight to 6 am; a night with no sleep and no data is skipped.",
+          "Bedtimes count back from your typical wake time on recent weekday or weekend mornings, to match tomorrow, taken from the mornings like your last one (so a shift worker's plan follows the current shift) and worked out on the 24-hour clock (so waking around midnight works), allowing for your median efficiency (90% until known). A need of 8\u00a0hours, a 07:00 wake and 90% efficiency give a Peak bedtime of 22:07.",
           "Bedtimes never plan on less than 85% efficiency. If you've been awake in bed for much of the night, going to bed even earlier mostly adds more time awake, so the planner assumes 85%: the same 8\u00a0hours at 65% efficiency gives 21:35, not 18:42. Time in bed is also capped for your age, at the most sleep the National Sleep Foundation says may be appropriate: 12\u00a0hours under 14, 11 to age 25, 10 to 64, and 9 from 65. When the cap applies, each band shows the share of your need it actually leaves room for.",
         ],
       },
@@ -538,7 +538,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "How it is weighted",
         paragraphs: [
-          "Pulse splits the last 7 noon-to-noon days into minutes, each asleep or awake, and checks each minute against the same minute the next day. The Sleep Regularity Index (Phillips 2017) is −100 + 200 × the share that match: 100 means an identical schedule, around 0 a random one. Pulse shows it from 0 to 100%, with anything below zero as 0%. A 1-hour nap lowers it by about 3\u00a0points.",
+          "Pulse splits the last 7 noon-to-noon days into minutes, each asleep or awake, and checks each minute against the same minute the next day. A day counts when Pulse knows how you slept that night: a sleep was recorded, or the band showed you awake through it. Wearing the band only in bed is enough. The Sleep Regularity Index (Phillips 2017) is −100 + 200 × the share that match: 100 means an identical schedule, around 0 a random one. Pulse shows it from 0 to 100%, with anything below zero as 0%. A 1-hour nap lowers it by about 3\u00a0points.",
           "It makes up 10% of Sleep Performance and is one of the inputs to Pulse Age.",
         ],
       },

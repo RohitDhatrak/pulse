@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { personalizedNeedHours } from "../scoring/sleep";
 import { toStrainScale, trimpToStrain } from "../scoring/strain";
-import { inBedCapHours, isWeekendDay, sleepPlan, sleepPlannerConfig, type SleepPlannerInput, type WakeNight } from "./sleepPlanner";
+import { circularMedianMin, inBedCapHours, isWeekendDay, sleepPlan, sleepPlannerConfig, type SleepPlannerInput, type WakeNight } from "./sleepPlanner";
 
 const iso = (d: number) => new Date(Date.UTC(2026, 8, d)).toISOString().slice(0, 10); // September 2026
 /** 14 nights, Sep 17–30: weekdays wake 07:00, weekends 09:00, efficiency 0.9. */
@@ -28,15 +28,34 @@ describe("sleepPlan need", () => {
   it("no debt and base strain gives need = baseline", () => {
     const p = sleepPlan(input());
     expect(p.needMin).toBeCloseTo(480, 10);
-    expect(p.parts).toEqual({ baselineMin: 480, strainMin: 0, debtMin: 0, napMin: 0 });
+    expect(p.parts).toEqual({ baselineMin: 480, strainMin: 0, debtMin: 0, napMin: 0, napAsleepMin: 0 });
   });
 
   it("60 min of debt adds 12 min", () => {
     expect(sleepPlan(input({ debtMin: 60 })).needMin).toBeCloseTo(492, 10);
   });
 
-  it("a 30-minute nap subtracts 30", () => {
-    expect(sleepPlan(input({ napMin: 30 })).needMin).toBeCloseTo(450, 10);
+  it("a nap takes off the extras, never the baseline need (version 42; it was minute for minute, down to 0)", () => {
+    // The owner's day: a 1 h 50 min nap took a 7.5 h need to 5 h 40 min.
+    const owner = sleepPlan(input({ baselineNeedHours: 7.5, napMin: 110 }));
+    expect(owner.needMin).toBeCloseTo(450, 10);
+    expect(owner.parts).toMatchObject({ napMin: 0, napAsleepMin: 110 });
+    // A nap within the extras still trims them: 60 min of debt (+12) and Strain 16 against 10 (+18), less a 20 min nap.
+    const trimmed = sleepPlan(input({ debtMin: 60, todayLoad: T(16), napMin: 20 }));
+    expect(trimmed.needMin).toBeCloseTo(490, 2);
+    expect(trimmed.parts.napMin).toBe(20);
+    // A nap longer than the extras uses them up, and no more.
+    const used = sleepPlan(input({ debtMin: 60, todayLoad: T(16), napMin: 90 }));
+    expect(used.needMin).toBeCloseTo(480, 9);
+    expect(used.parts.napMin).toBeCloseTo(used.parts.strainMin + 12, 9);
+    expect(used.parts.napAsleepMin).toBe(90);
+    // However long the nap, the plan never asks for less than the baseline.
+    for (const napMin of [0, 30, 120, 300, 900]) {
+      const p = sleepPlan(input({ debtMin: 200, todayLoad: T(18), napMin }));
+      expect(p.needMin).toBeGreaterThanOrEqual(480 - 1e-9);
+      expect(p.needMin).toBeCloseTo(p.parts.baselineMin + p.parts.strainMin + p.parts.debtMin - p.parts.napMin, 9);
+      expect(p.parts.napMin).toBeLessThanOrEqual(Math.min(napMin, p.parts.strainMin + p.parts.debtMin) + 1e-9);
+    }
   });
 
   it("adds 0.05 h per Day Strain point above your typical session, never less for a light day", () => {
@@ -81,6 +100,45 @@ describe("sleepPlan bedtimes", () => {
     const none = sleepPlan(input({ nights: [] }));
     expect(none).toMatchObject({ wakeMin: null, plans: [], efficiency: sleepPlannerConfig.defaultEfficiency });
     expect(none.needMin).toBeCloseTo(480, 10);
+  });
+});
+
+describe("wake time on the 24 h clock, from nights like the latest (SCORING_VERSION 41, audit S6)", () => {
+  const plain = (xs: number[]) => {
+    const s = [...xs].sort((a, b) => a - b);
+    const m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  };
+
+  it("circularMedianMin: across midnight, and exactly the plain median for morning times", () => {
+    expect(circularMedianMin([1420, 20, 1420, 20])).toBe(0);
+    expect(circularMedianMin([1430, 10, 30])).toBe(10);
+    expect(circularMedianMin([1380, 1400, 30])).toBe(1400);
+    for (const xs of [[420, 435, 410, 460, 405], [300, 330], [540, 420, 420, 540, 600, 390]]) expect(circularMedianMin(xs)).toBe(plain(xs));
+    // Spread right round the clock: no centre, so the plain median.
+    expect(circularMedianMin([0, 360, 720, 1080])).toBe(plain([0, 360, 720, 1080]));
+    expect(circularMedianMin([])).toBeNull();
+  });
+
+  it("wakes alternating 23:40 and 00:20 plan a 00:00 wake and a bedtime the evening before (version 40: 12:00 and 03:40)", () => {
+    const late = Array.from({ length: 14 }, (_, i) => ({ day: iso(17 + i), wakeMin: i % 2 ? 20 : 1420, efficiency: 0.9 }));
+    const p = sleepPlan(input({ nights: late }));
+    expect(p.wakeMin).toBe(0);
+    expect(p.plans[0].bedtimeMin).toBeCloseTo(-480 / 0.9, 8); // 15:07 the day before
+  });
+
+  it("a shift change: after 7 nights waking at 06:40, 3 waking at 15:30 plan for 15:30", () => {
+    const rota = Array.from({ length: 10 }, (_, i) => ({ day: iso(14 + i), wakeMin: i < 7 ? 400 : 930, efficiency: 0.9 }));
+    const p = sleepPlan(input({ nights: rota, wakeDay: iso(24) }));
+    expect(p.wakeMin).toBe(930);
+    expect(p.wakeNights).toBe(3);
+  });
+
+  it("a Monday plan after a Sunday lie-in still comes from weekday mornings", () => {
+    // The fixture's last night is Wednesday Sep 30; end it on Sunday Sep 27 (a 09:00 wake) and plan Monday.
+    const toSunday = nights.filter((n) => n.day <= "2026-09-27");
+    const p = sleepPlan(input({ nights: toSunday, wakeDay: "2026-09-28" }));
+    expect(p).toMatchObject({ weekend: false, wakeMin: 420 });
   });
 });
 
@@ -208,7 +266,7 @@ describe("SCORING_VERSION 24: time in bed is bounded", () => {
   it("need and its parts don't change (the Recovery forecast reads needMin)", () => {
     const over = { baselineNeedHours: 9.5, debtMin: 300, todayLoad: T(21), typicalSession: T(5), napMin: 20, nights: at(0.6) };
     const p = sleepPlan(input(over));
-    expect(p.parts).toEqual({ baselineMin: 570, strainMin: 30, debtMin: 60, napMin: 20 });
+    expect(p.parts).toEqual({ baselineMin: 570, strainMin: 30, debtMin: 60, napMin: 20, napAsleepMin: 20 });
     expect(p.needMin).toBe(640);
   });
 });

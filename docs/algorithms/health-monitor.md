@@ -77,7 +77,10 @@ flowchart TB
 `docs/algorithms/baselines.md` § Why version 35):
 - **Fitbit's sleeping heart rate** (non-REM) once its own baseline is trusted. The tile then reads "Sleeping heart rate",
   and its range and 30-night trend are that series alone.
-- **Before that**, or on a night without it, Google's `daily-resting-heart-rate`, else `sessionRestingHR`.
+- **Before that**, or on a night without it, Google's `daily-resting-heart-rate`.
+- **A night with neither** has no scored resting HR (*since version 39*; before, Pulse's session estimate,
+  8.6 bpm low on the owner's nights). A night without Google's value uses the sleeping HR as soon as its baseline is
+  usable.
 
 The two are never mixed in one history.
 

@@ -99,8 +99,22 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * more while the illness hold runs, instead of the 14-day mean minus its slope; its sleep nudge is what Recovery's
  * sleep term would add if tonight goes like your last 3 nights, not the Sleep Planner's advice (debt raised it, naps
  * lowered it).
+ * 39: Recovery never scores or folds Pulse's session estimate (8.6 bpm under Google's resting HR on the owner's nights):
+ * a night without Google's value uses the sleeping HR against its own baseline, else leaves the resting-HR term out.
+ * 40: Sleep need rises at once but falls at most half a minute a night, so chronic short sleep isn't absorbed within
+ * weeks; the debt ledger adds each night's whole shortfall beyond a 30-minute tolerance and carries 60 % (was 55 % of
+ * need + debt − slept, which never showed more than about 1.2 nights' shortfall).
+ * 41: The Sleep Planner's typical wake time is a median on the 24 h clock (23:40 and 00:20 gave 12:00), taken from
+ * nights like last night (a shift worker's current schedule) within tomorrow's kind of day.
+ * 42: A nap covers only tonight's extras (strain and debt repayment), never the baseline need (a 1 h 50 min nap took a
+ *     7.5 h need to 5 h 40 min); the sleep need's age floor is each guideline range's lower bound (8 h for 13–17, was 9)
+ *     and slides by exact age (8 → 7 across 17–19), so the 18th birthday no longer drops 75 min of debt overnight.
+ * 43: The Sleep score's restorative targets ease with age: 13 % deep and 50 % deep + REM to 40, sliding to 9.1 % and 42 %
+ *     at 60 (the age-typical decline), so healthy older sleepers aren't marked down about 9 points.
+ * 44: A sleep regularity period counts when we know how its night went (a main sleep, or the night spent awake), not
+ *     when the band was worn 720+ minutes: night-only wearers get an SRI, and a missed night no longer reads as awake.
  */
-export const SCORING_VERSION = 38;
+export const SCORING_VERSION = 44;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
@@ -186,7 +200,7 @@ export type RecoveryRow = {
     rhrSource?: RestingSource | null;
     /** Fitbit's non-REM heart rate for the night, folded into its own baseline. */
     sleepHr?: number | null;
-    /** Google's daily resting HR, else Pulse's sleep-session estimate, folded into the resting-HR baseline. */
+    /** Google's daily resting HR, folded into the resting-HR baseline (version 39: never Pulse's session estimate). */
     dailyRhr?: number | null;
     resp: number | null;
     sleepPerf: number | null;
@@ -200,8 +214,8 @@ export type RecoveryRow = {
   forecastNightsLeft: number;
 };
 
-/** Where Recovery's resting HR came from (version 35): Fitbit's non-REM heart rate, Google's daily value, or Pulse's session estimate. */
-export type RestingSource = "sleep" | "daily" | "session";
+/** Where Recovery's resting HR came from (version 35): Fitbit's non-REM heart rate or Google's daily value (since version 39 never Pulse's session estimate). */
+export type RestingSource = "sleep" | "daily";
 
 export type SleepRow = {
   reason: ReasonCode | null;

@@ -170,3 +170,20 @@ describe("the note for a night without stages (SCORING_VERSION 31)", () => {
     expect((await getSleep(day, ctxFor(db2))).performanceNote).toBe(UNSTAGED_OMITTED);
   });
 });
+
+describe("the restorative display by age (SCORING_VERSION 43)", () => {
+  it("at 36 the typical ranges and the restorative status are as listed; at 70 deep and REM ease with the score's targets", async () => {
+    const young = await getSleep(dayAt(150), ctxFor(db));
+    const old = await getSleep(dayAt(150), { ...ctxFor(db), profile: { ...ctxFor(db).profile, birthDate: "1956-01-01" } });
+    const typical = (vm: typeof young) => Object.fromEntries(vm.stages!.value!.rows.map((r) => [r.stage, r.typical]));
+    expect(typical(young)).toEqual({ awake: [5, 10], rem: [20, 25], light: [45, 55], deep: [13, 23] });
+    // Deep × 0.7 (9.1 % of 13 %); REM × (42 − 9.1) / (50 − 13) = 0.889.
+    expect(typical(old)).toEqual({ awake: [5, 10], rem: [18, 22], light: [45, 55], deep: [9, 16] });
+    // The same night's restorative share; its status thresholds ease from 40 / 30 % to 33.6 / 25.2 %.
+    const pct = young.summary[3].metric.value!;
+    expect(old.summary[3].metric.value).toBe(pct);
+    const expected = (v: number, opt: number, suf: number) => (v >= opt ? "optimal" : v >= suf ? "sufficient" : "poor");
+    expect(young.summary[3].status).toBe(expected(pct, 40, 30));
+    expect(old.summary[3].status).toBe(expected(pct, 33.6, 25.2));
+  });
+});

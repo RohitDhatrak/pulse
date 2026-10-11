@@ -1,7 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { sleepAwakenings, sleepSegments } from "../db/schema";
 import { readHr, readTenths } from "../samples";
-import { addDays, localMinutes } from "../time";
+import { restorativeTargets } from "@/core/scoring/sleep";
+import { addDays, fractionalYears, localMinutes } from "../time";
 import {
   type DayRow,
   finite,
@@ -28,6 +29,22 @@ const STAGE_ROWS: { stage: Stage; label: string; typical: [number, number] }[] =
   { stage: "light", label: "Light", typical: [45, 55] },
   { stage: "deep", label: "Deep", typical: [13, 23] },
 ];
+
+/**
+ * The stage rows' typical ranges and the restorative status for an exact age: deep and REM scale with the score's
+ * targets (version 43, audit S8), so from 40 to 60 they ease down with the age-typical decline; under 40, as listed.
+ */
+function ageScaled(ageYears: number | null) {
+  const t = restorativeTargets(ageYears);
+  const base = restorativeTargets(null);
+  const deep = t.deep / base.deep;
+  const rem = (t.restorative - t.deep) / (base.restorative - base.deep);
+  const scale = ([lo, hi]: [number, number], k: number): [number, number] => [Math.round(lo * k), Math.round(hi * k)];
+  return {
+    rows: STAGE_ROWS.map((r) => (r.stage === "deep" ? { ...r, typical: scale(r.typical, deep) } : r.stage === "rem" ? { ...r, typical: scale(r.typical, rem) } : r)),
+    restorative: t.restorative / base.restorative,
+  };
+}
 
 const status = (v: number | null | undefined, optimal: number, sufficient: number): SleepStatus | undefined =>
   !finite(v) ? undefined : v >= optimal ? "optimal" : v >= sufficient ? "sufficient" : "poor";
@@ -58,6 +75,7 @@ export async function getSleep(day: string, ctx: QueryCtx): Promise<SleepVM> {
   const noNight = performance.value == null ? performance.reason ?? "no_data" : null;
   const reason = noNight ?? "no_data";
 
+  const aged = ageScaled(fractionalYears(ctx.profile.birthDate, day));
   const stat = (key: string, label: string, pick: (r: DayRow) => number | null | undefined, unit: string | undefined, st?: (v: number | null | undefined) => SleepStatus | undefined, r = reason): KeyStat => {
     const v = row ? pick(row) : null;
     const { mean, sd } = priorStats(rows, day, pick);
@@ -68,7 +86,7 @@ export async function getSleep(day: string, ctx: QueryCtx): Promise<SleepVM> {
     stat("hours", "Hours vs. needed", hoursPct, "%", (v) => status(v, 85, 70)),
     stat("consistency", "Sleep consistency", (r) => r.sleep?.consistency, "%", (v) => status(v, 80, 70), main ? "calibrating" : reason),
     stat("efficiency", "Sleep efficiency", efficiencyPct, "%", (v) => status(v, 85, 75)),
-    stat("restorative", "Restorative sleep", restorativePct, "%", (v) => status(v, 40, 30)),
+    stat("restorative", "Restorative sleep", restorativePct, "%", (v) => status(v, 40 * aged.restorative, 30 * aged.restorative)),
   ];
 
   // Last night's need is the plan made the evening before.
@@ -78,7 +96,7 @@ export async function getSleep(day: string, ctx: QueryCtx): Promise<SleepVM> {
       ? fromReason(noNight, isToday)
       : prevPlan && prevPlan.reason === null
         ? ok({ asleepMin: main.asleepMin, needMin: prevPlan.needMin, parts: prevPlan.parts, calibrating: false })
-        : ok({ asleepMin: main.asleepMin, needMin: s.needHours * 60, parts: { baselineMin: s.needHours * 60, strainMin: 0, debtMin: 0, napMin: 0 }, calibrating: true });
+        : ok({ asleepMin: main.asleepMin, needMin: s.needHours * 60, parts: { baselineMin: s.needHours * 60, strainMin: 0, debtMin: 0, napMin: 0, napAsleepMin: 0 }, calibrating: true });
 
   const prior = priorStats(rows, day, (r) => r.sleep?.main?.asleepMin);
   const hours: SleepVM["hours"] = main
@@ -96,7 +114,7 @@ export async function getSleep(day: string, ctx: QueryCtx): Promise<SleepVM> {
 
   const plan = planVM(ctx, row, isToday);
   const [stages, nightHr, nightHrv, nightSpo2] = await Promise.all([
-    stagesOf(ctx, row, noNight),
+    stagesOf(ctx, row, noNight, day),
     main ? nightHrOf(ctx, main.start, main.end) : fromReason<never>(noNight, isToday),
     main ? nightSeriesOf(ctx, "hrv", main.start, main.end) : fromReason<never>(noNight, isToday),
     main ? nightSeriesOf(ctx, "spo2", main.start, main.end) : fromReason<never>(noNight, isToday),
@@ -122,7 +140,7 @@ export async function getSleep(day: string, ctx: QueryCtx): Promise<SleepVM> {
   };
 }
 
-async function stagesOf(ctx: QueryCtx, row: DayRow | undefined, noNight: SleepVM["performance"]["reason"]): Promise<SleepVM["stages"]> {
+async function stagesOf(ctx: QueryCtx, row: DayRow | undefined, noNight: SleepVM["performance"]["reason"], day: string): Promise<SleepVM["stages"]> {
   const main = row?.sleep?.main;
   if (!main) return none(noNight ?? "no_data");
   if (!main.staged) return null;
@@ -148,7 +166,7 @@ async function stagesOf(ctx: QueryCtx, row: DayRow | undefined, noNight: SleepVM
     bed: ms(main.start),
     wake: ms(main.end),
     segments,
-    rows: STAGE_ROWS.map((r) => ({ ...r, minutes: minutes[r.stage], pct: total > 0 ? (minutes[r.stage] / total) * 100 : 0 })),
+    rows: ageScaled(fractionalYears(ctx.profile.birthDate, day)).rows.map((r) => ({ ...r, minutes: minutes[r.stage], pct: total > 0 ? (minutes[r.stage] / total) * 100 : 0 })),
     awakenings,
   });
 }

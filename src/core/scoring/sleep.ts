@@ -81,6 +81,16 @@ export const maxNeedHours = 9.5;
 export const restorativeTargetShare = 0.5;
 export const deepShareTarget = 0.13;
 export const deepFloorFactor = 0.5;
+/**
+ * Version 43 (audit S8): from `restorativeAgeStart` to `restorativeAgeEnd` the targets slide down to these shares of
+ * themselves, flat after. Deep sleep falls with age (Ohayon 2004: slow-wave sleep about 14 % → 10 % from 40 to 60, deep
+ * + REM about 35 % → 29.5 %); the fixed targets cost healthy 70-year-olds about 9 points of Sleep Performance. The
+ * ratios, not the sleep-lab percentages, are applied, since Fitbit's staging reads lower (*assumption, tunable*).
+ */
+export const restorativeAgeStart = 40;
+export const restorativeAgeEnd = 60;
+export const deepAgeFactor = 0.7;
+export const restorativeAgeFactor = 0.84;
 /** Used when no consistency signal is supplied (noop adds a neutral term, it does not renormalize). */
 export const NEUTRAL_CONSISTENCY = 0.5;
 /**
@@ -96,12 +106,22 @@ export const minUsualRestorativeNights = 5;
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
 
 /**
- * Population floor on the need, in hours *asleep*: 7 for adults (the lower bound of the AASM / NSF 7–9 h range;
- * SCORING_VERSION 15, was 8, which gave every healthy 7 h sleeper 73 min of permanent debt), 9 under 18.
+ * Population floor on the need, in hours *asleep*: the lower bound of each AASM / NSF range. 7 for adults (7–9 h;
+ * SCORING_VERSION 15, was 8, which gave every healthy 7 h sleeper 73 min of permanent debt), 8 for 13–17 (8–10 h) and
+ * 9 to 12 (9–12 h). Since SCORING_VERSION 42 (audit S7) it slides linearly between them (9 → 8 across 12–13, 8 → 7
+ * across 17–19), by exact age. It was 9 under 18: the middle of the teen range, so an 8.5 h teen carried 37 min of
+ * debt that never cleared, and on the 18th birthday the same 8 h nights went from 75 min of debt to none overnight.
  */
-export function populationNeedFloorHours(age: number | null): number {
-  if (age == null || age <= 0) return 7.0;
-  return age < 18 ? 9.0 : 7.0;
+export function populationNeedFloorHours(ageYears: number | null): number {
+  if (ageYears == null || ageYears <= 0) return 7.0;
+  const knots: [number, number][] = [[12, 9], [13, 8], [17, 8], [19, 7]];
+  if (ageYears <= knots[0][0]) return knots[0][1];
+  for (let i = 1; i < knots.length; i++) {
+    const [a, fa] = knots[i - 1];
+    const [b, fb] = knots[i];
+    if (ageYears <= b) return fa + ((ageYears - a) / (b - a)) * (fb - fa);
+  }
+  return 7.0;
 }
 
 /**
@@ -109,8 +129,8 @@ export function populationNeedFloorHours(age: number | null): number {
  * The median, not the upper quartile: the 75th percentile kept anyone whose sleep varies short of their own better
  * nights, and let a sick or catch-up week raise the next month's need.
  */
-export function personalizedNeedHours(nightlyHours: number[], age: number | null): number {
-  const floor = populationNeedFloorHours(age);
+export function personalizedNeedHours(nightlyHours: number[], ageYears: number | null): number {
+  const floor = populationNeedFloorHours(ageYears);
   const xs = nightlyHours.filter((h) => h > 0.0).sort((a, b) => a - b);
   if (xs.length < minNeedNights) return Math.min(Math.max(defaultSleepNeedHours, floor), maxNeedHours);
   const pos = needQuantile * (xs.length - 1);
@@ -120,12 +140,40 @@ export function personalizedNeedHours(nightlyHours: number[], age: number | null
   return Math.min(Math.max(q, floor), maxNeedHours);
 }
 
-/** The restorative component, 0–100: (deep + REM) share against 50 %, scaled down when deep is under 13 %. */
-export function restorativeScore(deepSeconds: number, remSeconds: number, asleepSeconds: number): number {
+/**
+ * Version 40 (audit S4): the need falls at most this many minutes a night, and rises at once. The median of your
+ * nights follows a habit, so an 8 h sleeper cut to 7 h had a 7 h need, and no debt, within about 15 nights. Sleep need
+ * is a stable trait in adults; a lasting genuine change is still absorbed, at about 15 minutes a month (*tunable*:
+ * 0.25 kept normal sleepers' need too high, 1 absorbed a 1 h cut within 8 weeks). docs/algorithms/sleep-need.md.
+ */
+export const needFallPerNightMin = 0.5;
+
+/** Tonight's need: today's personalizedNeedHours, or yesterday's held need less needFallPerNightMin if that is higher. */
+export function heldNeedHours(rawHours: number, prevHours: number | null, nights = 1): number {
+  if (prevHours == null) return rawHours;
+  return Math.max(rawHours, prevHours - (needFallPerNightMin * Math.max(0, nights)) / 60);
+}
+
+/**
+ * The restorative targets for an exact age (version 43): 13 % deep and 50 % deep + REM to 40 (and an unknown age),
+ * sliding linearly to 9.1 % and 42 % at 60, flat after. Never raised for the young.
+ */
+export function restorativeTargets(ageYears: number | null = null): { deep: number; restorative: number } {
+  if (ageYears == null || ageYears <= restorativeAgeStart) return { deep: deepShareTarget, restorative: restorativeTargetShare };
+  const t = Math.min(1, (ageYears - restorativeAgeStart) / (restorativeAgeEnd - restorativeAgeStart));
+  return {
+    deep: deepShareTarget * (1 - t * (1 - deepAgeFactor)),
+    restorative: restorativeTargetShare * (1 - t * (1 - restorativeAgeFactor)),
+  };
+}
+
+/** The restorative component, 0–100: (deep + REM) share against its target, scaled down when deep is under its target. */
+export function restorativeScore(deepSeconds: number, remSeconds: number, asleepSeconds: number, ageYears: number | null = null): number {
+  const target = restorativeTargets(ageYears);
   const restorativeShare = (deepSeconds + remSeconds) / asleepSeconds;
-  const deepAdequacy = clamp(deepSeconds / asleepSeconds / deepShareTarget, 0.0, 1.0);
+  const deepAdequacy = clamp(deepSeconds / asleepSeconds / target.deep, 0.0, 1.0);
   const deepFactor = deepFloorFactor + (1.0 - deepFloorFactor) * deepAdequacy;
-  return Math.min(100.0, (restorativeShare / restorativeTargetShare) * 100.0) * deepFactor;
+  return Math.min(100.0, (restorativeShare / target.restorative) * 100.0) * deepFactor;
 }
 
 /**
@@ -134,6 +182,7 @@ export function restorativeScore(deepSeconds: number, remSeconds: number, asleep
  * @param deepSeconds, remSeconds null when the night has no stages (version 31): the restorative component is then
  * `opts.usualRestorative` if given, else left out and the other weights renormalised.
  * @param consistency sleep regularity in [0, 1]; null → NEUTRAL_CONSISTENCY.
+ * @param opts.ageYears exact age for the restorative targets (version 43); null keeps the under-40 targets.
  */
 export function rest(
   asleepSeconds: number,
@@ -142,7 +191,7 @@ export function rest(
   remSeconds: number | null,
   sleepNeedHours: number | null = null,
   consistency: number | null = null,
-  opts: { usualRestorative?: number | null } = {},
+  opts: { usualRestorative?: number | null; ageYears?: number | null } = {},
 ): number | null {
   if (asleepSeconds <= 0.0) return null;
   const asleepHours = asleepSeconds / 3600.0;
@@ -151,7 +200,7 @@ export function rest(
   const efficiencyScore = clamp(efficiency * 100.0, 0.0, 100.0);
   const consistencyScore = clamp((consistency ?? NEUTRAL_CONSISTENCY) * 100.0, 0.0, 100.0);
   const restorative =
-    deepSeconds != null && remSeconds != null ? restorativeScore(deepSeconds, remSeconds, asleepSeconds) : (opts.usualRestorative ?? null);
+    deepSeconds != null && remSeconds != null ? restorativeScore(deepSeconds, remSeconds, asleepSeconds, opts.ageYears ?? null) : (opts.usualRestorative ?? null);
   // The same order of terms as before version 31, so a staged night scores to the bit as it did.
   const weighted =
     restorative != null
@@ -188,7 +237,16 @@ export function sleepConsistency(nightlyHours: number[]): number | null {
 export const DEFAULT_WINDOW_NIGHTS = 14;
 /** Calculated debt below this clears; exactly 10 remains. */
 export const ON_TARGET_BAND_MIN = 10.0;
-export const DEBT_CARRY = 0.55;
+/**
+ * Version 40: the share of the debt carried into the next night, with each night's whole shortfall added (was
+ * 0.55 × (need + debt − slept), which wrote 45 % of a short night off at once, so a steady 1 h shortfall never read
+ * more than about 1.2 h). Research: deficits accumulate over weeks (Van Dongen 2003, Belenky 2003, Kitamura 2016).
+ * 0.6 with the tolerance below kept normal ±0.5 h sleepers' debt days at 35 % (v39: 38 %) while a 1 h cut still reads
+ * about 70 min in week 8; 0.7–0.8 put normal sleepers at 40–65 % (*tunable*; docs/algorithms/sleep-need.md).
+ */
+export const DEBT_CARRY = 0.6;
+/** A night within this many minutes of your need adds no debt (ordinary night-to-night variation); beyond, all of it. */
+export const DEBT_TOLERANCE_MIN = 30.0;
 
 export interface SleepDebtNight {
   day: string;
@@ -275,14 +333,18 @@ export function round1(v: number): number {
   return (scaled < 0.0 ? Math.ceil(scaled - 0.5) : Math.floor(scaled + 0.5)) / 10.0;
 }
 
-const nextDebt = (needMin: number, currentDebt: number, sleptMin: number): number => {
-  const calculated = DEBT_CARRY * Math.max(needMin + currentDebt - sleptMin, 0.0);
+/** One night of the ledger (version 40): debt = max(0, 0.6 × debt + shortfall), a shortfall within the tolerance 0. */
+export const nextDebt = (needMin: number, currentDebt: number, sleptMin: number): number => {
+  const shortfall = needMin - sleptMin;
+  const added = shortfall > 0.0 && shortfall <= DEBT_TOLERANCE_MIN ? 0.0 : shortfall;
+  const calculated = Math.max(DEBT_CARRY * currentDebt + added, 0.0);
   return calculated < ON_TARGET_BAND_MIN ? 0.0 : calculated;
 };
 
 /**
  * Ledger over the most recent `window` nights with usable sleep, from chronological `[day, totalSleepMin]`
- * rows. Each night: debt = 0.55 × max(0, need + debt − slept). null is a night without data and is skipped; since
+ * rows. Each night: debt = max(0, 0.6 × debt + need − slept), a shortfall within 30 min adding nothing (version 40;
+ * was 0.55 × max(0, need + debt − slept)). null is a night without data and is skipped; since
  * SCORING_VERSION 25 a 0 is a measured night without sleep and counts (noop skipped 0 too; Pulse never passes 0
  * for missing data).
  */

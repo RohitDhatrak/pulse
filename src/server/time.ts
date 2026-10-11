@@ -63,7 +63,7 @@ export const localMinutes = (s: number, tz: string) => Math.round((s - localMidn
 // Age from a `YYYY-MM-DD` birth date on a `YYYY-MM-DD` day. Both agree on every day: fractionalYears floors
 // to wholeYears and equals it on a birthday. A Feb 29 birthday falls on Mar 1 in common years.
 
-/** Completed years on `day`; the birthday itself counts. Sleep need and the max-HR estimate use this. */
+/** Completed years on `day`; the birthday itself counts. The Sleep Planner's in-bed cap and the max-HR estimate use this. */
 export function wholeYears(birthDate: string, day: string) {
   const [by, bm, bd] = birthDate.split("-").map(Number);
   const [y, m, d] = day.split("-").map(Number);

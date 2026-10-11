@@ -199,6 +199,44 @@ On the 180-day seed:
 - After about day 67, Recovery is within 0.4 points of before on average.
 - Recovery bands (green / yellow / red) go from 62 / 80 / 28 to 61 / 85 / 24.
 
+## Why version 39: Pulse's session estimate leaves Recovery
+
+**The problem (audit item R10).** On a night without Google's daily resting HR, Recovery scored Pulse's session
+estimate (`sessionRestingHR`, the lowest 5-minute mean in the main sleep) against `rhrB`, Google's baseline, and folded it
+into `rhrB`. The audit estimated the cost from an *assumed* 30 % fallback rate and a 2–4 bpm offset. Measured on the
+owner's 7 Fitbit nights:
+- **The fallback fired on 0 nights:** Google sent a daily value every night. The demo seed has it on every scored night.
+- **The offset is −8.6 ± 1.7 bpm:** the session estimate read 58–64 against Google's 67–71. The lowest 5 minutes of
+  sleep sit far below a daily value that blends in awake data.
+
+So the fallback is rare, but whenever it fired it read as a large resting-HR drop: a falsely great Recovery. Since
+version 35 there's a better stand-in: Fitbit's sleeping HR (non-REM, 60–66 on those nights), which has its own baseline.
+
+**The change** (`restingPair`): the session estimate never stands in for Google's value.
+- A night without Google's value uses the sleeping HR against `sleepHrB` as soon as that baseline is usable (it needn't
+  be trusted, since there's nothing better that night).
+- With neither, the resting-HR term is left out, and version 37's missing-input scale keeps the night calm.
+- `rhrB` folds Google's values only.
+- The readiness and Health Monitor histories no longer copy the scored value into the daily column on a night that
+  used the sleeping HR.
+- The Recovery contributor shows the value Recovery scored (missing when the term was left out), not the estimate.
+
+The session estimate stays Strain's fallback for heart-rate zones (`stage1.ts`), and a display fallback in the Home
+dashboard, Trends and the Monitor's 6-month chart. Those charts can still show it on a rare day without Google's value:
+a known seam, display only.
+
+**How it was tested** (`restingPair.test.ts`).
+- **Setup:** 60 people, 60 nights of Google's value only, then a Fitbit. The Fitbit adds the sleeping HR (Google − 6 ± 2) and the session estimate (Google − 8.6 ± 1.7). Google's value is missing on 15 % of the Fitbit nights, and the sleeping HR on 20 %.
+- **On nights missing Google's value:**
+
+| | v38 | v39 |
+|---|---|---|
+| Mean resting-HR z | −2.05 | +0.08 |
+| Recovery vs the same night with Google's value | +11.5 | −0.04 |
+
+- **`rhrB`:** stays within 0.28 bpm of the recent mean of Google's own values.
+- **The demo seed** (`GOLDEN[39]`) is byte-identical to version 38: it never lacks Google's value.
+
 ## Why version 36: floors that scale with the person
 
 **The problem (audit item R4).** HRV's spread was floored at a fixed 5 ms and resting HR's at 2 bpm. That is a small
@@ -260,13 +298,14 @@ and Pulse Age's population curves are on awake resting HR.
 **Why it never shares a baseline.** The two series sit about 6 bpm apart. Fold them into one baseline and the night the
 sleeping HR first arrives reads as a 6 bpm drop: a falsely great Recovery for days, the device-seam problem again.
 So each has its own baseline, folded every night it has a value:
-- `rhrB` with Google's daily value (else Pulse's session estimate);
+- `rhrB` with Google's daily value (before version 39, else Pulse's session estimate; § Why version 39);
 - `sleepHrB` with the non-REM HR.
 
 **The rule** (`restingPair`, `src/server/pipeline/scores.ts`):
 - **Use the sleeping HR against `sleepHrB`** when the night has one and `sleepHrB` is **trusted** (14 nights). It is
   also used as soon as it is usable (4 nights) if `rhrB` isn't usable either, as on a new Fitbit-only account.
 - **Otherwise use Google's daily value against `rhrB`**, as before.
+- *Since version 39:* with no Google value, the sleeping HR as soon as `sleepHrB` is usable; else no resting-HR term.
 
 A young sleeping-HR baseline doesn't take over from an established daily one: its first-week spread is wide, so for two
 weeks its z would be noisier than the one it replaces. Readiness and the Health Monitor fold their own histories, and they

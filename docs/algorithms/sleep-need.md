@@ -10,24 +10,35 @@ is judged against it.
 ```mermaid
 flowchart LR
   N["Main-sleep hours, the 28 nights before"] --> Q{"≥ 7 nights?"}
-  Q -->|no| D["7.5 h (9 h under 18)"]
+  Q -->|no| D["7.5 h, or the floor if higher"]
   Q -->|yes| M["Median of those nights"]
-  M --> F["At least the floor: 7 h adults, 9 h under 18; at most 9.5 h"]
+  M --> F["At least the floor: 7 h adults, 8 h at 13–17, 9 h to 12, sliding by age; at most 9.5 h"]
   D --> NEED[Sleep need]
   F --> NEED
   NEED --> S["Sleep score: duration = asleep ÷ need (50 %)"]
-  NEED --> L["Debt: debt = 0.55 × max(0, need + debt − slept)"]
-  NEED --> P["Sleep Planner: need + strain + 20 % of debt − naps → bedtimes"]
-  NEED --> FC["Recovery forecast: planned sleep ÷ need"]
+  NEED --> L["Debt: debt = max(0, 0.6 × debt + shortfall)"]
+  NEED --> P["Sleep Planner: need + max(0, strain + 20 % of debt − naps) → bedtimes"]
 ```
 
-## Formula (since scoring version 15; unchanged through version 31)
+## Formula (since scoring version 15; the hold since version 40)
 
-1. Take the main-sleep hours of the 28 nights before the scored night. Nights of 0 or less are ignored.
+1. Take the main-sleep hours of the last 28 nights. Nights of 0 or less are ignored.
 2. With fewer than 7 nights, the need is `max(7.5, floor)`.
 3. Otherwise it is the **median** of those nights (`needQuantile = 0.5`, linearly interpolated), then:
-   - at least the floor: **7 h** for adults 18 and over, or an unknown age; 9 h under 18;
+   - at least the floor (`populationNeedFloorHours`, by exact age since version 42): the lower bound of each
+     guideline range, **7 h** for adults (and an unknown age), **8 h** for 13–17 and **9 h** to 12, sliding linearly
+     across 12–13 (9 → 8) and 17–19 (8 → 7);
    - at most 9.5 h.
+4. *Since version 40,* **held** (`heldNeedHours`): tonight's need is the larger of that and yesterday's need less
+   0.5 minutes (`needFallPerNightMin`). It rises at once and falls at most about 15 minutes a month. Only a learned need
+   is held: the 7.5 h default before 7 nights isn't. (Versions 40–41 also restarted it on a new age floor, 9 → 7 h at
+   18; since version 42 the floor moves at most 1 h a year, slower than the hold falls, so the hold follows it.)
+   - The Sleep Planner sets it each evening (`scorePlanner`), and the next morning's Sleep Performance and debt use
+     that same value (`scoreSleep`), so the plan and the score agree.
+
+**Debt** (`ledger`, *since version 40*): over the last 14 nights with sleep, each night
+`debt = max(0, 0.6 × debt + need − slept)`, where a night 30 minutes or less short adds nothing (`DEBT_TOLERANCE_MIN`)
+and anything under 10 minutes clears. Before version 40 it was `0.55 × max(0, need + debt − slept)`.
 
 Before version 15, it was the **upper quartile** (0.75), floored at **8 h**, and 8 h before 7 nights.
 
@@ -72,7 +83,8 @@ Sleepers varying ±0.5 h a night (one simulated person per cell, the test's seed
   none). That is one seed. Across 200 simulated people varying ±0.5 h (Gaussian), the average debt is **9–10 min**
   (P90 16–18 min), and **debt shows (10 min or more) on about 40% of days**. The median need sits at the middle of
   your nights, so a run of below-median nights tips into a small debt that comes and goes. This is a known
-  trade-off of the median, not yet addressed.
+  trade-off of the median. *Version 40* keeps it about the same (35 % of days, about 15 min on average) while making
+  chronic restriction visible (§ Why version 40).
 - **It still works where it should:**
   - a 6.5 h sleeper, below the recommended range, still carries about 33 min;
   - 5 short nights still raise debt to 100–139 min.
@@ -100,6 +112,130 @@ Strain is byte-identical.
 - That was weighed and not adopted (owner's decision, 2026-10-07). A floor above the guideline minimum puts most
   healthy sleepers in permanent debt and pushes 9+ h in bed.
 - A user who really needs more shows it: the median follows their own longer nights.
+
+## Why version 40: chronic short sleep was absorbed in about three weeks (audit S4)
+
+**Two mechanisms hid it.**
+- **The need followed the habit.** The median of 28 nights becomes your new length within about 15 nights, so an 8 h
+  sleeper cut to 7 h had a 7 h need, and about 10 minutes of debt, by week 3. Sleep need is a fairly stable trait in
+  adults: chronic restriction shortens sleep, not need.
+- **The ledger forgot.** `0.55 × max(0, need + debt − slept)` wrote 45 % of each night's shortfall off at once and
+  halved the rest nightly, so a steady shortfall s never read more than 1.22 × s. `docs/research/sleep.md` #3: deficits
+  accumulate over weeks (Van Dongen 2003; Belenky 2003; Kitamura 2016).
+
+**The change.**
+- **The need is held:** it rises at once and falls at most 0.5 minutes a night.
+- **The ledger:** carries 60 % and adds each night's whole shortfall, ignoring nights within 30 minutes of the need.
+
+**How it was tested** (`sleep.need.sim.test.ts`). 200 people per case, each with their own usual length (±0.2 h) and Gaussian nights. Each day runs as the pipeline does it, with v39's need and ledger kept as a reference.
+
+| | v39 | v40 |
+|---|---|---|
+| Ordinary 7.5 or 8 h sleepers (± 0.5 h): days with debt, mean debt | 38 %, 9 min | 35 %, 15 min |
+| Steady 7.5 h sleepers (± 0.3 h) | 22 %, 4 min | 11 %, 3 min |
+| 7 h sleepers at the floor (± 0.5 h) | 49 %, 13 min | 44 %, 21 min |
+| 8 h → 7 h: debt in weeks 3 and 8 | 16, 10 min | **118, 70 min** |
+| 8 h → 7 h: need in week 8 | 7.09 h | **7.56 h** |
+| 7.5 h → 6.5 h: debt in week 8 | 37 min | 80 min |
+| A lasting half-hour change: debt in week 12 | 7 min | about 10 min |
+| 5 sick nights of 9.5 h: need a week / a month later | +4.8 / +0 min | +4.7 / +2.4 min |
+| One all-nighter clears in | 6 nights | about 7 nights |
+
+- **The constants were swept.** Carry 0.7–0.8, the research doc's suggestion, showed restriction even more strongly
+  (160+ min in week 8). But every ordinary night below need adds to a debt that can't go below zero, so ordinary sleepers
+  read debt on 60–65 % of days. A tolerance of 30 minutes (about one night-to-night SD) with 0.6 kept them at v39's
+  level.
+- **The Sleep Planner's time in bed never passes its age cap** in the 8 → 7 h case (a test). It repays 20 % of the
+  debt a night.
+- **The cost:** a genuine lasting drop in need takes months to be accepted: an 8 → 7 h change is fully absorbed after
+  about 4.5 months. Erring towards "you may be short" is the safer side.
+
+**On the seed** (180 days):
+
+| | v39 | v40 |
+|---|---|---|
+| Days with debt | 52 | 40 |
+| Median / mean debt | 0 / 8.9 min | 0 / 15.1 min |
+| Largest debt (the seed's short stretches) | 135 min | 286 min |
+| Mean sleep score | 91.56 | 91.40 (61 nights moved, at most 1.1) |
+
+Recovery moved by at most 0.44 through its sleep term, and the planner never hit its cap.
+
+**On the owner's data** (Oct 4–10, a local copy): the need is still the 7.5 h default (fewer than 7 nights). Debt
+reads higher on short nights: 153 minutes after the 5.4 h night of Oct 8 (v39: 83), 50 the next morning (v39: 22.5).
+
+## Why version 42: the teen floor (audit S7)
+
+**The problem.** The adult floor is the bottom of the 7–9 h guideline range (version 15), but under 18 it was 9 h, the
+middle of the 8–10 h teen range, and it stepped to 7 h on the 18th birthday.
+- 16-year-olds sleeping 8.5 ± 0.4 h, well inside their guideline, carried **63 min** of debt on average, on 85 % of
+  days, and the planner sent them to bed about 20:30.
+- On the 18th birthday the same 8 h nights went from a 9 h need to 8 h and from about **143 min** of debt to 10 the
+  next morning (the audit measured 75 → 0 under the version 39 ledger).
+
+**The change.** `populationNeedFloorHours` takes the exact age (`d.age.years`) and returns each guideline range's lower
+bound: 9 h to 12, 8 h for 13–17, 7 h from 19, sliding linearly across 12–13 and 17–19. It never changes by more than
+0.003 h a day, under the held need's 0.5-minute fall, so the version 40 hold no longer restarts on a new floor and the
+`needFloor` fold field is gone.
+
+**Measured** (`sleep.need.sim.test.ts`, 200 people per case, days 40 on):
+
+| Case | Version 41 | Version 42 |
+|---|---|---|
+| 16, sleeping 8.5 h: mean debt | 63 min (85 % of days) | **8.8 min** (25 %) |
+| 16, sleeping 7.5 h (under the 8 h floor): mean debt | 225 min | **62 min**, still shown |
+| 8 h sleepers turning 18: biggest one-day change in mean debt | 133 min (143 → 10) | **4 min** |
+| … in mean need | 60 min | **0.2 min** |
+
+Adults are unchanged: from 19 the floor is 7 h as before. No seed or owner value moved (both are adults).
+
+## Why version 43: the restorative targets penalised normal ageing (audit S8)
+
+**The problem.** The restorative part (20 % of Sleep Performance) is
+
+```
+min(100, (deep + REM share) / target) × (0.5 + 0.5 × min(1, deep share / deep target))
+```
+
+and its targets, 50 % and 13 %, were the same at every age. Deep sleep declines with age, so healthy older sleepers
+were marked down twice, through the share and through the deep factor. The audit's 70-year-old (7 % deep, 19 % REM)
+got 40 of 100 restorative, against 72 for a typical wearable night at 35.
+
+**The change.** `restorativeTargets(ageYears)` (exact age, `d.age.years`):
+
+| Age | Deep target | Deep + REM target |
+|---|---|---|
+| to 40, or unknown | 13 % | 50 % |
+| 50 | 11.05 % | 46 % |
+| 60 and over | 9.1 % | 42 % |
+
+It is linear between 40 and 60 and never raised for the young. The ratios 0.70 (deep) and 0.84 (deep + REM) are the
+relative decline in Ohayon 2004's norms from 40 to 60 (slow-wave sleep about 14 → 10 %, deep + REM about 35 → 29.5 %).
+Ratios, not the lab percentages, are applied because wrist staging reads differently from a sleep lab
+(*assumption, tunable*). The 0.5 floor factor is unchanged, so very little deep sleep still costs up to half the
+component at any age. The Sleep page's typical deep and REM ranges, and the restorative status (40 / 30 %), scale by
+the same factors.
+
+**The evidence is mixed.** Ohayon 2004 (a meta-analysis across the lifespan) finds slow-wave sleep falls with age to
+about 60; Boulos 2019 (normative PSG in healthy adults) finds no significant change in N3. Easing the target only from
+40, by at most 30 %, and keeping the floor factor, is the cautious reading: a young person's score is untouched, and
+an older one with genuinely little deep sleep still scores low.
+
+**Measured** (`sleep.restorative.sim.test.ts`: 200 people per age, deep and REM following Ohayon's slopes scaled to a
+Fitbit-like 15 % deep at 35, the same duration, efficiency and consistency at every age):
+
+| | Version 42 | Version 43 |
+|---|---|---|
+| Mean Sleep Performance at 35 / 50 / 70 | 88.4 / 86.3 / 84.7 | 88.4 / 87.8 / 87.9 |
+| 70-year-old's restorative component | 54 | 70 |
+| A 70-year-old with half the usual deep, Sleep Performance | 81.3 | 83.7, still 4.1 below a healthy 70-year-old |
+
+The audit's night: restorative 40 → 55, about +3 points of Sleep Performance. In these norms version 42's gap was
+3.6 points, smaller than the audit's 9, which used a 7 % deep night against a younger reference with more deep sleep.
+
+**Seed and owner.** The seed is 36, so nothing moved. Recomputed as a 70-year-old (`pipeline.test.ts`), its mean
+Sleep Performance rises 91.4 → 94.2 (its deep sleep is a 36-year-old's), and need, duration and efficiency are
+unchanged.
 
 ## Sleep debt: which nights count (scoring version 25)
 
@@ -170,7 +306,7 @@ day carries it. The control (session deleted, sleeping HR left) stays a night wi
 
 Sleep Performance (`rest()`, `src/core/scoring/sleep.ts`) is 0.5 duration + 0.2 efficiency + 0.2 restorative + 0.1
 consistency. The restorative part, `restorativeScore`, is the (deep + REM) share against 50 %, scaled down when deep
-is under 13 %.
+is under 13 %. Since version 43 both targets ease with age from 40 (§ Why version 43).
 
 **When Fitbit doesn't stage a main sleep** (`stagesStatus` not SUCCEEDED, so deep and REM are null):
 - if at least **5** of the last **28** staged main sleeps have a restorative component, the night takes their
@@ -219,19 +355,23 @@ its staged score; version 30's rule lost more than 10. The next day's sleep cent
 | Constant | Value | Kind |
 |---|---|---|
 | Adult floor | 7.0 h asleep | AASM / NSF lower bound (version 15; was 8.0) |
-| Under-18 floor | 9.0 h | unchanged (NSF teens 8–10 h) |
+| Teen floor | 8.0 h for 13–17; 9.0 h to 12; linear across 12–13 and 17–19 | version 42; was 9.0 h under 18 (AASM / NSF: 8–10 h at 13–18, 9–12 h at 6–12) |
 | `needQuantile` | 0.5 (median) | version 15; was 0.75 |
 | `defaultSleepNeedHours` | 7.5 h | version 15; was 8.0; used before 7 nights |
 | `minNeedNights` | 7 | unchanged |
 | `maxNeedHours` | 9.5 | unchanged |
 | Window | 28 nights | unchanged |
+| `needFallPerNightMin` | 0.5 min | version 40; *tunable* (0.25 kept normal sleepers' need too high; 1 absorbed a 1 h cut within 8 weeks) |
+| `DEBT_CARRY` | 0.6, with the whole shortfall added | version 40; was 0.55 × (need + debt − slept); *tunable* |
+| `DEBT_TOLERANCE_MIN` | 30 min | version 40; *tunable* |
+| `ON_TARGET_BAND_MIN` / ledger window | 10 min / 14 nights | unchanged |
 
 ## Worked examples (each is a test)
 
 1. **A steady 7 h sleeper:** need 7.0, debt 0, duration score 100. The Sleep Planner's 100 % plan is 7 / 0.88 =
    7.95 h in bed, bedtime 23:03 for 07:00. Version 14: 73 min of debt, about 9.4 h in bed.
 2. **Nights 8.0, 8.1 … 8.6:** need is the median, **8.3** (version 14: the upper quartile, 8.45).
-3. **Fewer than 7 nights:** 7.5 h; at age 16, 9 h.
+3. **Fewer than 7 nights:** 7.5 h; at age 16, 8 h (version 41: 9 h); at age 10, 9 h.
 4. **Chronic 6 h nights:** need 7 (the floor), so debt builds and the score shows the shortfall.
 
 ## Tests
@@ -240,15 +380,18 @@ its staged score; version 30's rule lost more than 10. The next day's sleep cent
   - the floor by age;
   - the median on even and odd counts, ignoring nights of 0 or less;
   - the 7.5 h default and the 9.5 h cap;
+  - *v40:* `heldNeedHours` (rises at once, falls half a minute a night); an 8 → 7 h sleeper's need over 140 nights; the
+    new ledger by hand (60 % carry, the 30-minute tolerance, a 14-night 1 h shortfall reading 149.9 min);
   - a 45-night simulation:
-    - a steady 7 h sleeper has no debt (version 14: 73.3 min);
+    - a steady 7 h sleeper has no debt (version 14's 8 h need: 149.9 min under the v40 ledger, 73.3 under v39's);
     - healthy varied sleepers have ≤ 15 min (version 14: > 15 for an 8 h sleeper);
     - 6.5 h sleepers have ≥ 25 min;
     - 5 short nights give ≥ 90 min;
     - 5 sick nights move one steady sleeper's need ≤ 0.3 h, less than the upper quartile.
 - **`sleepPlanner.test.ts`:** a 7 h sleeper's plan, 7.95 h in bed (version 14: > 9.3 h).
-- **`pipeline.test.ts`:** on the seed, the stored need is ≥ 7 h, equals the median of the prior 28 nights, and is
-  7.5 h in the first week.
+- **`sleep.need.sim.test.ts`** (*v40*): the table in § Why version 40, each against the v39 reference.
+- **`pipeline.test.ts`:** on the seed, the stored need is ≥ 7 h, equals the held median of the prior 28 nights, is
+  7.5 h in the first week, and each morning's need is the previous evening's plan need.
 - **`queries/sleep.test.ts`:** the first-week need is 450 min.
 - noop's 8 h cases (`ledger`, `rest`) pass 8 explicitly and keep their exact values.
 
@@ -256,6 +399,13 @@ its staged score; version 30's rule lost more than 10. The next day's sleep cent
 
 - Watson NF, et al. Recommended amount of sleep for a healthy adult (AASM / SRS). *Sleep* 2015.
 - Hirshkowitz M, et al. National Sleep Foundation's sleep time duration recommendations. *Sleep Health* 2015.
+- Ohayon MM, et al. Meta-analysis of quantitative sleep parameters from childhood to old age in healthy individuals.
+  *Sleep* 2004. https://doi.org/10.1093/sleep/27.7.1255 (the version 43 ratios).
+- Boulos MI, et al. Normal polysomnography parameters in healthy adults. *Lancet Respir Med* 2019 (no significant age
+  change in N3; see § Why version 43).
+- Paruthi S, et al. Recommended amount of sleep for pediatric populations: a consensus statement of the American
+  Academy of Sleep Medicine. *J Clin Sleep Med* 2016. https://doi.org/10.5664/jcsm.5866 (9–12 h at 6–12, 8–10 h at
+  13–18: the version 42 floors).
 - Kitamura S, et al. Estimating individual optimal sleep duration and potential sleep debt. *Sci Rep* 2016 (weighed,
   not adopted; see above).
 - noop (`ryanbr/noop`), `AnalyticsEngine.kt` `RestScorer` and `SleepDebt.kt`: the score and the debt ledger, ported

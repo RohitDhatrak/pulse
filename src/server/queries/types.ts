@@ -89,7 +89,7 @@ export type TimelineItem =
 
 export type SleepPlanVM = {
   needMin: number;
-  parts: { baselineMin: number; strainMin: number; debtMin: number; napMin: number };
+  parts: { baselineMin: number; strainMin: number; debtMin: number; napMin: number; napAsleepMin: number };
   /** Tomorrow's typical wake, epoch ms. */
   wakeAt: number;
   weekend: boolean;
@@ -277,7 +277,7 @@ export type SleepVM = {
   hoursVsNeed: Metric<{
     asleepMin: number;
     needMin: number;
-    parts: { baselineMin: number; strainMin: number; debtMin: number; napMin: number };
+    parts: { baselineMin: number; strainMin: number; debtMin: number; napMin: number; napAsleepMin: number };
     calibrating: boolean;
   }>;
   details: KeyStat[];

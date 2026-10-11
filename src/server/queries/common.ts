@@ -406,6 +406,10 @@ const PLAN_LABELS = [
 export const PLAN_EFFICIENCY_NOTE =
   "You've been awake in bed for a good part of recent nights. These bedtimes plan for 85% of your time in bed asleep. Going to bed earlier usually adds time awake, not sleep.";
 const formatHours = (min: number) => `${+(min / 60).toFixed(1)} h`;
+const formatHm = (min: number) => {
+  const m = Math.round(min);
+  return m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`;
+};
 
 export function planVM(ctx: QueryCtx, row: DayRow | undefined, isToday: boolean): Metric<SleepPlanVM> {
   const p = row?.sleepPlanner;
@@ -432,6 +436,8 @@ export function planVM(ctx: QueryCtx, row: DayRow | undefined, isToday: boolean)
     notes: [
       ...(p.efficiencyFloored ? [PLAN_EFFICIENCY_NOTE] : []),
       ...(p.capped ? [`Time in bed is capped at ${formatHours(p.inBedCapMin)} for your age.`] : []),
+      // Version 42: a nap covers tonight's extras, not the baseline need.
+      ...(p.parts.napAsleepMin > p.parts.napMin ? [`Today’s ${formatHm(p.parts.napAsleepMin)} nap covers your extra need, not your night’s sleep.`] : []),
     ],
   });
 }

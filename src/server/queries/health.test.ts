@@ -3,7 +3,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../db";
 import { dailyMetrics, dailyScores, dailyValues, healthRecords } from "../db/schema";
 import { SEED_DAYS } from "../sources/seed/scenario";
-import { copyDb, ctxFor, dayAt, seeded, USER } from "../testing";
+import { copyDb, ctxFor, dayAt, OPTS, seeded, USER } from "../testing";
+import { recompute, type RecoveryRow } from "../pipeline";
 import { getFitness, getHealthspan, getMonitor, vo2maxCaption } from "./health";
 import { getRecovery } from "./recovery";
 import { getReport } from "./reports";
@@ -86,6 +87,21 @@ describe("the sleeping heart rate and the overnight curves (SCORING_VERSION 35)"
     // Early on, before that baseline is trusted, Google's daily value under its usual name.
     const early = (await getMonitor(dayAt(8), ctxFor(db))).vitals.find((v) => v.key === "restingHr")!;
     expect(early).toMatchObject({ label: "Resting heart rate", metric: { value: (await metricsOn(dayAt(8))).rhrBpm } });
+  });
+
+  it("a night with neither Google's resting HR nor a sleeping HR leaves the term out, never Pulse's estimate (version 39)", async () => {
+    const d = dayAt(150);
+    const db2 = await copyDb(db);
+    await db2.update(dailyMetrics).set({ rhrBpm: null, nonRemHrBpm: null }).where(and(eq(dailyMetrics.userId, USER), eq(dailyMetrics.day, d)));
+    await db2.update(dailyScores).set({ scoringVersion: 0 }).where(eq(dailyScores.userId, USER));
+    await recompute(db2, OPTS);
+    const [row] = await db2.select().from(dailyScores).where(and(eq(dailyScores.userId, USER), eq(dailyScores.day, d)));
+    expect(row.sessionRhrBpm).not.toBeNull(); // the session estimate exists, and is still Strain's fallback
+    const r = row.recovery as RecoveryRow;
+    expect(r.value).not.toBeNull();
+    expect(r.inputs).toMatchObject({ rhr: null, rhrSource: null, dailyRhr: null });
+    const rec = (await getRecovery(d, ctxFor(db2))).contributors.find((c) => c.key === "rhr")!;
+    expect(rec.metric.value).toBeNull();
   });
 
   it("the HRV and SpO2 sheets carry last night's curve, the same as Sleep's; the others carry none", async () => {

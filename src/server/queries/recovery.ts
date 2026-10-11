@@ -118,7 +118,8 @@ export function contributors(row: DayRow | undefined, isToday: boolean): Contrib
       // Version 35: Fitbit's non-REM heart rate once its own baseline is established.
       label: inputs?.rhrSource === "sleep" ? "Sleeping heart rate" : "Resting heart rate",
       unit: "bpm",
-      metric: metric("rhr", inputs?.rhr ?? row?.sessionRhr, missing),
+      // What Recovery scored (null when the term was left out, version 39); before a score, Google's daily value.
+      metric: metric("rhr", r?.value != null ? inputs?.rhr : row?.metrics?.rhrBpm, missing),
       baseline: base(b?.rhr, usable(b?.rhr)),
       points: pts("rhr"),
       direction: "down",

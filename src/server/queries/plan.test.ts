@@ -38,3 +38,29 @@ describe("planVM (SCORING_VERSION 24)", () => {
     expect(v.notes).toEqual([PLAN_EFFICIENCY_NOTE, "Time in bed is capped at 9 h for your age."]);
   });
 });
+
+describe("planVM around midnight (SCORING_VERSION 41)", () => {
+  it("a 00:00 wake: the wake at midnight starting the wake day, bedtimes the afternoon before", () => {
+    const late = Array.from({ length: 14 }, (_, i) => ({ day: new Date(Date.UTC(2026, 8, 17 + i)).toISOString().slice(0, 10), wakeMin: i % 2 ? 20 : 1420, efficiency: 0.9 }));
+    const v = vm({ nights: late });
+    expect(v.wakeAt).toBe(Date.UTC(2026, 9, 1, 0, 0));
+    // 480 / 0.9 = 533.3 min in bed: 15:07 on Sep 30 (version 40: wake 12:00 on Oct 1, bedtime 03:07).
+    expect(v.plans[0].bedtimeAt).toBe(Date.UTC(2026, 9, 1) - Math.round((480 / 0.9) * 60) * 1000);
+  });
+});
+
+describe("planVM after a nap (SCORING_VERSION 42)", () => {
+  it("a 1 h 50 min nap plans the baseline (version 41: 5 h 40 min of a 7.5 h need), and says why", () => {
+    const v = vm({ baselineNeedHours: 7.5, napMin: 110 });
+    expect(v.needMin).toBeCloseTo(450, 9);
+    expect(v.parts).toMatchObject({ napMin: 0, napAsleepMin: 110 });
+    expect(v.notes).toEqual(["Today’s 1 h 50 min nap covers your extra need, not your night’s sleep."]);
+    // 450 / 0.9 = 500 min before 07:00: 22:40 (version 41: 340 / 0.9 = 377.8 min, 00:42).
+    expect(v.plans[0].bedtimeAt).toBe(Date.UTC(2026, 9, 1, 7) - 500 * 60 * 1000);
+  });
+
+  it("a nap the extras absorb adds no note; an hour-long one shows as 1 h", () => {
+    expect(vm({ debtMin: 100, napMin: 15 }).notes).toEqual([]);
+    expect(vm({ napMin: 60 }).notes).toEqual(["Today’s 1 h nap covers your extra need, not your night’s sleep."]);
+  });
+});
