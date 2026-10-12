@@ -17,7 +17,7 @@ export function LoadChart({ load }: { load: FitnessVM["load"] }) {
   const anim = useSeriesAnimation()
   const last = [...load].reverse().find((p) => p.ctl !== null)
   const summary = last
-    ? `Training load over 90 days: fitness ${formatValue("int", last.ctl)}, fatigue ${formatValue("int", last.atl)}, form ${formatValue("signedInt", last.tsb)} today.`
+    ? `Training load over 90 days: fitness ${formatValue("int", last.ctl)}, fatigue ${formatValue("int", last.atl)}, form ${formatValue("signedInt", last.tsb)} on the last full day.`
     : "No training load data yet."
   const ticks = load.filter((p, i) => i > 0 && p.day.slice(0, 7) !== load[i - 1].day.slice(0, 7)).map((p) => p.day)
 
@@ -58,7 +58,7 @@ export function LoadChart({ load }: { load: FitnessVM["load"] }) {
           <Line dataKey="atl" type="monotone" stroke="var(--color-atl)" strokeWidth={1.5} dot={false} connectNulls={false} {...anim} />
         </ComposedChart>
       </ChartFigure>
-      {/* Each series' mark as drawn (two lines, then the bars) with today's value, in the plot's order. */}
+      {/* Each series' mark as drawn (two lines, then the bars) with the last full day's value, in the plot's order. */}
       {last && (
         <ul aria-hidden className="mt-3 flex flex-wrap justify-center gap-x-5 gap-y-1 text-xs leading-4 font-medium text-muted-foreground">
           {(

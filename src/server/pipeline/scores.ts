@@ -7,6 +7,7 @@ import { deviation, illnessWardZ, isTrusted, isUsable, nextHold, noHold, sigma }
 import { chargeDrivers, type ChargeDriver } from "@/core/scoring/drivers";
 import { forecast as recoveryForecast } from "@/core/scoring/forecast";
 import { evaluateWithTrainingLoad, type ReadinessDay } from "@/core/scoring/readiness";
+import { standardConfig } from "@/core/scoring/trainingLoad";
 import { gatedRecovery, minBaselineNights, personalSleepCentre } from "@/core/scoring/recovery";
 import { allNighterConfig, awakeAllNight, creditedSleepMin, hypnogramMetrics, heldNeedHours, ledger, minNeedNights, minUsualRestorativeNights, personalizedNeedHours, rest, restorativeScore, usualRestorativeNights } from "@/core/scoring/sleep";
 import { percentile, toStrainScale } from "@/core/scoring/strain";
@@ -21,7 +22,7 @@ import type { ReportDay } from "@/core/algorithms/reports";
 import { sleepPlan } from "@/core/algorithms/sleepPlanner";
 import { nightCovered, sleepRegularityIndex, sriConsistency, sriDisplay } from "@/core/algorithms/sleepRegularity";
 import { strainTarget } from "@/core/algorithms/strainTarget";
-import { hardOrLateWorkout, typicalSession } from "@/core/scoring/load";
+import { hardOrLateWorkout, seenLoad, typicalSession } from "@/core/scoring/load";
 import { stress } from "@/core/algorithms/stress";
 import { type Data, r1, round, type Segment, type Session, touching } from "./data";
 import type {
@@ -91,7 +92,6 @@ export const newFold = () => ({
   stillMedians: [] as (number | null)[],
   reportRows: [] as ReportDay[],
   wakeNights: [] as { day: string; wakeMin: number; efficiency: number | null }[],
-  prevAcwr: null as number | null,
 });
 
 /** One day's inputs. */
@@ -381,19 +381,23 @@ function skinDeviation(d: Day, skinB: BaselineState | null): number | null {
   return skinB && isUsable(skinB) ? t - skinB.baseline : null;
 }
 
-// ── Training load and readiness (today's load counts toward today's ACWR) ──
+// ── Training load and readiness (the ratio runs through yesterday: today is still going) ──
 
-export function scoreTrainingLoad(f: Fold, d: Day, rec: RecoveryRow): TrainingLoadRow {
+export function scoreTrainingLoad(data: Data, f: Fold, d: Day, rec: RecoveryRow): TrainingLoadRow {
   const { hrv, rhr, resp } = rec.inputs;
-  // Linear TRIMP, not Effort: a worn day with too little HR is a measured 0, an unworn day has no load.
-  // Each column holds its own series only: a night that scored the sleeping HR never fills the daily column (version 39).
-  f.readinessRows.push({ day: d.day, hrv, rhr, resp, load: d.s1.trimp ?? (d.worn ? 0 : null), sleepHr: rec.inputs.sleepHr ?? null, dailyRhr: rec.inputs.dailyRhr ?? null });
-  // The resting-HR signal compares tonight with the same series' history (version 35).
-  const { readiness, trainingLoad } = evaluateWithTrainingLoad(onSeries(f.readinessRows, rec.inputs.rhrSource), d.day);
+  // Linear TRIMP, not Effort, on days that were seen: a day worn only in bed has no load (unknown), not a rest day's 0
+  // (version 46). Each column holds its own series only: a night that scored the sleeping HR never fills the daily
+  // column (version 39).
+  const load = seenLoad(d.s1.trimp, d.worn, awakeWornMin(data, d));
+  f.readinessRows.push({ day: d.day, hrv, rhr, resp, load, sleepHr: rec.inputs.sleepHr ?? null, dailyRhr: rec.inputs.dailyRhr ?? null });
+  // The resting-HR signal compares tonight with the same series' history (version 35). The ratio, monotony and the
+  // load signal read the days before today (version 46): this morning's load is only the night's, so the band changed
+  // after the workout. CTL/ATL run through today (the chart shows complete days only).
+  const { readiness, trainingLoad } = evaluateWithTrainingLoad(onSeries(f.readinessRows, rec.inputs.rhrSource), d.day, standardConfig, "yesterday");
   return {
+    load,
     acwr: readiness.acwr,
     lightLoad: readiness.lightLoad,
-    acwrPrior: f.prevAcwr,
     monotony: readiness.monotony,
     level: readiness.level,
     state: trainingLoad.state,
@@ -404,16 +408,16 @@ export function scoreTrainingLoad(f: Fold, d: Day, rec: RecoveryRow): TrainingLo
   };
 }
 
-// ── Strain Target: prior days' load (TRIMP) and Recovery, and yesterday's ACWR ──
+// ── Strain Target: prior days' load (TRIMP) and Recovery, and the ratio through yesterday ──
 
-export function scoreStrainTarget(f: Fold, rec: RecoveryRow): StrainTargetRow {
+export function scoreStrainTarget(f: Fold, rec: RecoveryRow, tl: TrainingLoadRow): StrainTargetRow {
   if (rec.value == null) return { reason: rec.reason!, ...(rec.nightsLeft !== undefined && { nightsLeft: rec.nightsLeft }) };
   // scoreRecovery and scoreTrainingLoad have already added today's row; the target uses the days before it.
   const t = strainTarget({
     priorLoad: f.readinessRows.slice(0, -1).map((r) => r.load ?? null),
     priorRecovery: f.recoveries.slice(0, -1),
     recovery: rec.value,
-    acwr: f.prevAcwr,
+    acwr: tl.acwr,
   });
   return t ? { reason: null, ...t } : { reason: "calibrating" };
 }

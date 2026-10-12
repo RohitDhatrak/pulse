@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../db";
 import { dailyMetrics, dailyScores, dailyValues, healthRecords } from "../db/schema";
 import { SEED_DAYS } from "../sources/seed/scenario";
-import { copyDb, ctxFor, dayAt, OPTS, seeded, USER } from "../testing";
+import { copyDb, ctxFor, dayAt, NOW, OPTS, seeded, USER } from "../testing";
 import { recompute, type RecoveryRow } from "../pipeline";
 import { getFitness, getHealthspan, getMonitor, vo2maxCaption } from "./health";
 import { getRecovery } from "./recovery";
@@ -150,6 +150,18 @@ describe("getHealthspan (SCORING_VERSION 19)", () => {
     const h = row.h as { reason: string; activityDays: number };
     expect(h.reason).toBe("calibrating");
     expect(vm.result).toMatchObject({ value: null, reason: "calibrating", nightsLeft: Math.max(1, 14 - h.activityDays) });
+  });
+});
+
+describe("the Fitness load chart shows complete days (SCORING_VERSION 46)", () => {
+  it("ends yesterday while today is still going, and on the last stored day once that day is over", async () => {
+    const live = (await getFitness(ctxFor(db))).load;
+    expect(live).toHaveLength(90);
+    expect(live.at(-1)!.day).toBe(dayAt(SEED_DAYS - 2));
+    expect(live.at(-1)!.ctl).not.toBeNull();
+    // A day later, the seed's last day is complete.
+    const later = (await getFitness(ctxFor(db, NOW + 86_400))).load;
+    expect(later.at(-1)!.day).toBe(today);
   });
 });
 

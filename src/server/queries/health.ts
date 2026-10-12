@@ -568,8 +568,10 @@ export async function getFitness(ctx: QueryCtx): Promise<FitnessVM> {
       : tl?.lightLoad
         ? none("light_load")
         : none("calibrating", Math.max(1, minChronic - effortDays));
+  // Complete days only (version 46): today's row holds the load so far, so its fatigue dipped each morning.
+  const loadEnd = last === today ? addDays(last, -1) : last;
   const load = Array.from({ length: 90 }, (_, k) => {
-    const d = addDays(last, k - 89);
+    const d = addDays(loadEnd, k - 89);
     const t = rows.get(d)?.trainingLoad;
     return { day: d, ctl: t?.ctl ?? null, atl: t?.atl ?? null, tsb: t?.tsb ?? null };
   });

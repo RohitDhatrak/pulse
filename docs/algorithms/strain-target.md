@@ -5,7 +5,7 @@ Code: `src/core/algorithms/strainTarget.ts`. Tests: `strainTarget.test.ts` (and 
 
 Strain Target is today's recommended Day Strain range, on the reference app's 0–21 scale. Since `SCORING_VERSION` 11
 it is worked out in **linear heart-rate load (TRIMP)** and converted to 0–21 only for display:
-- it starts from your **typical training session**;
+- it starts from your **typical training session**, at least a **starter session** (about Strain 8) since version 48;
 - scales it by how today's Recovery compares with **your own recent Recoveries**;
 - gives a range about **one Strain point** wide;
 - holds it at your typical session while your load is climbing fast or while you come back from a break.
@@ -17,18 +17,19 @@ Every design choice was checked by simulation. § Why explains each one with num
 ```mermaid
 flowchart TB
   L["Prior days' load (TRIMP), last 28"] --> N{"≥ 7 days with a load?"}
-  N -->|no| CAL[No target: calibrating]
+  N -->|no| CAL["No target: calibrating (only the first week since v48)"]
   N -->|yes| REF["Typical session = median of the training days<br/>(loads ≥ 30 % of the 90th percentile)"]
   L2["Days 29–56"] --> PROG["Limit: ≤ 1.10 × the median of the previous 28 days' sessions at today's level (4+ of them)"]
   REF --> PROG
+  PROG --> ST["At least the starter session: 30 TRIMP (v48); below it the range is a starter"]
   R["Today's Recovery"] --> G["g(R): ln multiplier, 10 → 0.35×, 58 → 1×, 90 → 1.4×"]
   RH["Prior 28 Recoveries (≥ 14)"] --> C["centre = mean g"]
   G --> M["m = exp(g(R) − centre)"]
   C --> M
-  PROG --> MID["mid = typical session × m"]
+  ST --> MID["mid = typical session × m"]
   M --> MID
   MID --> RANGE["range = mid ÷ 1.25 … mid × 1.25"]
-  RANGE --> CAP{"ACWR > 1.3, or no session in the last 5 days?"}
+  RANGE --> CAP{"ACWR > 1.3, or no session in the last 5 days (not on the starter)?"}
   CAP -->|yes| HOLD["top = typical session (width kept)"]
   CAP -->|no| D
   HOLD --> D["→ 0–21 (toStrainScale ∘ trimpToStrain), shifted into 4–19"]
@@ -37,10 +38,12 @@ flowchart TB
 ## Formula
 
 1. **Inputs:**
-   - `priorLoad`: each earlier day's TRIMP (`strain.trimp`; 0 = worn with too little heart rate, null = band off);
+   - `priorLoad`: each earlier day's load as training load counts it (`training_load.load`: TRIMP; 0 = seen with too
+     little heart rate; null = band off or, since version 46, not seen, such as a day worn only in bed);
    - `priorRecovery`: earlier days' Recovery scores;
    - today's `recovery`;
-   - yesterday's `acwr` (on TRIMP).
+   - the ratio through yesterday (on TRIMP): since version 46 the day's own `training_load.acwr`, the same value
+     it read before as the previous day's.
 2. **Typical session (`ref`).**
    - Take the days with a load among the last 28. Fewer than 7 → no target, reason `calibrating`.
    - Training days are the loads ≥ 30 % of that window's 90th percentile.
@@ -56,6 +59,13 @@ flowchart TB
      (100 → 200), the target is held at 110 until the bigger sessions reach days 29–56, then steps up.
    - *Before version 26* the limit used days 29–56's typical *day*. After a low month that was a rest day, so the
      target sat near rest level (Strain about 5–6) for up to 5 weeks, then jumped about 6 points (§ Why version 26).
+   - The limit applies only to your own typical session (none when it is 0).
+3a. **Starter session** (*since version 48*). `ref = max(ref, starterSession)`, after the limit, with
+   `starterSession` 30 TRIMP (Strain 8.1).
+   - When it sets `ref`, the row's `starter` is true. The range shows as an estimate, and the "returning" hold is off:
+     there are no sessions of your own to come back from. "Capped" still applies.
+   - So with 7+ days of load there is always a target. *Before version 48* a typical session of 0 (heart rate never
+     in zone 1) gave none, stored as `calibrating` for as long as the band was worn (§ Why version 48).
 4. **Recovery multiplier.**
    - `g(R)` is linear in ln between the anchors (10, ln 0.35), (58, 0) and (90, ln 1.4), and flat outside them.
    - With at least 14 prior Recoveries, `centre` = the mean of `g` over the last 28; otherwise 0.
@@ -67,7 +77,8 @@ flowchart TB
    - "capped" wins the label when both apply.
 7. **Display.**
    - Each bound goes through `toStrainScale(trimpToStrain(x))`.
-   - A range below 4 or above 19 is **shifted** into [4, 19], never squeezed.
+   - A range below 4 or above 19 is **shifted** into [4, 19], never squeezed. Since version 48 the lowest possible
+     range (the starter on a red day) starts at 5.3, so only the upper bound is reached.
    - `base` = the typical session on 0–21.
 
 As multiples of the typical session (uncentred, or on a day at your own usual Recovery = 1×):
@@ -180,11 +191,52 @@ at 66 until the 120s reach days 29–56.
 
 **Not fixed here.** A once-a-week beginner still sees one jump of about 6 points when the third session enters the
 window, with or without any limit (4.6 with none). That is `typicalSession` switching from rest days to sessions,
-not the limit.
+not the limit. *Since version 48* the jump starts from the starter session instead of a rest day: 7.2 → 4.3 points
+in the version 48 simulation.
 
 **On the seed** one day of 180 moves: on 2026-05-18 the typical session is 11.25 instead of 11.37. The median of
 the earlier month's sessions is a little lower than its old "typical session". The seed never has a low month with
 the band on, so nothing else changes.
+
+## Why version 48: a starter session
+
+**The problem.** TRIMP only counts heart rate at or above 50 % of heart-rate reserve (Edwards zone 1). For someone
+with a resting HR of 70 and a maximum of 170 that is 120 bpm, above many people's brisk walk. Their every load is 0,
+so the typical session is 0, and the target was null, stored as `reason: "calibrating"` and shown as "Calibrating"
+for as long as they wore the band. Rare trainers had the opposite problem: with a session every other week the
+typical session is a rest day, and the target asked for one.
+
+**The fix.** The typical session is at least a starter session, 30 TRIMP (Strain 8.1), and the range built on it
+is marked as an estimate. Only Strain Target uses it: the Sleep Planner and the Recovery forecast still compare
+today's load with your own typical session.
+
+**How it was tested.** The real `strainTarget`, 30 simulated people per case, Recovery 58, ACWR 1, days 28–98
+(`strainTarget.sim.test.ts`, and a scratch sweep over the starter):
+
+| Person | Version 47 | Starter 20 | **30** | 45 |
+|---|---|---|---|---|
+| Heart rate never in zone 1: days without a target | 100 % | 0 | **0** | 0 |
+| A few minutes of zone 1: target top / "returning" | 4.6 / 24.6 % | 7.7 / 0 | **8.6 / 0** | 9.6 / 0 |
+| One 150 session every other week: target top | 4.9 | 7.7 | **8.6** | 9.6 |
+| Once a week; 3 a week at 80; 4 a week at 118 | 12.2; 10.9; 11.8 | same | **same** | same |
+| 3 a week at 40 (a light trainer): on the starter | 0 % | 0 % | **0 %** | 97 % |
+| Once-a-week beginner (70 rest days, then 1 × 150): largest 1-day jump | 7.2 | 5.2 | **4.3** | 3.4 |
+| 3-a-week beginner (70 rest days, then 3 × 120); a 28-day break with the band on (4 × 118): pinned days, jumps, "returning" | unchanged | same | **same** | same |
+| Never in zone 1, doing the middle of the range for 26 weeks: end ÷ start | — | 1.05 | **1.05** | 1.05 |
+
+- **45 would replace light trainers' own sessions** (40 TRIMP, 3 a week) with the starter. 20 asks less and leaves
+  the beginner's jump larger. 30 is the largest that leaves every real trainer above it.
+- **Following the top of the range every day compounds:** ×4.7 in 26 weeks from the starter. It does for anyone (a
+  daily 118 trainer: ×3.1 in version 47); the first month from the starter has no earlier sessions to limit it.
+- **During a long break with the band on** the own typical session can fall under the starter late in the break.
+  The "returning" share was unchanged (21.5 %).
+
+**On the demo database** no target moved: the typical session is about 118, so no day is on the starter, and with
+`starter: false` the code path is version 47's. The row gains `starter` (the golden hash moved for that key). The
+same days with a max HR of 400 (every TRIMP 0) get a starter target on every day with a Recovery (version 47: none).
+
+**On the owner's data** (local copy): no target changed. Recovery is still calibrating, so there is no target in
+either version yet; the one 82-TRIMP day makes the owner's own typical session larger than the starter.
 
 ## Constants (`strainTargetConfig`)
 
@@ -200,7 +252,8 @@ the band on, so nothing else changes.
 | `width` | 1.25 | symmetric, about 1 Strain point |
 | `acwrCapAbove` | 1.3 | Gabbett 2016's sweet-spot edge |
 | `breakDays` | 5 | longer than an ordinary gap between sessions (≤ 3 days on the seed) |
-| `min` / `max` | 4 / 19 | display bounds (spec) |
+| `starterSession` | 30 TRIMP (Strain 8.1) | version 48: about half an hour in zone 1 or a quarter in zone 2, roughly a day's share of 150 moderate minutes a week; swept (§ Why version 48) |
+| `min` / `max` | 4 / 19 | display bounds (spec); since version 48 the lower one isn't reached |
 
 ## Worked examples
 
@@ -214,6 +267,8 @@ sessions and 3 rest days a week.
 5. **R 80 after 5 days without a session:** **10.3–11.3**, "returning".
 6. **R 80 for someone whose usual Recovery is 40:** **12.2–13.3**. Far better than *their* normal, so more.
 7. **Day 8 (7 days of history), R 80:** **11.3–12.4**, tagged as an estimate. Version 10 gave 14–18.
+8. **Heart rate never in zone 1** (every load 0), R 58: the starter, **7.6–8.6** around 8.1, an estimate, never
+   "returning". Version 47: no target ("calibrating"). With ACWR 1.5 the top is held at 8.1 ("capped").
 
 ## Not changed here
 

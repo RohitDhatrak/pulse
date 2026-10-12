@@ -113,8 +113,20 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  *     at 60 (the age-typical decline), so healthy older sleepers aren't marked down about 9 points.
  * 44: A sleep regularity period counts when we know how its night went (a main sleep, or the night spent awake), not
  *     when the band was worn 720+ minutes: night-only wearers get an SRI, and a missed night no longer reads as awake.
+ * 45: The training-load ratio is EWMA acute ÷ EWMA chronic (τ 7 and 42, Fitness' ATL and CTL), not a 7-day mean over a
+ *     28-day one: a session no longer drops out at once on day 8, so the same weekly load on different days stops
+ *     swinging between building fast, spiking and ramping down (and capping the Strain Target).
+ * 46: Training load reads complete, seen days: the ratio, monotony and the readiness load signal run through
+ *     yesterday (this morning's near-0 load flipped the band after the workout), and a day worn only in bed is unknown
+ *     (under 20 TRIMP and 120 minutes of awake wear) instead of a measured rest day. The row stores the day's `load`;
+ *     `acwrPrior` is gone (Strain Target reads the row's ratio, the same value).
+ * 47: Monotony is information only: it no longer raises a "watch" that kept every regular daily trainer from "primed",
+ *     and identical days read the cap (10) instead of no monotony.
+ * 48: Strain Target's typical session is at least a starter session (30 TRIMP, Strain 8.1): someone whose heart rate
+ *     never reached zone 1 had no target ("calibrating" forever), and someone training every other week was asked
+ *     for a rest day. The row gains `starter`.
  */
-export const SCORING_VERSION = 44;
+export const SCORING_VERSION = 48;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
@@ -287,11 +299,13 @@ export type EnergyBankRow =
     };
 
 export type TrainingLoadRow = {
+  /** The day's load as training load counts it (TRIMP), or null when the band was off or the day not seen (version 46). */
+  load: number | null;
+  /** Through the day before D (version 46; was through D, and Strain Target read the day before's as `acwrPrior`). */
   acwr: number | null;
   /** Too little chronic load to compare weeks: no ratio (version 27, readiness' `acwrChronicFloor`). */
   lightLoad: boolean;
-  /** ACWR over the days before D (what Strain Target uses). */
-  acwrPrior: number | null;
+  /** Foster monotony through the day before D, at most 10; information only, never in `level` (version 47). */
   monotony: number | null;
   level: string;
   state: string;

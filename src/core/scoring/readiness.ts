@@ -1,10 +1,12 @@
 // Ports ReadinessEngine.kt (HRV / RHR / resp z-signals, ACWR, Foster monotony → a level) and the
 // evaluateWithTrainingLoad wrapper from ReadinessTrainingLoad.kt. Not ported: the memo cache and copy ids.
 // Pulse's own (SCORING_VERSION 10): ACWR, monotony and CTL/ATL run on linear TRIMP (`load`), not on the log-mapped
-// Effort; the ACWR windows are calendar days ending today; "ramping down" is informational. Why:
+// Effort; "ramping down" is informational. Since SCORING_VERSION 45 the ratio is EWMA acute ÷ EWMA chronic (τ 7 and
+// 42, Fitness' ATL and CTL), not a 7-day mean over a 28-day one. Why:
 // docs/algorithms/training-load.md. Since SCORING_VERSION 27, a chronic load under `acwrChronicFloor` gives no ratio
 // ("light load") unless acute ÷ the floor still shows a jump: the ratio of two near-zero means is noise, and one walk
-// read "spiking".
+// read "spiking". Since SCORING_VERSION 47 monotony is information only: it never raises a signal, so a regular
+// daily trainer (always ≥ 2) can still be "primed".
 import { foldHistory, isoEpochDay, isUsable, readinessHRVLnCfg, restingHRCfg } from "./baselines";
 import { readiness as readinessConfidence } from "./confidence";
 import { evaluate as evaluateTrainingLoad, standardConfig, type TrainingLoadConfig, type TrainingLoadResult } from "./trainingLoad";
@@ -24,18 +26,16 @@ export interface ReadinessDay {
 
 export type ReadinessLevel = "primed" | "balanced" | "strained" | "rundown" | "insufficient";
 export type ReadinessFlag = "good" | "neutral" | "watch" | "bad";
-export type ReadinessSignalKey = "hrv" | "rhr" | "respRate" | "acwr" | "monotony";
+export type ReadinessSignalKey = "hrv" | "rhr" | "respRate" | "acwr";
 export type ReadinessDetail =
   | "HRV_GOOD" | "HRV_WATCH" | "HRV_BAD"
   | "RHR_GOOD" | "RHR_WATCH" | "RHR_BAD"
   | "RESP_WATCH" | "RESP_BAD"
   | "NORMAL_RANGE"
-  | AcwrBand
-  | "MONOTONY_WATCH";
+  | AcwrBand;
 
 export type ReadinessEvidence =
   | { kind: "metricVsBaseline"; value: number; baseline: number; decimals: number; unit: "ms" | "bpm" | "rpm" }
-  | { kind: "monotony"; value: number }
   /** `floor`: set when chronic was under `acwrChronicFloor` and the ratio is acute ÷ floor (version 27). */
   | { kind: "trainingLoad"; acute: number; chronic: number; floor?: number };
 
@@ -56,7 +56,10 @@ export interface Readiness {
   acwr: number | null;
   /** Chronic load under `acwrChronicFloor` and no jump: too little load to compare weeks (version 27). */
   lightLoad: boolean;
-  /** Foster monotony over the last week, or null. */
+  /**
+   * Foster monotony over the last week (mean ÷ SD, at most `monotonyMax`), or null. Information only: it is not a
+   * signal and never changes the level (version 47).
+   */
   monotony: number | null;
   confidence: ScoreConfidence;
 }
@@ -71,8 +74,58 @@ export const acwrChronicFloor = 30;
 /** Under the floor, acute ÷ floor is kept from here up: "building fast" (1.3) or "spiking" (1.5). */
 export const lightLoadJump = 1.3;
 
+/**
+ * The ratio's EWMA time constants (version 45): Fitness' ATL and CTL (`trainingLoad.standardConfig`, τ 7 and 42 days).
+ * A plain 7-day mean drops each session out at once on day 8, so the same weekly load on different days swung the
+ * ratio from 0.22 to 1.83. docs/algorithms/training-load.md § Why version 45.
+ */
+export interface AcwrConfig {
+  acuteTau: number;
+  chronicTau: number;
+}
+export const acwrConfig: AcwrConfig = { acuteTau: standardConfig.acuteTimeConstantDays, chronicTau: standardConfig.chronicTimeConstantDays };
+/** Loaded days whose mean seeds both EWMAs (trainingLoad's `primeDays`). */
+export const acwrPrimeDays = standardConfig.primeDays;
+
+type Loads = { acute: number; chronic: number };
+
+/**
+ * The last day the load signals (ratio, monotony) read (version 46). "yesterday" for a day still going: the pipeline
+ * scores today from the morning on, when its load is only the night's (about 0), so the band read a hypothetical rest
+ * day and changed after the workout. HRV, resting HR and respiration always use today's (complete) night.
+ */
+export type LoadThrough = "today" | "yesterday";
+
+/**
+ * Today's acute and chronic EWMAs of the days with a load, oldest first, seeded from the mean of the first
+ * `acwrPrimeDays`. A day without a load takes no step; unlike trainingLoad, a long gap never restarts the run.
+ */
+export function ewmaLoads(rows: ReadinessDay[], config: AcwrConfig = acwrConfig): Loads | null {
+  const loads = [...rows].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0)).flatMap((d) => (d.load == null ? [] : [d.load]));
+  if (loads.length === 0) return null;
+  const prime = loads.slice(0, acwrPrimeDays);
+  let acute = mean(prime) as number;
+  let chronic = acute;
+  const aA = 1 - Math.exp(-1 / config.acuteTau);
+  const aC = 1 - Math.exp(-1 / config.chronicTau);
+  for (const load of loads.slice(prime.length)) {
+    acute += aA * (load - acute);
+    chronic += aC * (load - chronic);
+  }
+  return { acute, chronic };
+}
+
+/** The version 27 rule on the EWMAs: acute ÷ chronic, or acute ÷ the floor when that is still a jump, else light. */
+export function dayRatio(l: Loads | null): { ratio: number; acute: number; chronic: number; floor?: number } | "light" {
+  if (l == null) return "light";
+  if (l.chronic >= acwrChronicFloor) return { ratio: l.acute / l.chronic, acute: l.acute, chronic: l.chronic };
+  if (l.acute / acwrChronicFloor >= lightLoadJump) return { ratio: l.acute / acwrChronicFloor, acute: l.acute, chronic: l.chronic, floor: acwrChronicFloor };
+  return "light";
+}
+
 export const baselineWindow = 30;
 export const minBaseline = 7;
+/** Calendar windows for the ratio's coverage gates and for monotony; the ratio itself is EWMA (version 45). */
 export const acuteWindow = 7;
 export const chronicWindow = 28;
 /** Days with a load needed in the 28-day chronic window, and in the 7-day acute window. */
@@ -82,8 +135,12 @@ export const respZWatch = 1.5;
 export const respZBad = 2.0;
 /** SleepStager.respPlausibleRangeBpm, inclusive. */
 export const respPlausibleRange = { min: 8.0, max: 25.0 };
-export const monotonyWatch = 2.0;
-/** An SD at or below this share of the mean (or of 1) is treated as zero: no monotony for identical days. */
+/**
+ * Monotony's ceiling (version 47). Foster's "high" is 2; a daily trainer varying ±20 % reads about 9. Near-identical
+ * weeks would otherwise divide by an SD near 0.
+ */
+export const monotonyMax = 10;
+/** An SD at or below this share of the mean (or of 1) is treated as zero: identical days read `monotonyMax`. */
 export const monotonySdEpsilon = 1e-9;
 
 const inResp = (v: number) => v >= respPlausibleRange.min && v <= respPlausibleRange.max;
@@ -166,10 +223,17 @@ function synthesize(signals: ReadinessSignal[], hasHistory: boolean): ReadinessL
 
 /**
  * Readiness from daily rows in any order. "Today" is the row for `today` when given (none → insufficient),
- * else the newest row. ACWR and monotony use the `load` of the calendar days ending today (rows after it are
- * ignored): acute = the mean over the days with a load among the last 7, chronic = the same over the last 28.
+ * else the newest row. ACWR and monotony use the `load` of the days up to today, or up to yesterday with
+ * `loadThrough` "yesterday" (later rows are ignored). The ratio needs `minChronic` days with a load among the 28
+ * ending on that day and `minAcute` among the 7; it is the EWMA acute over the EWMA chronic (version 45). Monotony is
+ * over the same 7 calendar days and is information only (version 47).
  */
-export function evaluate(days: ReadinessDay[], today: string | null = null): Readiness {
+export function evaluate(
+  days: ReadinessDay[],
+  today: string | null = null,
+  config: AcwrConfig = acwrConfig,
+  loadThrough: LoadThrough = "today",
+): Readiness {
   const sorted = [...days].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
   const latest = today != null ? sorted.find((d) => d.day === today) : sorted.at(-1);
   if (!latest) return { level: "insufficient", signals: [], acwr: null, lightLoad: false, monotony: null, confidence: "calibrating" };
@@ -195,37 +259,34 @@ export function evaluate(days: ReadinessDay[], today: string | null = null): Rea
     }
   }
 
+  // The load signals' last day: today, or yesterday when today is still going (version 46).
   const todayOrdinal = isoEpochDay(latest.day);
-  const lastDays = (n: number) =>
-    sorted.filter((d) => {
-      const o = isoEpochDay(d.day);
-      return o != null && todayOrdinal != null && o <= todayOrdinal && o > todayOrdinal - n;
-    });
-  const acuteLoads = pick(lastDays(acuteWindow), (d) => d.load);
-  const chronicLoads = pick(lastDays(chronicWindow), (d) => d.load);
+  const endOrdinal = todayOrdinal == null ? null : todayOrdinal - (loadThrough === "yesterday" ? 1 : 0);
+  const upToEnd = (d: ReadinessDay) => {
+    const o = isoEpochDay(d.day);
+    return o != null && endOrdinal != null && o <= endOrdinal;
+  };
+  const lastDays = (n: number) => sorted.filter((d) => upToEnd(d) && (isoEpochDay(d.day) as number) > (endOrdinal as number) - n);
   let acwr: number | null = null;
   let lightLoad = false;
   let monotony: number | null = null;
-  if (chronicLoads.length >= minChronic && acuteLoads.length >= minAcute) {
-    const acute = mean(acuteLoads) as number;
-    const chronic = mean(chronicLoads) as number;
-    if (chronic >= acwrChronicFloor) {
-      acwr = acute / chronic;
-      signals.push(acwrSignal(acwr, acute, chronic));
-    } else if (acute / acwrChronicFloor >= lightLoadJump) {
-      // A light load that jumped in absolute terms: still building fast or spiking.
-      acwr = acute / acwrChronicFloor;
-      const signal = acwrSignal(acwr, acute, chronic);
-      signals.push({ ...signal, evidence: { kind: "trainingLoad", acute, chronic, floor: acwrChronicFloor } });
-    } else {
+  if (pick(lastDays(chronicWindow), (d) => d.load).length >= minChronic && pick(lastDays(acuteWindow), (d) => d.load).length >= minAcute) {
+    const today = dayRatio(ewmaLoads(sorted.filter(upToEnd), config));
+    if (today === "light") {
       lightLoad = true;
+    } else {
+      acwr = today.ratio;
+      const signal = acwrSignal(today.ratio, today.acute, today.chronic);
+      signals.push(today.floor == null ? signal : { ...signal, evidence: { kind: "trainingLoad", acute: today.acute, chronic: today.chronic, floor: today.floor } });
     }
-    const sd = sampleSD(acuteLoads);
-    if (sd != null && sd > monotonySdEpsilon * Math.max(1, Math.abs(acute))) {
-      monotony = acute / sd;
-      if (monotony >= monotonyWatch) {
-        signals.push({ key: "monotony", flag: "watch", detail: "MONOTONY_WATCH", evidence: { kind: "monotony", value: monotony } });
-      }
+    // Monotony stays a calendar week: the mean of the 7 days' loads over their SD, capped. Information only (version
+    // 47): as a "watch" it flagged every regular daily trainer, so they could never be primed. Identical days are the
+    // most monotonous week, not none; a week of zeros has nothing to compare.
+    const weekLoads = pick(lastDays(acuteWindow), (d) => d.load);
+    const week = mean(weekLoads) as number;
+    const sd = sampleSD(weekLoads);
+    if (sd != null && week > 0) {
+      monotony = sd > monotonySdEpsilon * Math.max(1, week) ? Math.min(week / sd, monotonyMax) : monotonyMax;
     }
   }
 
@@ -234,14 +295,15 @@ export function evaluate(days: ReadinessDay[], today: string | null = null): Rea
   return { level, signals, acwr, lightLoad, monotony, confidence };
 }
 
-/** Readiness plus CTL/ATL/TSB over the same rows; training load never feeds the readiness level. */
+/** Readiness plus CTL/ATL/TSB over the same rows; training load never feeds the readiness level. CTL/ATL run through today. */
 export function evaluateWithTrainingLoad(
   days: ReadinessDay[],
   today: string | null = null,
   config: TrainingLoadConfig = standardConfig,
+  loadThrough: LoadThrough = "today",
 ): { readiness: Readiness; trainingLoad: TrainingLoadResult } {
   return {
-    readiness: evaluate(days, today),
+    readiness: evaluate(days, today, acwrConfig, loadThrough),
     trainingLoad: evaluateTrainingLoad(
       days.map((d) => ({ day: d.day, load: d.load ?? null })),
       today,

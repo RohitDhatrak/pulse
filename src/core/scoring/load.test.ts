@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hardOrLateConfig, hardOrLateWorkout, loadToStrain, typicalSession } from "./load";
+import { hardOrLateConfig, hardOrLateWorkout, loadToStrain, seenLoad, seenLoadConfig, typicalSession } from "./load";
 
 describe("hardOrLateWorkout (SCORING_VERSION 23)", () => {
   // 28 days: training days at 100 TRIMP every other day, rest days at 5.
@@ -38,5 +38,32 @@ describe("hardOrLateWorkout (SCORING_VERSION 23)", () => {
     expect(late(60, 25)).toBe(false);
     expect(hardOrLateWorkout({ ...base, load: 50, workouts: [w(60, 45)], bedtime: null })).toBe(false);
     expect(hardOrLateConfig).toEqual({ hardWorkoutStrainPoints: 2, lateWorkoutHours: 2, lateWorkoutMinMin: 30 });
+  });
+});
+
+describe("seenLoad: a day counts only when it was seen (SCORING_VERSION 46)", () => {
+  it("uses 20 TRIMP and 120 awake minutes", () => {
+    expect(seenLoadConfig).toEqual({ minSeenLoad: 20, minAwakeWornMin: 120 });
+  });
+
+  it("a band-off day is unknown", () => {
+    expect(seenLoad(null, false, 0)).toBeNull();
+  });
+
+  it("a day worn only in bed is unknown, not a rest day's 0 (version 45: 0)", () => {
+    expect(seenLoad(0, true, 15)).toBeNull();
+    expect(seenLoad(null, true, 0)).toBeNull();
+    expect(seenLoad(3, true, 119)).toBeNull();
+  });
+
+  it("a day worn long enough while awake is a measured rest day, 0 included", () => {
+    expect(seenLoad(null, true, 120)).toBe(0);
+    expect(seenLoad(4, true, 900)).toBe(4);
+  });
+
+  it("a workout counts on any wear: the band on only for the run", () => {
+    expect(seenLoad(20, true, 0)).toBe(20);
+    expect(seenLoad(85, true, 70)).toBe(85);
+    expect(seenLoad(19.9, true, 70)).toBeNull();
   });
 });

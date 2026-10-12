@@ -5,7 +5,9 @@
 // constant below was checked by simulating light, heavy, daily and sedentary users and 26 weeks of following the
 // target (see the doc). Since SCORING_VERSION 26 the progression limit compares sessions with sessions: it used the
 // earlier window's "typical session", which after a low month (a beginner, a break with the band on) was a rest day,
-// and pinned the target near rest level for up to 5 weeks.
+// and pinned the target near rest level for up to 5 weeks. Since SCORING_VERSION 48 the typical session is at least a
+// starter session: someone whose heart rate never reached zone 1 had no target ("calibrating" forever), and someone
+// training every other week was asked for a rest day.
 import { loadToStrain, trainingDayShare, typicalSession } from "../scoring/load";
 import { percentile } from "../scoring/strain";
 import { band, type RecoveryBand } from "../scoring/recovery";
@@ -49,6 +51,11 @@ export const strainTargetConfig = {
    * or not. "5 of the last 7" fired on ordinary 2–3-session weeks, whose gaps are at most 3 days.
    */
   breakDays: 5,
+  /**
+   * The least the typical session can be, in TRIMP (version 48): about Strain 8, half an hour in zone 1 or a quarter
+   * in zone 2. Below it the target is a starter, not your own, so it shows as an estimate and never as "returning".
+   */
+  starterSession: 30,
   /** Display bounds, 0–21. */
   min: 4,
   max: 19,
@@ -65,6 +72,8 @@ export interface StrainTarget {
   coldStart: boolean;
   /** "capped": load climbing fast (ACWR > 1.3); "returning": coming back from a break. */
   acwrRule: "capped" | "returning" | null;
+  /** Your own typical session is under `starterSession` (or there is none): the range is built on the starter. */
+  starter: boolean;
 }
 
 export interface StrainTargetInput {
@@ -95,21 +104,26 @@ export function recoveryLogMultiplier(recovery: number): number {
 
 const toStrain = loadToStrain;
 
-/** Today's Strain range, or null while there are fewer than `minDays` days with a load. */
+/** Today's Strain range, or null while there are fewer than `minDays` days with a load (or no starter and no session). */
 export function strainTarget({ priorLoad, priorRecovery, recovery, acwr }: StrainTargetInput): StrainTarget | null {
   const c = strainTargetConfig;
   const window = observed(priorLoad.slice(-c.windowDays));
   if (window.length < c.minDays) return null;
-  let ref = typicalSession(window);
-  if (ref == null || !(ref > 0)) return null;
+  let own = typicalSession(window) ?? 0;
 
   // Progression limit: a target built on what you followed would otherwise ratchet up month after month. Like with
   // like: the earlier month's sessions at today's level, not its typical day, which after a low month is a rest day.
-  const earlier = observed(priorLoad.slice(-2 * c.windowDays, -c.windowDays));
-  const earlierSessions = earlier.filter((v) => v >= c.trainingDayShare * ref!).sort((a, b) => a - b);
-  if (earlier.length >= c.estimateBelowDays && earlierSessions.length >= c.minEarlierSessions) {
-    ref = Math.min(ref, (1 + c.maxGrowth) * percentile(earlierSessions, 50));
+  if (own > 0) {
+    const earlier = observed(priorLoad.slice(-2 * c.windowDays, -c.windowDays));
+    const earlierSessions = earlier.filter((v) => v >= c.trainingDayShare * own).sort((a, b) => a - b);
+    if (earlier.length >= c.estimateBelowDays && earlierSessions.length >= c.minEarlierSessions) {
+      own = Math.min(own, (1 + c.maxGrowth) * percentile(earlierSessions, 50));
+    }
   }
+  // At least the starter session (version 48), after the limit, so the limit never takes the target under it.
+  const starter = own < c.starterSession;
+  const ref = starter ? c.starterSession : own;
+  if (!(ref > 0)) return null;
 
   // Centred on your own recent Recoveries, so your usual day asks for your usual session.
   const recent = priorRecovery.slice(-c.windowDays);
@@ -121,7 +135,8 @@ export function strainTarget({ priorLoad, priorRecovery, recovery, acwr }: Strai
 
   const restBelow = c.trainingDayShare * ref;
   const lastDays = priorLoad.slice(-c.breakDays);
-  const onBreak = lastDays.length === c.breakDays && lastDays.every((v) => v == null || v < restBelow);
+  // On the starter there are no sessions of your own to be back from.
+  const onBreak = !starter && lastDays.length === c.breakDays && lastDays.every((v) => v == null || v < restBelow);
   let acwrRule: StrainTarget["acwrRule"] = null;
   if (acwr != null && acwr > c.acwrCapAbove) acwrRule = "capped";
   else if (onBreak) acwrRule = "returning";
@@ -144,5 +159,6 @@ export function strainTarget({ priorLoad, priorRecovery, recovery, acwr }: Strai
     band: band(recovery),
     coldStart: window.length < c.estimateBelowDays,
     acwrRule,
+    starter,
   };
 }

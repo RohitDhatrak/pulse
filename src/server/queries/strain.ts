@@ -51,7 +51,7 @@ export async function getStrain(day: string, ctx: QueryCtx): Promise<StrainVM> {
       ? none(isToday ? "awaiting_sleep_sync" : "band_not_worn")
       : t.reason !== null
         ? fromReason(t.reason, isToday, t.nightsLeft)
-        : ok({ low: t.low, high: t.high, estimate: t.coldStart, acwrRule: t.acwrRule });
+        : ok({ low: t.low, high: t.high, estimate: t.coldStart || (t.starter ?? false), acwrRule: t.acwrRule });
 
   const strengthMin = (d: string) => exs.filter((e) => e.day === d && isStrength(e)).reduce((a, e) => a + (e.endTs - e.startTs) / 60, 0);
   // Time in zones from..to-1 (0-based), the same zones as the zone chart and Pulse Age.

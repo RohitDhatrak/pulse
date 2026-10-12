@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { foldHistory, restingHRCfg, sigma } from "./baselines";
-import { acwrBand, acwrChronicFloor, acwrSignal, evaluate, evaluateWithTrainingLoad, lightLoadJump, mean, minAcute, minChronic, type ReadinessDay, sampleSD } from "./readiness";
+import { acwrBand, acwrChronicFloor, acwrConfig, acwrPrimeDays, acwrSignal, dayRatio, evaluate, evaluateWithTrainingLoad, ewmaLoads, lightLoadJump, mean, minAcute, minChronic, monotonyMax, type ReadinessDay, sampleSD } from "./readiness";
 import { trimpToStrain } from "./strain";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -85,18 +85,16 @@ describe("plan U6: ACWR bands and monotony", () => {
     expect(acwrSignal(1.5, 1, 1)).toMatchObject({ flag: "bad", detail: "LOAD_SPIKING" });
   });
 
-  it("monotony ≥ 2.0 sets the watch flag; below does not", () => {
-    // Last week 12,10,12,10,12,10,12 → mean 11.14 / SD 1.07 ≈ 10.4.
+  it("monotony is reported high or low, capped at monotonyMax, and is never a signal (version 47)", () => {
+    // Last week 12,10,12,10,12,10,12 → mean 11.14 / SD 1.07 ≈ 10.4, capped at 10. Version 46 flagged it "watch".
     const flat = Array.from({ length: 28 }, (_, i) => d(i + 1, 60, 52, i % 2 === 0 ? 10 : 12));
     const r = evaluate(flat);
-    expect(r.monotony!).toBeGreaterThanOrEqual(2);
-    expect(r.signals.find((s) => s.key === "monotony")?.flag).toBe("watch");
+    expect(r.monotony).toBe(monotonyMax);
+    expect(r.signals.map((s) => s.key)).not.toContain("monotony");
 
     // Last week 20,0,20,0,20,0,20 → mean 11.43 / SD 10.69 ≈ 1.07.
     const varied = Array.from({ length: 28 }, (_, i) => d(i + 1, 60, 52, i % 2 === 0 ? 0 : 20));
-    const v = evaluate(varied);
-    expect(v.monotony!).toBeLessThan(2);
-    expect(v.signals.some((s) => s.key === "monotony")).toBe(false);
+    expect(evaluate(varied).monotony).toBeCloseTo(1.07, 2);
   });
 });
 
@@ -185,11 +183,11 @@ describe("training load on linear TRIMP (SCORING_VERSION 10)", () => {
   /** The same days fed as Effort (the version 9 input), to document what the log map hid. */
   const asEffort = (loads: number[]) => loads.map((t) => trimpToStrain(t));
 
-  it("the fix list's check: 2× the usual load for a week reads 1.60 (coupled 7/28)", () => {
-    expect(acwrOf(weeks(usual.map((t) => 2 * t)))).toBeCloseTo(1.6, 2);
-    expect(acwrOf(weeks(usual))).toBeCloseTo(1.0, 12);
-    // Coupled: acute / (acute + 3 × prior) × 4, so k× the usual load always reads 4k / (k + 3).
-    for (const k of [0.5, 1.5, 3]) expect(acwrOf(weeks(usual.map((t) => k * t)))).toBeCloseTo((4 * k) / (k + 3), 12);
+  it("2× the usual load for a week builds fast (1.37; the coupled 7/28 means read 1.60 until version 45)", () => {
+    expect(acwrOf(weeks(usual.map((t) => 2 * t)))).toBeCloseTo(1.37, 2);
+    expect(acwrBand(acwrOf(weeks(usual.map((t) => 2 * t)))!)).toBe("LOAD_BUILDING_FAST");
+    // The plain ratio it replaced: k× the usual load for a week read 4k / (k + 3).
+    expect((4 * 2) / (2 + 3)).toBe(1.6);
   });
 
   it("workouts 3× harder spike on TRIMP; on Effort the same week stayed in the sweet spot", () => {
@@ -203,22 +201,21 @@ describe("training load on linear TRIMP (SCORING_VERSION 10)", () => {
   it("an ordinary 4-workout week is not monotonous on TRIMP (it was 2.81 on Effort)", () => {
     const r = evaluate(rows(weeks(usual)));
     expect(r.monotony!).toBeLessThan(2);
-    expect(r.signals.some((x) => x.key === "monotony")).toBe(false);
     expect(evaluate(rows(asEffort(weeks(usual)))).monotony!).toBeGreaterThan(2.5);
   });
 
-  it("a week with no rest days at the usual session load builds fast but does not spike", () => {
-    const r = evaluate(rows(weeks(Array(7).fill(118))));
-    expect(acwrBand(r.acwr!)).toBe("LOAD_BUILDING_FAST");
+  it("a week with no rest days at the usual session load (1.65× the week) stays in the sweet spot; a second one builds fast", () => {
+    // Version 44's 7/28 means read 1.40 (building fast) after one week.
+    expect(acwrOf(weeks(Array(7).fill(118)))).toBeCloseTo(1.28, 2);
+    expect(acwrBand(acwrOf([...usual, ...usual, ...usual, ...Array(14).fill(118)])!)).toBe("LOAD_BUILDING_FAST");
   });
 
-  it("windows are calendar days: an unworn day in the week is not replaced by an older day", () => {
-    // 21 days at 100, then a week at 10 with one unworn day. By rows, "last 7" would reach back to a 100.
+  it("an unworn day takes no EWMA step: the ratio is the same as without its row", () => {
+    // 21 days at 100, then a week at 10 with one unworn day.
     const loads = [...Array(21).fill(100), 10, 10, 10, null, 10, 10, 10];
-    const r = evaluate(rows(loads));
-    const acute = r.signals.find((x) => x.key === "acwr")!.evidence as { acute: number; chronic: number };
-    expect(acute.acute).toBe(10);
-    expect(acute.chronic).toBeCloseTo((21 * 100 + 6 * 10) / 27, 12);
+    const ev = evaluate(rows(loads)).signals.find((x) => x.key === "acwr")!.evidence as { acute: number; chronic: number };
+    expect(ev).toMatchObject(ewmaLoads(rows(loads.filter((l) => l != null)))!);
+    expect(ev).not.toMatchObject(ewmaLoads(rows(loads.map((l) => l ?? 0)))!);
   });
 
   it("rows after today are ignored", () => {
@@ -229,9 +226,12 @@ describe("training load on linear TRIMP (SCORING_VERSION 10)", () => {
     expect(evaluate(withFuture, iso(27)).monotony).toBe(evaluate(rows(loads)).monotony);
   });
 
-  it("days older than 28 do not count, so a long-ago heavy block is forgotten", () => {
-    const loads = [...Array(30).fill(1000), ...weeks(usual)];
-    expect(acwrOf(loads)).toBeCloseTo(1.0, 12);
+  it("a long-ago heavy block fades with the chronic time constant (τ 42) instead of dropping out on day 29", () => {
+    // 30 days at 14× the usual load: 4 weeks later the ratio still reads ramping down (informational), and after
+    // 17 weeks the block's share of chronic is e^(−119/42) ≈ 6 % of the excess.
+    expect(acwrBand(acwrOf([...Array(30).fill(1000), ...weeks(usual)])!)).toBe("LOAD_RAMPING_DOWN");
+    const later = acwrOf([...Array(30).fill(1000), ...Array(17).fill(usual).flat()])!;
+    expect(later).toBeGreaterThan(acwrOf([...Array(30).fill(1000), ...weeks(usual)])!);
   });
 
   it(`gates: at least ${minAcute} loads in the last 7 days and ${minChronic} in the last 28`, () => {
@@ -245,15 +245,14 @@ describe("training load on linear TRIMP (SCORING_VERSION 10)", () => {
     expect(evaluate(rows(acuteN(minAcute - 1))).monotony).toBeNull();
   });
 
-  it("identical days give no monotony, not ~3e15 from floating-point noise", () => {
-    // 25.92 × 7 has an SD of ~1e-14 in floating point, which passed the old `sd > 0` check.
+  it("identical days are the most monotonous week (the cap), not ~3e15 from floating-point noise or none", () => {
+    // 25.92 × 7 has an SD of ~1e-14 in floating point, which passed the old `sd > 0` check. Versions 10–46 gave null.
     for (const v of [25.92, 118, 0.1, 1e6]) {
       const r = evaluate(rows(Array(28).fill(v)));
       // The gates passed, so monotony was considered; under 30 a day it is a light load with no ratio (version 27).
       if (v >= 30) expect(r.acwr).toBeCloseTo(1, 12);
       else expect(r).toMatchObject({ acwr: null, lightLoad: true });
-      expect(r.monotony).toBeNull();
-      expect(r.signals.some((x) => x.key === "monotony")).toBe(false);
+      expect(r.monotony).toBe(monotonyMax);
     }
   });
 
@@ -307,17 +306,18 @@ describe("a light load has no ratio (SCORING_VERSION 27)", () => {
 
   it("under the floor, acute ÷ floor below 1.3 is light; from 1.3 it is building fast, from 1.5 spiking", () => {
     expect(lightLoadJump).toBe(1.3);
-    // A chronic load under 30 throughout: 21 days of 5, then a week at acute = 30 × the target ratio.
-    const at = (ratio: number) => evaluate(month(5, 30 * ratio));
-    expect(at(1.29)).toMatchObject({ acwr: null, lightLoad: true });
-    const building = at(1.3);
-    expect(building.acwr).toBeCloseTo(1.3, 12);
-    expect(building.signals.find((x) => x.key === "acwr")).toMatchObject({ detail: "LOAD_BUILDING_FAST", flag: "watch", evidence: { floor: 30 } });
-    const spiking = at(1.5);
-    expect(spiking.signals.find((x) => x.key === "acwr")).toMatchObject({ detail: "LOAD_SPIKING", flag: "bad" });
+    expect(dayRatio({ acute: 38.9, chronic: 10 })).toBe("light");
+    expect(dayRatio({ acute: 39, chronic: 10 })).toEqual({ ratio: 1.3, acute: 39, chronic: 10, floor: 30 });
+    expect(acwrBand((dayRatio({ acute: 45, chronic: 10 }) as { ratio: number }).ratio)).toBe("LOAD_SPIKING");
+    // Through evaluate: 21 days of 5, then a week at 80. Chronic stays under 30; acute ÷ 30 is 1.75.
+    const spiking = evaluate(month(5, 80));
+    const ev = ewmaLoads(month(5, 80))!;
+    expect(ev.chronic).toBeLessThan(30);
+    expect(spiking.acwr).toBeCloseTo(ev.acute / 30, 12);
+    expect(spiking.signals.find((x) => x.key === "acwr")).toMatchObject({ detail: "LOAD_SPIKING", flag: "bad", evidence: { floor: 30 } });
     expect(spiking.level).toBe("strained");
-    // Each case really had chronic under the floor.
-    expect((21 * 5 + 7 * 30 * 1.5) / 28).toBeLessThan(30);
+    // A smaller week that stays under 1.3 × the floor is light.
+    expect(evaluate(month(5, 40))).toMatchObject({ acwr: null, lightLoad: true });
   });
 
   it("a sedentary person who starts running 5 days a week still reads spiking", () => {
@@ -326,10 +326,161 @@ describe("a light load has no ratio (SCORING_VERSION 27)", () => {
     expect(r.signals.find((x) => x.key === "acwr")?.detail).toBe("LOAD_SPIKING");
   });
 
-  it("over the floor nothing changes: the plain ratio and its band", () => {
+  it("over the floor: the EWMA ratio and its band, in closed form", () => {
+    // Seeded at 60, then 7 steps toward 90: each EWMA closes all but e^(−7/τ) of the gap.
+    const acute = 90 - 30 * Math.exp(-7 / 7);
+    const chronic = 90 - 30 * Math.exp(-7 / 42);
     const r = evaluate(month(60, 90));
-    expect(r.acwr).toBeCloseTo(90 / ((21 * 60 + 7 * 90) / 28), 12);
+    expect(r.acwr).toBeCloseTo(acute / chronic, 12);
     expect(r.lightLoad).toBe(false);
-    expect(r.signals.find((x) => x.key === "acwr")?.evidence).toEqual({ kind: "trainingLoad", acute: 90, chronic: (21 * 60 + 7 * 90) / 28 });
+    const ev = r.signals.find((x) => x.key === "acwr")?.evidence as { acute: number; chronic: number };
+    expect(ev.acute).toBeCloseTo(acute, 12);
+    expect(ev.chronic).toBeCloseTo(chronic, 12);
+  });
+});
+
+describe("the ratio is EWMA acute ÷ EWMA chronic (SCORING_VERSION 45)", () => {
+  const iso = (i: number) => new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
+  const rows = (loads: (number | null)[]): ReadinessDay[] => loads.map((load, i) => ({ day: iso(i), load }));
+  /** Version 44's ratio: the mean of the last 7 calendar days' loads over the last 28's. */
+  const plain = (loads: number[]) => mean(loads.slice(-7))! / mean(loads.slice(-28))!;
+
+  it("uses Fitness' ATL and CTL time constants (τ 7 and 42) and its 7-day seed", () => {
+    expect(acwrConfig).toEqual({ acuteTau: 7, chronicTau: 42 });
+    expect(acwrPrimeDays).toBe(7);
+  });
+
+  it("matches trainingLoad's ATL and CTL on a gapless history", () => {
+    const loads = Array.from({ length: 60 }, (_, i) => [118, 9, 118, 9, 118, 118, 9][i % 7] + i);
+    const tl = evaluateWithTrainingLoad(rows(loads)).trainingLoad;
+    const ev = ewmaLoads(rows(loads))!;
+    expect(ev.acute).toBeCloseTo(tl.atl!, 9);
+    expect(ev.chronic).toBeCloseTo(tl.ctl!, 9);
+  });
+
+  it("seeds both from the mean of the first 7 loaded days, then steps by 1 − e^(−1/τ)", () => {
+    const loads = [10, 20, 30, 40, 50, 60, 70, 100];
+    const seed = 40;
+    expect(ewmaLoads(rows(loads.slice(0, 7)))).toEqual({ acute: seed, chronic: seed });
+    const ev = ewmaLoads(rows(loads))!;
+    expect(ev.acute).toBeCloseTo(seed + (1 - Math.exp(-1 / 7)) * (100 - seed), 12);
+    expect(ev.chronic).toBeCloseTo(seed + (1 - Math.exp(-1 / 42)) * (100 - seed), 12);
+    expect(ewmaLoads(rows([null, null]))).toBeNull();
+  });
+
+  it("row order does not matter", () => {
+    const r = rows([50, 60, 70, 80, 90, 100, 110, 120, 30]);
+    expect(ewmaLoads([...r].reverse())).toEqual(ewmaLoads(r));
+  });
+
+  it("a constant load reads exactly 1", () => {
+    expect(evaluate(rows(Array(60).fill(80))).acwr).toBe(1);
+  });
+
+  it("a session leaving the week moves the ratio a little, not by a seventh of the week at once", () => {
+    const usual = [118, 9, 118, 9, 118, 118, 9];
+    // A session, then six rest days: the next rest day is the morning the session drops out of a 7-day window.
+    const inWindow = [...Array(6).fill(usual).flat(), 118, 9, 9, 9, 9, 9, 9];
+    const dropped = [...inWindow, 9];
+    const ewma = evaluate(rows(inWindow)).acwr! - evaluate(rows(dropped)).acwr!;
+    const old = plain(inWindow) - plain(dropped);
+    expect(old).toBeGreaterThan(0.2);
+    expect(ewma).toBeLessThan(old / 4);
+  });
+
+  it("an unworn stretch takes no steps, so a week off with the band off leaves the ratio where it was", () => {
+    const loads = Array.from({ length: 42 }, (_, i) => (i % 2 ? 100 : 20));
+    const before = evaluate(rows(loads)).acwr!;
+    // 7 unworn days, then 4 days back at the same pattern (the gates need 4 loads in the week).
+    const after = evaluate(rows([...loads, ...Array(7).fill(null), 100, 20, 100, 20])).acwr!;
+    expect(Math.abs(after - before)).toBeLessThan(0.1);
+  });
+});
+
+describe("the load signals run through yesterday when today is still going (SCORING_VERSION 46)", () => {
+  const iso = (i: number) => new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
+  const usual = [118, 9, 118, 9, 118, 118, 9];
+  const days = (todayLoad: number | null, todayHrv = 60): ReadinessDay[] => [
+    ...Array.from({ length: 41 }, (_, i) => ({ day: iso(i), hrv: i % 2 ? 62 : 58, rhr: i % 2 ? 54 : 50, load: usual[i % 7] })),
+    { day: iso(41), hrv: todayHrv, rhr: 52, load: todayLoad },
+  ];
+
+  it("today's load, morning or evening, changes nothing: ratio, light load, monotony and level", () => {
+    const morning = evaluate(days(2), null, undefined, "yesterday");
+    for (const evening of [0, 118, 400, null]) {
+      const r = evaluate(days(evening), null, undefined, "yesterday");
+      expect(r).toMatchObject({ acwr: morning.acwr, lightLoad: morning.lightLoad, monotony: morning.monotony, level: morning.level });
+    }
+    // Through today the morning and the evening differ (version 45).
+    expect(evaluate(days(2)).acwr).not.toBe(evaluate(days(400)).acwr);
+  });
+
+  it("is the ratio through today of the rows up to yesterday", () => {
+    const r = evaluate(days(400), null, undefined, "yesterday");
+    const upToYesterday = evaluate(days(400).slice(0, -1));
+    expect(r.acwr).toBe(upToYesterday.acwr);
+    expect(r.monotony).toBe(upToYesterday.monotony);
+  });
+
+  it("the gates count windows ending yesterday", () => {
+    // Loads only on the 14 days ending yesterday, and today: through yesterday the gates pass; a gap yesterday fails them.
+    const rows: ReadinessDay[] = Array.from({ length: 15 }, (_, i) => ({ day: iso(i), load: 50 }));
+    expect(evaluate(rows, null, undefined, "yesterday").acwr).toBe(1);
+    const gapYesterday = rows.map((r, i) => (i === 13 ? { ...r, load: null } : r));
+    expect(evaluate(gapYesterday, null, undefined, "yesterday").acwr).toBeNull();
+    expect(evaluate(gapYesterday).acwr).toBe(1);
+  });
+
+  it("HRV and resting HR still read today's night", () => {
+    const low = evaluate(days(2, 30), null, undefined, "yesterday");
+    expect(low.signals.find((x) => x.key === "hrv")?.flag).toBe("bad");
+    expect(evaluate(days(2, 60), null, undefined, "yesterday").signals.find((x) => x.key === "hrv")?.flag).not.toBe("bad");
+  });
+
+  it("evaluateWithTrainingLoad passes it on; CTL/ATL still run through today", () => {
+    const a = evaluateWithTrainingLoad(days(2), null, undefined, "yesterday");
+    const b = evaluateWithTrainingLoad(days(400), null, undefined, "yesterday");
+    expect(a.readiness.acwr).toBe(b.readiness.acwr);
+    expect(a.trainingLoad.atl).not.toBe(b.trainingLoad.atl);
+  });
+});
+
+describe("monotony is information only (SCORING_VERSION 47)", () => {
+  const iso = (i: number) => new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
+  // 8 weeks, then today: HRV and RHR clearly good (two "good" signals) and the ratio in the sweet spot.
+  const person = (load: (i: number) => number): ReadinessDay[] => [
+    ...Array.from({ length: 56 }, (_, i) => ({ day: iso(i), hrv: i % 2 ? 62 : 58, rhr: i % 2 ? 54 : 50, resp: 14, load: load(i) })),
+    { day: iso(56), hrv: 72, rhr: 46, resp: 14, load: 0 },
+  ];
+  // A fixed ±20 % pattern, so the weeks vary without a random generator.
+  const vary = [0.8, 1.2, 1.0, 0.9, 1.15, 0.85, 1.1];
+  const daily = (i: number) => 150 * vary[i % 7];
+
+  it.each([
+    ["a daily trainer (150 ± 20 %)", daily, 4],
+    ["one rest day a week", (i: number) => (i % 7 === 6 ? 0 : daily(i)), 2],
+    ["a daily 40-TRIMP walker", (i: number) => 40 * vary[i % 7], 4],
+    ["identical days", () => 150, monotonyMax],
+  ])("%s with good HRV and RHR is primed; monotony is still reported (version 46: balanced)", (_, load, atLeast) => {
+    const r = evaluate(person(load), iso(56), undefined, "yesterday");
+    expect(r.monotony!).toBeGreaterThanOrEqual(atLeast);
+    expect(r.signals.map((s) => [s.key, s.flag])).toEqual([["hrv", "good"], ["rhr", "good"], ["acwr", "good"]]);
+    expect(r.level).toBe("primed");
+  });
+
+  it("the level is the same whatever the week's spread, at the same ratio", () => {
+    // Same weekly total every week: one session of 7 × 100 or 7 days of 100. The EWMA ratio differs slightly, so
+    // compare the level and the signals' flags, which monotony used to change.
+    const spread = evaluate(person((i) => (i % 7 === 0 ? 700 : 0)), iso(56), undefined, "yesterday");
+    const flat = evaluate(person(() => 100), iso(56), undefined, "yesterday");
+    expect(spread.monotony!).toBeLessThan(1);
+    expect(flat.monotony).toBe(monotonyMax);
+    expect([spread.level, flat.level]).toEqual(["primed", "primed"]);
+    expect(flat.signals.filter((s) => s.flag !== "good")).toEqual([]);
+  });
+
+  it("a week of zeros with enough rows has no monotony (nothing to compare)", () => {
+    const r = evaluate([...Array(28)].map((_, i) => ({ day: iso(i), load: i < 21 ? 100 : 0 })));
+    expect(r.monotony).toBeNull();
   });
 });

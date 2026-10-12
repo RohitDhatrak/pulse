@@ -124,9 +124,9 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "What goes in",
         rows: [
-          { term: "Your typical session", detail: "The middle of your training days over the last 28\u00a0days (rest days left out), measured in heart-rate load. It can rise at most 10% a month." },
+          { term: "Your typical session", detail: "The middle of your training days over the last 28\u00a0days (rest days left out), measured in heart-rate load. It can rise at most 10% a month. Until you have training days of your own, a starter session of about Strain 8 (half an hour in heart-rate zone 1) stands in, marked as an estimate." },
           { term: "Today’s Recovery, against your usual", detail: "Compared with your own last 28\u00a0days of Recovery. Without a Recovery score there is no target." },
-          { term: "Training load (ACWR)", detail: "Your heart-rate load over the last 7\u00a0days against the last 28, up to yesterday." },
+          { term: "Training load (ACWR)", detail: "Your recent heart-rate load (a weighted average, most of it the last week or two) against your longer-term load, up to yesterday." },
         ],
       },
       {
@@ -466,7 +466,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "How it is weighted",
         paragraphs: [
-          "Training load (ACWR) is your average daily load over the last 7\u00a0calendar days, divided by your average over the last 28 (both over the days the band was worn). 1.00 means this week matches your usual; twice your usual load for a week reads 1.60. Reports use the last day of the week or month that has a ratio; Fitness shows today’s. With under about 30 a day of load over the 28 days, the ratio isn’t shown (“Light load”): there’s too little load to compare, and one walk would read as a spike. A big jump still shows: this week averaging 1.3 times 30 or more reads building fast or spiking.",
+          "Training load (ACWR) is your recent daily load divided by your longer-term load, up to yesterday: today counts from tomorrow, so the ratio doesn’t drop each morning and jump after your workout. Both are weighted averages over the days the band saw: each day counts a little less as it ages, about a week for the recent one and six weeks for the longer one (the same as Fitness’s fatigue and fitness). Because a session fades gradually instead of dropping out after exactly 7\u00a0days, which days you train no longer swings the ratio; the total does. 1.00 means your recent load matches your usual; twice your usual for a week reads about 1.4, and keeping it up for another week takes it towards 1.5. Reports use the last day of the week or month that has a ratio; Fitness shows today’s. With under about 30 a day of load over the 28 days, the ratio isn’t shown (“Light load”): there’s too little load to compare, and one walk would read as a spike. A big jump still shows: this week averaging 1.3 times 30 or more reads building fast or spiking.",
         ],
       },
       {
@@ -481,7 +481,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "Training load needs 14\u00a0days with load in the last 28, and 4 in the last 7; until there are 28, your usual is the average of the days you have. It compares you with yourself, so it says nothing about whether your usual load suits your goals. The 0.8-1.3 sweet spot comes from team-sport injury research (Gabbett 2016) and is a rule of thumb.",
+          "Training load needs 14\u00a0days with load in the last 28, and 4 in the last 7. A day counts when the band saw it: about 2\u00a0hours of wear while awake, or a workout. A day worn only in bed is skipped, not counted as rest, since its activity wasn’t seen. Your usual starts from your first week and settles over the next few. A big training block keeps your usual raised for several weeks after it, so ordinary weeks then read as ramping down. It compares you with yourself, so it says nothing about whether your usual load suits your goals. The 0.8-1.3 sweet spot comes from team-sport injury research (Gabbett 2016) and is a rule of thumb.",
         ],
       },
     ],

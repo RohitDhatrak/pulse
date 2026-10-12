@@ -100,3 +100,16 @@ describe("activity distance", () => {
     expect(run.find((k) => k.key === "pace")!.average).not.toBeNull();
   });
 });
+
+describe("getStrain's target (SCORING_VERSION 48)", () => {
+  it("a starter target shows as an estimate; the person's own established target does not", async () => {
+    const day = dayAt(170);
+    const own = (await getStrain(day, ctxFor(db))).target.value!;
+    expect(own.estimate).toBe(false);
+    await db.execute(sql`update daily_scores set strain_target = strain_target || '{"starter": true}'::jsonb where user_id = ${USER} and day = ${day}`);
+    expect((await getStrain(day, ctxFor(db))).target.value).toMatchObject({ low: own.low, high: own.high, estimate: true });
+    // A row stored before version 48 has no `starter`: still its own coldStart.
+    await db.execute(sql`update daily_scores set strain_target = strain_target - 'starter' where user_id = ${USER} and day = ${day}`);
+    expect((await getStrain(day, ctxFor(db))).target.value!.estimate).toBe(false);
+  });
+});

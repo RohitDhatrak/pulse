@@ -5,6 +5,29 @@ import { percentile, toStrainScale, trimpToStrain } from "./strain";
 /** A training day is a load of at least this share of the window's 90th percentile (rest days: 4–9 TRIMP on the seed). */
 export const trainingDayShare = 0.3;
 
+/**
+ * When a day's load counts for training load (version 46): a day with a workout's worth of load counts whatever the
+ * wear (a lower bound), and a lighter day only when the band was on long enough while awake to have seen it. A day
+ * worn only in bed was a measured rest day (0) although its activity was never seen. Swept in
+ * docs/algorithms/training-load.md § Why version 46.
+ */
+export const seenLoadConfig = {
+  /** TRIMP that counts on any wear: well over a rest day (4–9 on the seed), under an easy session. */
+  minSeenLoad: 20,
+  /** Heart-rate minutes outside sleep that make a lighter day a seen one. 240+ blanked people who wear it 2–6 h. */
+  minAwakeWornMin: 120,
+};
+
+/**
+ * The day's load for training load: `trimp` (0 when worn with too little heart rate), or null when the band was off
+ * or the day wasn't seen (`awakeWornMin` under the threshold and too little load to be a workout).
+ */
+export function seenLoad(trimp: number | null, worn: boolean, awakeWornMin: number): number | null {
+  if (!worn) return null;
+  const load = trimp ?? 0;
+  return load >= seenLoadConfig.minSeenLoad || awakeWornMin >= seenLoadConfig.minAwakeWornMin ? load : null;
+}
+
 /** TRIMP → Day Strain, 0–21, as the app displays it. */
 export const loadToStrain = (trimp: number): number => toStrainScale(trimpToStrain(trimp));
 

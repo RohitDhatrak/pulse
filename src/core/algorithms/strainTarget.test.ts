@@ -135,7 +135,9 @@ describe("strainTarget", () => {
     const light = Array(56).fill(10);
     const training = pattern([100, 10, 100, 10, 100, 100, 10], 70);
     const baseAfter = (days: number) => target({ priorLoad: [...light, ...training.slice(0, days)] }).base;
-    expect(baseAfter(3)).toBeCloseTo(S(10), 10); // two sessions in 28 days: still under the 90th percentile
+    // Two sessions in 28 days: still under the 90th percentile, so the light days (10) are the typical session and the
+    // starter (30) sets the target (version 48; it was S(10) = 5.2).
+    expect(baseAfter(3)).toBeCloseTo(S(c.starterSession), 10);
     for (const days of [7, 14, 28, 32, 33, 60]) expect(baseAfter(days)).toBeCloseTo(S(100), 10);
     expect(S(11).toFixed(1)).toBe("5.9"); // where version 25 held it
   });
@@ -191,13 +193,12 @@ describe("strainTarget", () => {
   });
 
   it("is shifted, not squeezed, into the 4–19 display range", () => {
-    // Sedentary on a very low Recovery: the range (≈ 2.2–3.0) moves up to start at 4 with its width intact.
-    const loads = pattern([14, 8, 8, 14, 8, 14, 8]);
-    const sedentary = target({ priorLoad: loads, recovery: 5 });
-    const raw = [S((0.35 * 8) / c.width), S(0.35 * 8 * c.width)];
-    expect(raw[0]).toBeLessThan(c.min);
-    expect(sedentary.low).toBe(c.min);
-    expect(sedentary.high - sedentary.low).toBeCloseTo(raw[1] - raw[0], 10);
+    // Sedentary on a very low Recovery: version 47's range (≈ 2.2–3.0 on a typical session of 8) moved up to start at
+    // 4. Since version 48 the starter session (30) is the least typical session, so the lowest range starts at 5.3 and
+    // the lower bound is no longer reached.
+    const sedentary = target({ priorLoad: pattern([14, 8, 8, 14, 8, 14, 8]), recovery: 5 });
+    expect(sedentary).toMatchObject({ starter: true, low: S((0.35 * c.starterSession) / c.width), high: S(0.35 * c.starterSession * c.width) });
+    expect(sedentary.low).toBeGreaterThan(c.min + 1);
     const huge = target({ priorLoad: pattern([5000, 50, 5000, 5000, 5000, 5000, 50]), recovery: 95 });
     expect(huge.high).toBe(c.max);
     expect(huge.high - huge.low).toBeGreaterThan(0.8);
@@ -253,5 +254,52 @@ describe("following the target for 26 weeks (closed loop)", () => {
       return { low, high };
     };
     expect(follow(0, v10)).toBeLessThan(0.2);
+  });
+});
+
+describe("a starter session when there is no training of your own (SCORING_VERSION 48)", () => {
+  it("heart rate never in zone 1 (every load 0): a starter target, not none (version 47: calibrating forever)", () => {
+    const t = target({ priorLoad: Array(28).fill(0) });
+    expect(t).toMatchObject({ starter: true, acwrRule: null, base: S(c.starterSession) });
+    // A usual Recovery (58, uncentred) is 1×: the range is the starter ÷ and × the width.
+    expect(t.low).toBeCloseTo(S(c.starterSession / c.width), 10);
+    expect(t.high).toBeCloseTo(S(c.starterSession * c.width), 10);
+    expect(S(c.starterSession).toFixed(1)).toBe("8.1");
+  });
+
+  it("still needs 7 days with a load", () => {
+    expect(strainTarget({ priorLoad: [null, ...Array(c.minDays - 1).fill(0)], priorRecovery: [], recovery: 58, acwr: null })).toBeNull();
+    expect(strainTarget({ priorLoad: Array(c.minDays).fill(0), priorRecovery: [], recovery: 58, acwr: null })).not.toBeNull();
+  });
+
+  it("on the starter there is no break to return from; a fast-climbing load still caps it", () => {
+    // A few minutes of zone 1 on some days: version 47 called the gaps between them a "returning" break.
+    const flecks = pattern([0, 2, 0, 0, 3, 0, 0]);
+    expect(target({ priorLoad: flecks }).acwrRule).toBeNull();
+    const capped = target({ priorLoad: flecks, acwr: 1.5 });
+    expect(capped).toMatchObject({ acwrRule: "capped", starter: true });
+    expect(capped.high).toBeCloseTo(S(c.starterSession), 10);
+  });
+
+  it("someone training every other week is asked for more than a rest day", () => {
+    // Two 150s in 28 days stay under the 90th percentile, so the typical session is a rest day (4: Strain 3.8).
+    const t = target({ priorLoad: Array.from({ length: 28 }, (_, i) => (i % 14 === 3 ? 150 : 4)) });
+    expect(t).toMatchObject({ starter: true, base: S(c.starterSession) });
+  });
+
+  it("a typical session over the starter is unchanged and not a starter", () => {
+    for (const [name, week] of Object.entries(PROFILES)) {
+      const t = target({ priorLoad: pattern(week) });
+      expect(t.starter, name).toBe(false);
+      expect(T(t.base), name).toBeGreaterThan(c.starterSession);
+    }
+    expect(target({ priorLoad: pattern(PROFILES["moderate 4×118"]) }).base).toBeCloseTo(S(118), 10);
+  });
+
+  it("the progression limit never takes the target under the starter", () => {
+    // Today's sessions are 40; the earlier month had four sessions of 25, so the limit is 1.1 × 25 = 27.5.
+    const earlier = Array.from({ length: 28 }, (_, i) => (i % 7 === 0 ? 25 : 2));
+    const t = target({ priorLoad: [...earlier, ...pattern([40, 2, 40, 2, 40, 40, 2])] });
+    expect(t).toMatchObject({ starter: true, base: S(c.starterSession) });
   });
 });

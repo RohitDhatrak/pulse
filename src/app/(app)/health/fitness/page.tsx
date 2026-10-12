@@ -27,7 +27,7 @@ const INFO = {
   body: (
     <p>
       VO2 max is the most oxygen your body can use during hard exercise. Pulse ranks it against people of your age and sex from the FRIEND registry.
-      Training load compares your heart-rate load over the last 7 days with the last 28 (the acute to chronic ratio); 0.8 to 1.3 is the usual sweet spot.
+      Training load compares your recent heart-rate load (about the last week, up to yesterday) with your longer-term load (about six weeks), the acute to chronic ratio; 0.8 to 1.3 is the usual sweet spot.
     </p>
   ),
 }

@@ -18,12 +18,14 @@ import {
 import { healthspanWornAwakeMin } from "./scores";
 import { energyStart } from "@/core/algorithms/energyBank";
 import { healthspanConfig } from "@/core/algorithms/healthspan";
-import { hardOrLateWorkout, typicalSession } from "@/core/scoring/load";
+import { strainTargetConfig } from "@/core/algorithms/strainTarget";
+import { hardOrLateWorkout, loadToStrain, typicalSession } from "@/core/scoring/load";
 import { logisticK, logisticScore, logisticZ0, missingInputScale, sleepPerfScale, wHRV, wResp, wRHR, wSkinTemp, wSleep, type RecoveryTerm } from "@/core/scoring/recovery";
 import { journalImpactConfig } from "@/core/algorithms/journalImpact";
 import { heldNeedHours, ledger, personalizedNeedHours, rest } from "@/core/scoring/sleep";
 import { mergeSamples } from "../samples";
 import { trimpToStrain } from "@/core/scoring/strain";
+import { acwrBand, dayRatio, ewmaLoads, monotonyMax } from "@/core/scoring/readiness";
 import { load } from "./data";
 import { stage1 } from "./stage1";
 import { seedPull } from "../sources/seed/generate";
@@ -292,12 +294,14 @@ describe("scale contracts", () => {
       if (s1.trimp != null) expect(trimpToStrain(s1.trimp)).toBe(s1.effort);
     }
     // The band is off from day 155 09:00 to day 157 23:52. Day 156 has no HR at all: a gap, which no longer restarts
-    // the run (up to 3 days are carried). Day 157 has a few worn minutes, too few for Effort: a measured 0, as before.
+    // the run (up to 3 days are carried). Day 157 has a few worn minutes, too few to have seen the day: since version 46
+    // a gap too (it was a measured 0).
     const run = (i: number) => js<{ contiguousDays: number; state: string }>("training_load", dayAt(i));
     expect(js<{ hrCount: number }>("strain", dayAt(156)).hrCount).toBe(0);
+    expect(js<{ hrCount: number }>("strain", dayAt(157)).hrCount).toBeGreaterThan(0);
     expect(run(156).contiguousDays).toBe(run(155).contiguousDays);
-    expect(run(157).contiguousDays).toBe(run(155).contiguousDays + 1);
-    expect(run(158).contiguousDays).toBe(run(155).contiguousDays + 2);
+    expect(run(157).contiguousDays).toBe(run(155).contiguousDays);
+    expect(run(158).contiguousDays).toBe(run(155).contiguousDays + 1);
     expect(run(158).state).toBe("established");
     expect(run(150).contiguousDays).toBe(151);
   });
@@ -557,6 +561,157 @@ describe("ACWR on the seed (SCORING_VERSION 27)", () => {
       if (t.acwr != null) ratios++;
     }
     expect(ratios).toBeGreaterThan(150);
+  });
+});
+
+describe("the training-load ratio on the seed (SCORING_VERSION 45)", () => {
+  const loadOf = (day: string) => js<{ load: number | null }>("training_load", day).load;
+
+  it("every ratio is the EWMA acute ÷ chronic of the stored daily loads up to the day before (version 46)", () => {
+    let checked = 0;
+    for (const [i, day] of allDays.entries()) {
+      const acwr = js<{ acwr: number | null }>("training_load", day).acwr;
+      if (acwr == null) continue;
+      const r = dayRatio(ewmaLoads(allDays.slice(0, i).map((d) => ({ day: d, load: loadOf(d) }))));
+      expect(r, day).not.toBe("light");
+      expect(acwr, day).toBeCloseTo((r as { ratio: number }).ratio, 9);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(150);
+  });
+
+  it("the return to training after the seed's illness never reads building fast or spiking (version 44: 9 days building fast)", () => {
+    const { end } = SCENARIO.illness;
+    for (let i = end + 1; i <= end + 28; i++) {
+      const acwr = js<{ acwr: number | null }>("training_load", dayAt(i)).acwr;
+      expect(acwr == null || acwr < 1.3, `${dayAt(i)}: ${acwr}`).toBe(true);
+    }
+  });
+
+  it("the seed's 3-week heavy block still reads building fast, then spiking", () => {
+    const bands = allDays.map((d) => js<{ acwr: number | null }>("training_load", d).acwr).filter((a): a is number => a != null).map(acwrBand);
+    expect(bands.filter((b) => b === "LOAD_SPIKING").length).toBeGreaterThanOrEqual(10);
+    expect(bands.indexOf("LOAD_BUILDING_FAST")).toBeLessThan(bands.indexOf("LOAD_SPIKING"));
+  });
+});
+
+describe("training load from complete, seen days on the seed (SCORING_VERSION 46)", () => {
+  type TL = { load: number | null; acwr: number | null; level: string; monotony: number | null; lightLoad: boolean };
+
+  it("this morning reads the same ratio and level as tonight: the day's own load no longer counts until tomorrow", async () => {
+    const i = allDays.length - 1;
+    const last = allDays[i];
+    const copy = await copyDb(db);
+    const main = (await rows<{ e: number }>(copy, sql`select end_ts e from sleep_sessions where user_id = ${USER} and is_main and day = ${last}`))[0];
+    // The morning: heart rate only up to 30 minutes after waking.
+    await mergeSamples(copy, "hr", USER, { start: Number(main.e) + 1800, end: localMidnight(addDays(last, 1), TZ) }, new Map(), "replace");
+    await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${last}) on conflict do nothing`);
+    await recompute(copy, OPTS);
+    const morning = await json<TL & { [k: string]: unknown }>(copy, "training_load", last);
+    const evening = js<TL>("training_load", last);
+    expect(js<{ trimp: number }>("strain", last).trimp).toBeGreaterThan((await json<{ trimp: number | null }>(copy, "strain", last)).trimp ?? 0);
+    expect({ acwr: morning.acwr, level: morning.level, monotony: morning.monotony, lightLoad: morning.lightLoad }).toEqual({
+      acwr: evening.acwr,
+      level: evening.level,
+      monotony: evening.monotony,
+      lightLoad: evening.lightLoad,
+    });
+  });
+
+  it("Strain Target caps on the row's own ratio (through yesterday): capped exactly when it is over 1.3", () => {
+    let targets = 0;
+    for (const day of allDays) {
+      const t = js<StrainTargetRow>("strain_target", day);
+      if (t.reason !== null) continue;
+      targets++;
+      const acwr = js<TL>("training_load", day).acwr;
+      expect(t.acwrRule === "capped", day).toBe(acwr != null && acwr > 1.3);
+    }
+    expect(targets).toBeGreaterThan(100);
+  });
+
+  it("a week worn only in bed: those days are unknown (version 45: rest days), and the ratio stays near the fully worn one", async () => {
+    const copy = await copyDb(db);
+    const mains = await rows<{ day: string; s: number; e: number }>(
+      copy,
+      sql`select day::text as day, start_ts s, end_ts e from sleep_sessions where user_id = ${USER} and is_main and day between ${dayAt(99)} and ${dayAt(108)} order by day`,
+    );
+    // Off from 15 minutes after waking to 15 minutes before the next sleep, for 7 days.
+    for (let k = 0; k + 1 < mains.length && k < 8; k++) {
+      await mergeSamples(copy, "hr", USER, { start: Number(mains[k].e) + 900, end: Number(mains[k + 1].s) - 900 }, new Map(), "replace");
+    }
+    for (let k = 0; k < 12; k++) await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(98 + k)}) on conflict do nothing`);
+    await recompute(copy, OPTS);
+    for (let i = 101; i <= 106; i++) {
+      expect((await json<{ hrCount: number }>(copy, "strain", dayAt(i))).hrCount, dayAt(i)).toBeGreaterThan(0);
+      expect((await json<TL>(copy, "training_load", dayAt(i))).load, dayAt(i)).toBeNull();
+    }
+    let worst = 0;
+    for (let i = 102; i <= 130; i++) {
+      const a = (await json<TL>(copy, "training_load", dayAt(i))).acwr;
+      const b = js<TL>("training_load", dayAt(i)).acwr;
+      if (a != null && b != null) worst = Math.max(worst, Math.abs(a - b));
+    }
+    expect(worst).toBeLessThan(0.15); // 0.09
+    // Version 45's rule on the same copy (any heart rate is a measured day, so these were rest days of about 0): up to 0.51 off.
+    const oldLoads: { day: string; load: number | null }[] = [];
+    for (const d of allDays) {
+      const st = await json<{ trimp: number | null; hrCount: number }>(copy, "strain", d);
+      oldLoads.push({ day: d, load: st.trimp ?? (st.hrCount > 0 ? 0 : null) });
+    }
+    let worstOld = 0;
+    for (let i = 102; i <= 130; i++) {
+      const r = dayRatio(ewmaLoads(oldLoads.slice(0, i)));
+      const b = js<TL>("training_load", dayAt(i)).acwr;
+      if (r !== "light" && b != null) worstOld = Math.max(worstOld, Math.abs(r.ratio - b));
+    }
+    expect(worstOld).toBeGreaterThan(0.3);
+  });
+});
+
+describe("Strain Target's starter session on the seed (SCORING_VERSION 48)", () => {
+  it("the seed trains (typical session about 118): no day is on the starter", () => {
+    let targets = 0;
+    for (const day of allDays) {
+      const t = js<StrainTargetRow>("strain_target", day);
+      if (t.reason !== null) continue;
+      targets++;
+      expect(t.starter, day).toBe(false);
+    }
+    expect(targets).toBeGreaterThan(100);
+  });
+
+  it("the same days for someone whose heart rate never reaches zone 1: a starter target every day (version 47: calibrating)", async () => {
+    // A max HR of 400 puts zone 1 (50 % of reserve) above 220 bpm, so every day's TRIMP is 0.
+    const flat = await seeded([NOW], { compute: false });
+    await recompute(flat, { ...OPTS, profile: { ...PROFILE, maxHr: 400 } });
+    let targets = 0;
+    let calibrating = 0;
+    for (const day of allDays.slice(14)) {
+      const st = await json<{ trimp: number | null; hrCount: number }>(flat, "strain", day);
+      if (st.hrCount > 0) expect(st.trimp ?? 0, day).toBe(0);
+      const t = await json<StrainTargetRow>(flat, "strain_target", day);
+      if (t.reason === "calibrating") calibrating++;
+      if (t.reason !== null) continue;
+      targets++;
+      expect(t, day).toMatchObject({ starter: true, base: loadToStrain(strainTargetConfig.starterSession) });
+      expect(t.acwrRule, day).not.toBe("returning");
+    }
+    // Every day with a Recovery has a target; version 47 had none (a typical session of 0).
+    expect(targets).toBeGreaterThan(140);
+    expect(calibrating).toBe(0);
+  });
+});
+
+describe("monotony on the seed (SCORING_VERSION 47)", () => {
+  it("is still stored on the no-rest weeks, under the cap, and those days' levels come from other signals", () => {
+    const tl = allDays.map((d) => js<{ level: string; monotony: number | null }>("training_load", d));
+    const high = tl.filter((t) => t.monotony != null && t.monotony >= 2);
+    // Measured: 17 days, at most 4.5; 11 strained, 4 run down and 2 balanced (ramping down with one good signal), so
+    // dropping the "watch" moved no seed level (GOLDEN[47]: training_load unchanged).
+    expect(high.length).toBeGreaterThanOrEqual(10);
+    expect(Math.max(...high.map((t) => t.monotony!))).toBeLessThan(monotonyMax);
+    expect(high.filter((t) => t.level === "strained" || t.level === "rundown").length).toBeGreaterThanOrEqual(10);
   });
 });
 

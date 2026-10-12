@@ -87,8 +87,8 @@ export async function stage2(db: Db, data: Data, opts: PipelineOptions) {
     const d = dayOf(data, inputs, day, opts);
     const sleep = scoreSleep(data, inputs, f, d, tz);
     const recovery = scoreRecovery(f, d, sleep);
-    const trainingLoad = scoreTrainingLoad(f, d, recovery);
-    const strainTarget = scoreStrainTarget(f, recovery);
+    const trainingLoad = scoreTrainingLoad(data, f, d, recovery);
+    const strainTarget = scoreStrainTarget(f, recovery, trainingLoad);
     const planner = scorePlanner(f, d, sleep, tz);
     recovery.forecast = forecastOf(f, d, recovery);
     const stress = scoreStress(f, d, inputs);
@@ -121,7 +121,6 @@ export async function stage2(db: Db, data: Data, opts: PipelineOptions) {
       f.respB = update(f.respB, recovery.inputs.resp, respCfg);
       f.skinB = update(f.skinB, d.dm?.nightlyTempC ?? null, skinTempCfg);
     }
-    f.prevAcwr = trainingLoad.acwr;
   }
   await flush();
 
