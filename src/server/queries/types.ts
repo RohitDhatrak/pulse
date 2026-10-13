@@ -11,7 +11,8 @@ import type { Metric, MetricTag, ReasonCode } from "@/lib/reasons";
 // Type-only: shared with the kit, erased at build, so no UI code reaches the server bundle.
 export type { Band, ChipTone, GoodDirection, Metric, MetricTag, ReasonCode, StressLevel };
 export type SleepStatus = "poor" | "sufficient" | "optimal";
-export type ActivityKind = "run" | "ride" | "walk" | "strength" | "workout";
+export type { ActivityKind } from "@/core/algorithms/workouts";
+import type { ActivityKind } from "@/core/algorithms/workouts";
 
 export type DayPoint = { day: string; value: number | null; provisional?: boolean };
 /** 182 days ending on the selected day (the chart slices W / M / 6M). */
@@ -416,7 +417,7 @@ export type StressVM = {
 };
 
 export type FitnessVM = {
-  vo2: Metric<{ value: number; source: "run" | "daily"; sourceDay: string; percentile: number; category: string; ageBand: string; sex: "male" | "female" }>;
+  vo2: Metric<{ value: number; source: "run" | "daily"; sourceDay: string; percentile: number; category: string; /** Whole years: the percentile compares with this exact age (version 49), not a decade. */ age: number; sex: "male" | "female" }>;
   trend: Trend;
   trainingLoad: Metric<{ acwr: number; status: "detraining" | "optimal" | "pushing" | "high_risk"; tone: ChipTone }>;
   /** 90 days of CTL ("Fitness"), ATL ("Fatigue") and TSB ("Form"). */

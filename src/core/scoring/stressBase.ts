@@ -159,8 +159,32 @@ export function dayDaytimeAggregate(hr: HrSample[], tzOffsetSeconds = 0): number
   return quantile(wakingMeans.sort((a, b) => a - b), daytimeHRAggregatePercentile);
 }
 
-/** Fold per-day aggregates (oldest first, today excluded) through the daytime_hr baseline. */
-export const foldDaytimeBaseline = (aggregates: (number | null)[]): BaselineState => foldHistory(aggregates, daytimeHRCfg);
+/**
+ * The first `days` of the history are judged against their own median (version 52): a day more than `sigma` robust σ
+ * from it, on either side, is left out. Without it a new user's atypical first week (ill, hungover) became the
+ * reference before the gate had a baseline, and the 14-day half-life took weeks to forget it: Stress read nothing.
+ * docs/algorithms/stress.md § Why version 52.
+ */
+export const earlyCleanConfig = { days: 28, sigma: 2 };
+
+/**
+ * The history with its first `earlyCleanConfig.days` entries cleaned (version 52). Once at least foldGateMinDays of
+ * them exist, those further than `sigma` × max(1.4826 MAD, the baseline's floor spread) from their median are nulled.
+ * Stateless: the verdict is redone on each call, so a minority atypical block drops out as soon as ordinary days
+ * outnumber it, and it is fixed once the history is past the window. Later entries are left to the gate.
+ */
+export function cleanEarlyDays(history: (number | null)[]): (number | null)[] {
+  const { days, sigma: cut } = earlyCleanConfig;
+  const head = history.slice(0, days).filter((v): v is number => v != null);
+  if (head.length < foldGateMinDays) return history;
+  const m = quantile([...head].sort((a, b) => a - b), 0.5);
+  const s = Math.max(1.4826 * quantile(head.map((v) => Math.abs(v - m)).sort((a, b) => a - b), 0.5), daytimeHRCfg.floorSpread);
+  if (head.every((v) => Math.abs(v - m) <= cut * s)) return history;
+  return history.map((v, i) => (i < days && v != null && Math.abs(v - m) > cut * s ? null : v));
+}
+
+/** Fold per-day aggregates (oldest first, today excluded) through the daytime_hr baseline, the first weeks cleaned. */
+export const foldDaytimeBaseline = (aggregates: (number | null)[]): BaselineState => foldHistory(cleanEarlyDays(aggregates), daytimeHRCfg);
 
 /** Version 21: a day this many σ above a usable baseline is left out of it (illness, a hangover). */
 export const foldGateSigma = 2;
@@ -168,14 +192,45 @@ export const foldGateSigma = 2;
 export const foldGateMinDays = 7;
 
 /**
- * The value to fold for today's still median: null when it sits more than foldGateSigma σ above a usable baseline
- * with at least foldGateMinDays days behind it. An illness week otherwise raised the reference, hiding stress for weeks
- * after. Sustained stress days sit well inside 2σ, so they still fold.
+ * Gated days in a row (not on an illness hold) after which they are taken as a new normal and folded (version 50).
+ * Without it a lasting rise in daytime HR (+10–15 bpm: a medicine stopped, heat, altitude, detraining) was gated for
+ * weeks, and every ordinary day read as stress. docs/algorithms/stress.md § Why version 50.
  */
+export const stillGateConfig = { release: 7 };
+
+/** The current run of gated days: each one's index in the history and its still median. */
+export type StillGate = { run: { index: number; value: number }[] };
+export const noStillGate: StillGate = { run: [] };
+
+/**
+ * Today's still median through the baseline's gate (versions 21 and 50). A day more than foldGateSigma σ above a usable
+ * baseline with at least foldGateMinDays days behind it is left out (`fold` null): an illness week otherwise raised the
+ * reference, hiding stress for weeks after. Sustained stress days sit well inside 2σ, so they still fold.
+ *
+ * Since version 50 a run of `stillGateConfig.release` gated days is a new normal: that day folds, and `backfill` gives
+ * the run's earlier days for the caller to write back into the history, so the baseline (and its own restart after a
+ * step, version 33) sees them. Later days of the run fold too, until one is back under the gate. A day on Recovery's
+ * illness hold (`illnessHeld`) stays out without counting towards the run or ending it; so does a missing day.
+ */
+export function gateStillMedian(
+  history: (number | null)[],
+  value: number | null,
+  gate: StillGate,
+  illnessHeld = false,
+): { fold: number | null; backfill: { index: number; value: number }[]; gate: StillGate } {
+  if (value == null) return { fold: null, backfill: [], gate };
+  const b = history.length < foldGateMinDays ? null : foldDaytimeBaseline(history);
+  if (!b || !isUsable(b) || value - b.baseline <= foldGateSigma * sigma(b)) return { fold: value, backfill: [], gate: noStillGate };
+  if (illnessHeld) return { fold: null, backfill: [], gate };
+  const run = [...gate.run, { index: history.length, value }];
+  const k = stillGateConfig.release;
+  if (run.length < k) return { fold: null, backfill: [], gate: { run } };
+  return { fold: value, backfill: run.length === k ? run.slice(0, -1) : [], gate: { run } };
+}
+
+/** The value to fold for today's still median through the gate alone (version 21; no release). */
 export function foldableStillMedian(history: (number | null)[], value: number | null): number | null {
-  if (value == null || history.length < foldGateMinDays) return value;
-  const b = foldDaytimeBaseline(history);
-  return isUsable(b) && value - b.baseline > foldGateSigma * sigma(b) ? null : value;
+  return gateStillMedian(history, value, noStillGate).fold;
 }
 
 /** baselineRelative once the folded daytime-HR baseline is usable (≥ 4 days), else dayRelative. */

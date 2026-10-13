@@ -552,13 +552,9 @@ export async function getFitness(ctx: QueryCtx): Promise<FitnessVM> {
   const rows = await loadDays(ctx, addDays(last, -181), last);
   const row = rows.get(last);
   const f = row?.fitness;
-  const decade = (age: number) => {
-    const lo = Math.min(70, Math.max(20, Math.floor(age / 10) * 10));
-    return `${lo}-${lo + 9}`;
-  };
   const vo2: FitnessVM["vo2"] =
     f && f.reason === null
-      ? ok({ value: f.vo2max, source: f.source, sourceDay: f.sourceDay, percentile: f.percentile, category: f.category, ageBand: decade(f.age), sex: ctx.profile.sex }, f.source === "daily")
+      ? ok({ value: f.vo2max, source: f.source, sourceDay: f.sourceDay, percentile: f.percentile, category: f.category, age: Math.floor(f.age), sex: ctx.profile.sex }, f.source === "daily")
       : none("no_data");
   const tl = row?.trainingLoad;
   const effortDays = [...rows.values()].filter((r) => r.s1?.effort != null).length;

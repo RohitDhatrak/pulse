@@ -2,7 +2,7 @@
 
 Code:
 - `src/core/algorithms/stress.ts`;
-- the baseline gate in `src/core/scoring/stressBase.ts` (`foldableStillMedian`);
+- the baseline gate in `src/core/scoring/stressBase.ts` (`gateStillMedian`) and the first weeks' clean-up (`cleanEarlyDays`);
 - the exertion masking in `src/server/pipeline/stage1.ts`.
 
 Tests:
@@ -49,7 +49,7 @@ flowchart TB
   L --> RUN[A high minute outside a run of ≥ 2 becomes medium]
   RUN --> SUM[Hourly means, low / medium / high minutes, average]
   Z -.-> MED[Today's median still HR, waking hours]
-  MED -.->|folded into later days, unless > 2σ above| BL
+  MED -.->|folded into later days, unless > 2σ above; 7 such days in a row fold (v50)| BL
 ```
 
 ## Formula
@@ -111,6 +111,8 @@ All of these live in `stressConfig`.
 | `tailCheckMin`, `tailFallPerMin` | 10 min, 0.1 bpm a minute | version 36; *tunable* (a 15-minute check cost 5 % of other high minutes and more stress after walks) |
 | `rollWindowMin`, `rollAllowanceSigma`, `rollMinStill` | 300 min, 1σ, 30 | version 21; *tunable* (120 / 180 min absorbed long stress) |
 | `foldGateSigma`, `foldGateMinDays` | 2σ, 7 days | version 21 (`stressBase.ts`) |
+| `stillGateConfig.release` | 7 gated days in a row | version 50 (`stressBase.ts`); matches Recovery's `restartAfterRejections`; swept 5 / 7 / 10 (§ Why version 50) |
+| `earlyCleanConfig` | the first 28 days, 2 robust σ (3 bpm floor) | version 52 (`stressBase.ts`); swept 21 / 28 / 35 days, 2 / 2.5σ, floors 1–3 bpm (§ Why version 52) |
 
 **The fallback σ under our mapping.** noop chose 21.64 bpm so that +15 bpm lands on 2.0 under *its* squash. Under ours, 2.0 needs z = 1.96, which is +42 bpm at that σ, so provisional days read mostly low. We therefore use 15 / 1.96 = 7.65 bpm, so that +15 bpm lands on 2.0 under our curve.
 
@@ -130,6 +132,18 @@ So the first four days under-report both real stress and everyday background. Th
 - **No reference.** With no accepted baseline day and no aggregate today, every minute is `null`.
 - **DST.** Hours are minutes since local midnight ÷ 60, so on a DST day the hours after the change are labelled one off. This is marked with a `ponytail:` comment.
 - **Levels never reach 0 or 3 exactly**, because the logistic is open at both ends.
+- **The baseline's gate** (versions 21 and 50, `gateStillMedian`). A day's median still HR more than 2σ above a usable
+  baseline, with 7+ days behind it, is left out of the baseline. Seven such days in a row are a new normal: the
+  seventh folds, the six before it are written back into the history, and later days of the run fold too until one
+  is back under the gate. The baseline then follows through its own rules, including version 33's restart after a
+  step.
+  - A night on Recovery's illness hold (version 30: the second and later illness-ward nights) stays out without
+    counting towards the run or ending it. So does a day with no median.
+  - Today's own stress is scored against yesterday's baseline, so a release changes the reference from tomorrow.
+- **The first 28 days** (version 52, `cleanEarlyDays`). Once 7 of them have a median still HR, each is judged against
+  their own median: one more than 2 × max(1.4826 MAD, 3 bpm) away, on either side, is left out of the baseline. This is
+  redone every day, so the verdict can change while the window fills; after day 28 it is fixed. Later days are the
+  gate's.
 
 ## Worked examples
 
@@ -311,6 +325,95 @@ includes the cool-down minutes.
 
 **On the seed** (`GOLDEN[36]`): the stress, still-HR and Energy Bank series moved; strain and sleep didn't.
 
+## Why version 50: a lasting rise in daytime HR
+
+**The problem.** The version 21 gate kept every day more than 2σ (about 7.5 bpm) above the baseline out of it, so an
+illness week didn't raise the reference. After a lasting rise in daytime HR (a medicine stopped, heat, altitude,
+detraining, long COVID), almost every day was gated. The baseline moved only on the odd day under the gate, or one
+day at a time after 14 gated days made it stale. Recovery's baselines had the same problem, fixed in version 33 by
+restarting after 7 rejections in a row; this gate sits outside that, since a gated day is stored as null.
+
+**How it was tested.** The real `stress()` on `__sim__/days.ts`: 12 kinds of people × 2 runs, warmed up over 7 weeks
+of mixed days, then 12 weeks of mixed days with awake still HR raised, folding as `scoreStress` does. Below, the
+median over people of the week's high minutes on calm and rest days (about 100 with no rise):
+
+| Rise | Version 49 (weeks 1–12) | K = 7 (version 50) | K = 5 | K = 10 |
+|---|---|---|---|---|
+| +6 bpm | 251, 224, 169 … 93 by week 10 | same (never 7 in a row) | same | same |
+| +10 bpm | 385, 373, 379, 226, 186, 216, 141 … | 385, 338, 217, 185, 140, 137, 116 … | 299, 209, 135, 103 … | 385, 341, 318, 199, 147 … |
+| +15 bpm | 414, 438, 408 … 290 in week 12; baseline still 12.5 bpm low | **414, 180, 109, 61** … back by week 3; baseline within 0.4 | 335, 180, 109 … | 414, 229, 109 … |
+| −8 bpm | unchanged (the gate is one-sided) | same | same | same |
+| none | 0 releases | **0 releases**, identical | 0 | 0 |
+
+Illness blocks (the generator's `illness`, +9–12 bpm all day), then two weeks of alternating stressful and calm days;
+stress caught on the stressful ones (69 % with no illness):
+
+| Illness | Hold off: K = 5 / 7 / 10 | **Hold on** (any K) | Version 49 |
+|---|---|---|---|
+| 5 days | rise 0.9 bpm, 60 % / no change / no change | no change, 69 % | no change |
+| 7 days | rise 4.0 (up to 17.4), 33 % / same / no change | **no change, 69 %** | no change |
+| 10 days | rise 5.6, 23 % at every K | no change, 69 % | no change |
+| 14 days | rise 7.4, 15 % at every K | no change, 70 % | no change |
+
+- **The illness hold is what keeps a sickness out.** Without it, any release long enough for a real step also lets a
+  week of illness in, and the baseline then restarts at the sick level (version 33's restart).
+- **K = 7, with the hold.** K = 5 settles +10 a week or two sooner but takes in a 5-day illness that the hold misses.
+  K = 10 delays +10 by about a week.
+- **Not covered:** an illness of 7+ days that never shows in HRV or resting HR (so never held) is taken in. A step
+  that also raises resting HR is held until that baseline restarts (about a week), so its release comes about a week
+  later.
+
+**On the demo database** nothing moved but the version stamps (golden test): it never has 7 gated days in a row. A
+copy with awake HR raised by 15 bpm from day 100: the reference took in 14.1 of the 15 bpm by the last day (version 49:
+2.8), and median high minutes over the last 7 weeks were 8 (version 49: 42; the usual before the rise: 36).
+
+**On the owner's data** (local copy through Oct 10): unchanged. About 8 days of history, so the gate has barely
+started.
+
+## Why version 52: an atypical first week
+
+**The problem.** A new user's first days always folded: the gate needs 7 days behind it, and the baseline's young
+regime only trims a value more than 4σ from the rest. A sick or hungover first week is consistent with itself, so it
+became the reference. The ordinary days after it sat below the reference, where the one-sided gate doesn't look, and
+the 14-day half-life took weeks to forget the start. Recovery's illness hold can't help: its baselines are empty too.
+Stress read almost nothing for the user's first month, the time they decide whether it works.
+
+**The fix.** `cleanEarlyDays` judges the first 28 days' still medians against their own median (robust σ from the
+MAD, floored at the baseline's 3 bpm), and leaves out any more than 2σ away on either side. A median ignores a block
+that is fewer than half the days, so 5 sick days stop counting on day 11, once 6 ordinary days exist. It is stateless
+(the stored history stays raw), and every reader of `foldDaytimeBaseline` sees the cleaned history: the reference, the
+gate and the scoring mode.
+
+**How it was tested.** The real `stress()` on `__sim__/days.ts`: 12 kinds of people × 3 runs from their first day,
+an atypical start, then stressful and calm workdays alternating. "Ref" is the reference above true calm still HR
+(an ordinary start: +4.4); a percentage is stress caught on a stressful day, otherwise high minutes on a calm day
+(about 45–55 normally).
+
+| Start | Version 51: d7 / d11 / d14 / d34 | Version 52: d11 / d14 / d34 |
+|---|---|---|
+| 5 sick days | 5 %, +20.3 / 3 %, +19.9 / 0, +18.6 / 0, +8.9 | **70 %, +4.5** / 49, +4.5 / 48, +4.4 |
+| 5 hangover days | 19 %, +14.2 / 17 %, +11.8 / 0, +10.9 / 6, +6.9 | **61 %, +4.5** / 49, +4.5 / 48, +4.4 |
+| 5 hot days | 58 %, +6.6 / 63 %, +6.1 / 31, +5.9 / 40, +4.9 | unchanged |
+| 7 rest days (holiday) | 73 %, +0.9 / 71 %, +1.8 / 82, +2.2 / 58, +3.6 | unchanged |
+| ordinary, realistic week mix | +4.4 / +3.8–4.0 throughout | unchanged (0.4 days per realistic start left out) |
+
+- **Window:** 21, 28 and 35 days gave identical results; 28 also covers an illness that starts in week 2.
+- **Cut:** 2.5σ cleaned the hangover start 2 days later (d12 ref +7.6).
+- **Floor:** 1–2 bpm left out 1.6–6 ordinary days per realistic start and still didn't fix a holiday start, so the
+  baseline's own 3 bpm stays.
+- **Not covered:**
+  - A holiday or hot start is only 1–3 bpm off, inside the day-to-day spread, so no robust rule can tell it from
+    normal. Calm days read about 30 extra high minutes for two weeks, shrinking to a few by day 34.
+  - Until ordinary days outnumber the atypical ones (days 7–10 after a 5-day illness), the sick week is still the
+    reference: nothing can tell yet which week was the ordinary one.
+
+**On the demo database** nothing moved but the version stamps (golden test): its start is ordinary. A copy with awake
+HR raised by 20 bpm on the first 5 days: the day-14 reference was 74.5 against the seed's own 73.9 (version 51: 83.0),
+and on day 28 74.5 against 74.2 (version 51: 78.8).
+
+**On the owner's data** (local copy, Oct 4–13): unchanged. Replaying the fold reproduces every stored reference, and
+no day is left out: the 10 medians (74.8–84.5) all sit within 2σ (6 bpm, on the floor) of their median, 78.6.
+
 ## Tests
 
 - **`stress.test.ts`:**
@@ -327,6 +430,20 @@ includes the cool-down minutes.
   - the rolling reference: hand-computed, an episode left alone, the 30-minute minimum, the incremental median vs a
     naive sort;
   - `foldableStillMedian`.
+- **`stressBase.test.ts` (version 52):** `cleanEarlyDays`: 5 sick days then 6 ordinary are left out (version 51
+  folded to the sick level); with only 4 ordinary days they are the ones out; a low day is left out too; an ordinary
+  start and under 7 days are untouched; days after the window never are.
+- **`stress.sim.test.ts` (version 52):** 5 illness or hangover days first: the reference is the ordinary start's
+  (within 1.5 bpm) from day 11, over half the stress caught on day 11, calm days over 20 high minutes; version 51
+  fails each. Ordinary and realistic starts unchanged.
+- **`pipeline.test.ts` (version 52):** the seed with +20 bpm on its first 5 days, against the same copy without it.
+- **`stressBase.test.ts` (version 50):** `gateStillMedian`: a day under the gate folds and ends a run; 6 gated days,
+  then the 7th folds with the earlier six written back; later days fold; held and missing days neither count nor end
+  the run; the gate is off under 7 days; a held 14-day illness leaves the baseline exactly where it was.
+- **`stress.sim.test.ts` (version 50):** no release on ordinary weeks; +15 bpm back to usual from week 3 (version 49
+  still about 3× in week 8, its baseline more than 6 bpm low); +10 settles sooner; a held 14-day illness doesn't move
+  the baseline.
+- **`pipeline.test.ts` (version 50):** the seed with +15 bpm from day 100, against the same copy without the release.
 - **`stress.test.ts` (version 36):** a bout and its falling tail are blocked up to 30 minutes; a heart rate held up after
   the bout is scored from minute 10; 7 stepping minutes in 15, or stepping below 15 % of reserve, isn't a bout; a band
   gap inside the bout is tolerated; without steps or the exertion input nothing changes. 3 fail without the rule.

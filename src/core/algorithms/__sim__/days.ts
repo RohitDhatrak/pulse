@@ -6,7 +6,7 @@
 import { energyBank, minuteLoad } from "../energyBank";
 import { stress, type StressResult } from "../stress";
 import { recovery } from "../../scoring/recovery";
-import { foldableStillMedian, foldDaytimeBaseline } from "../../scoring/stressBase";
+import { foldDaytimeBaseline, gateStillMedian, noStillGate, type StillGate } from "../../scoring/stressBase";
 import type { BaselineState } from "../../scoring/types";
 
 export type Rng = { rnd: () => number; g: () => number };
@@ -387,16 +387,25 @@ export function scoreDay(P: Person, s: Scenario, dayIndex: number, history: (num
   return { scenario: s, day: d, stress: st, eb };
 }
 
+/** A person's folded still-median history and the gate's current run, as `scoreStress` keeps them. */
+export type StillFold = { history: (number | null)[]; gate: StillGate };
+
+/** Fold a scored day as `scoreStress` does (versions 21 and 50); `held` is Recovery's illness hold. True on a release. */
+export function foldStill(st: StillFold, x: ScoredDay, held = false): boolean {
+  const g = gateStillMedian(st.history, x.stress.stillMedianHr, st.gate, held);
+  for (const b of g.backfill) st.history[b.index] = b.value;
+  st.history.push(g.fold);
+  st.gate = g.gate;
+  return g.backfill.length > 0;
+}
+
 /** Weeks of a realistic mix, folding each day's still median through the pipeline's gate. */
 export function warmUp(P: Person, seed: number, weeks = 7) {
   const r = rng(seed);
-  const history: (number | null)[] = [];
+  const st: StillFold = { history: [], gate: noStillGate };
   let i = 0;
-  for (let w = 0; w < weeks; w++) for (const s of weekMix(r)) {
-    const x = scoreDay(P, s, i++, history, r);
-    history.push(foldableStillMedian(history, x.stress.stillMedianHr));
-  }
-  return { history, nextDay: i };
+  for (let w = 0; w < weeks; w++) for (const s of weekMix(r)) foldStill(st, scoreDay(P, s, i++, st.history, r));
+  return { history: st.history, gate: st.gate, nextDay: i };
 }
 
 /** High-stress minutes on a scored day. */

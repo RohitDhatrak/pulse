@@ -22,7 +22,7 @@ import type {
   StressRow,
   TrainingLoadRow,
 } from "../pipeline";
-import { STRENGTH_TYPES } from "@/core/algorithms/healthspan";
+import { activityKind, mergeDuplicateWorkouts } from "@/core/algorithms/workouts";
 import { detectDeviceSwitch, type DeviceSwitch } from "@/core/deviceSwitch";
 import { toStrainScale } from "@/core/scoring/strain";
 import { stressLevel } from "@/lib/bands";
@@ -323,13 +323,7 @@ export const dayStartOf = (ctx: QueryCtx, day: string) => localMidnight(day, ctx
 
 // ── Activities and plans ─────────────────────────────────────────────────────
 
-export function activityKind(type: string): ActivityKind {
-  if (/RUN/.test(type)) return "run";
-  if (/BIK|CYCL|RIDE/.test(type)) return "ride";
-  if (/WALK|HIK/.test(type)) return "walk";
-  if (STRENGTH_TYPES.test(type)) return "strength";
-  return "workout";
-}
+export { activityKind };
 
 export const ACTIVITY_NAME: Record<ActivityKind, string> = {
   run: "Running",
@@ -341,13 +335,21 @@ export const ACTIVITY_NAME: Record<ActivityKind, string> = {
 
 export type ExerciseRow = { id: string; day: string; startTs: number; endTs: number; type: string; name: string | null; calories: number | null; distanceM: number | null };
 
-export function exercisesBetween(ctx: QueryCtx, from: string, to: string): Promise<ExerciseRow[]> {
+/**
+ * Workouts on days from..to, one per session (version 51): the same session from two sources (the band, and an app
+ * writing to Health Connect) is merged into the band's copy. A day's margin each side catches a pair split by the edge.
+ */
+export async function exercisesBetween(ctx: QueryCtx, from: string, to: string): Promise<ExerciseRow[]> {
   const e = exercises;
-  return ctx.db
-    .select({ id: e.id, day: e.day, startTs: e.startTs, endTs: e.endTs, type: e.type, name: e.name, calories: e.calories, distanceM: e.distanceM })
+  const lo = countedFrom(ctx, from);
+  const rows = await ctx.db
+    .select({ id: e.id, day: e.day, startTs: e.startTs, endTs: e.endTs, type: e.type, name: e.name, calories: e.calories, distanceM: e.distanceM, source: e.source })
     .from(e)
-    .where(and(eq(e.userId, ctx.userId), gte(e.day, countedFrom(ctx, from)), lte(e.day, to)))
+    .where(and(eq(e.userId, ctx.userId), gte(e.day, countedFrom(ctx, addDays(lo, -1))), lte(e.day, addDays(to, 1))))
     .orderBy(e.startTs, e.id);
+  return mergeDuplicateWorkouts(rows)
+    .filter((x) => x.day >= lo && x.day <= to)
+    .map((x) => ({ id: x.id, day: x.day, startTs: x.startTs, endTs: x.endTs, type: x.type, name: x.name, calories: x.calories, distanceM: x.distanceM }));
 }
 
 export function activityItem(e: ExerciseRow, row: DayRow | undefined): Extract<TimelineItem, { kind: "activity" }> {

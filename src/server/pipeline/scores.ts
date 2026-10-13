@@ -11,7 +11,7 @@ import { standardConfig } from "@/core/scoring/trainingLoad";
 import { gatedRecovery, minBaselineNights, personalSleepCentre } from "@/core/scoring/recovery";
 import { allNighterConfig, awakeAllNight, creditedSleepMin, hypnogramMetrics, heldNeedHours, ledger, minNeedNights, minUsualRestorativeNights, personalizedNeedHours, rest, restorativeScore, usualRestorativeNights } from "@/core/scoring/sleep";
 import { percentile, toStrainScale } from "@/core/scoring/strain";
-import { foldableStillMedian, foldDaytimeBaseline } from "@/core/scoring/stressBase";
+import { foldDaytimeBaseline, gateStillMedian, noStillGate } from "@/core/scoring/stressBase";
 import type { BaselineState } from "@/core/scoring/types";
 import { energyBank, energyBankConfig } from "@/core/algorithms/energyBank";
 import { fitnessLevel } from "@/core/algorithms/fitnessLevel";
@@ -88,8 +88,10 @@ export const newFold = () => ({
   restoratives: [] as number[],
   /** The illness hold's run of illness-ward nights and how many of it were held (version 30). */
   hold: noHold,
-  /** Each prior day's median still-minute HR (stress().stillMedianHr), oldest first. */
+  /** Each prior day's median still-minute HR (stress().stillMedianHr), oldest first; null when gated out. */
   stillMedians: [] as (number | null)[],
+  /** The current run of days gated out of the stress baseline (version 50). */
+  stillGate: noStillGate,
   reportRows: [] as ReportDay[],
   wakeNights: [] as { day: string; wakeMin: number; efficiency: number | null }[],
 });
@@ -482,7 +484,7 @@ export const forecastOf = (f: Fold, d: Day, rec: RecoveryRow) =>
 
 // ── Stress (baseline from earlier days' median still HR) ─────────────────────
 
-export function scoreStress(f: Fold, d: Day, inputs: Inputs) {
+export function scoreStress(f: Fold, d: Day, inputs: Inputs, rec: RecoveryRow) {
   const { start, end } = d;
   const baseline = foldDaytimeBaseline(f.stillMedians);
   const still = inputs.stillHr.get(d.day) ?? [];
@@ -494,8 +496,12 @@ export function scoreStress(f: Fold, d: Day, inputs: Inputs) {
     excluded: [],
     baseline,
   });
-  // An abnormal day (illness, a hangover) stays out of the baseline (version 21).
-  f.stillMedians.push(foldableStillMedian(f.stillMedians, st.stillMedianHr));
+  // An abnormal day (illness, a hangover) stays out of the baseline (version 21), unless a run of them is a new
+  // normal: then they fold (version 50). A night on Recovery's illness hold doesn't count towards the run.
+  const g = gateStillMedian(f.stillMedians, st.stillMedianHr, f.stillGate, rec.heldBaseline);
+  for (const b of g.backfill) f.stillMedians[b.index] = b.value;
+  f.stillMedians.push(g.fold);
+  f.stillGate = g.gate;
   const last = st.minutes.findLastIndex((v) => v != null);
   const row: StressRow = {
     provisional: st.provisional,

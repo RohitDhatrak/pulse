@@ -325,7 +325,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "Stress is Provisional until 4\u00a0days have set your baseline; until then it uses a fixed spread of 7.65\u00a0bpm and today’s own still level, so 13\u00a0bpm above it reads 2.0. It reads heart rate alone, so standing still, talking, meals or a quick coffee can still raise it for a while; slow, hours-long rises and exercise are filtered out. It is not a measure of how you feel.",
+          "Stress is Provisional until 4\u00a0days have set your baseline; until then it uses a fixed spread of 7.65\u00a0bpm and today’s own still level, so 13\u00a0bpm above it reads 2.0. In your first 4\u00a0weeks, days far from your usual still level (a start while ill, say) are left out of the baseline once ordinary days outnumber them. It reads heart rate alone, so standing still, talking, meals or a quick coffee can still raise it for a while; slow, hours-long rises and exercise are filtered out. It is not a measure of how you feel.",
         ],
       },
     ],
@@ -430,7 +430,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "How it is weighted",
         paragraphs: [
-          "Pulse places your VO2 max in the FRIEND reference table (Kaminsky 2015): lab treadmill tests from 7,783 adults without heart disease, by sex and age decade. It reads between the published percentiles and keeps the result between the 5th and the 95th. Under 20 uses the 20-29 row; 80 and over uses 70-79. A man of 35 at 45.0\u00a0ml/kg/min sits just under the 60th percentile: Good.",
+          "Pulse places your VO2 max in the FRIEND reference table (Kaminsky 2015): lab treadmill tests from 7,783 adults without heart disease, by sex and age decade. Pulse compares you with your exact age: the table's rows hold at the middle of each decade (25, 35 … 75) and it reads between them, so a birthday doesn’t move your result. Under 25 uses the 20s; past 75 the table is continued in line with the Pulse Age reference. It reads between the published percentiles and keeps the result between the 5th and the 95th. A man of 35 at 45.0\u00a0ml/kg/min sits just under the 60th percentile: Good.",
         ],
       },
       {

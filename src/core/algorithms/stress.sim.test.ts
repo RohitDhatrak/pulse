@@ -1,9 +1,9 @@
-// Stress and the Energy Bank on generated days (SCORING_VERSION 21; docs/algorithms/stress.md § Why version 21).
+// Stress and the Energy Bank on generated days (SCORING_VERSION 21, 50 and 52; docs/algorithms/stress.md § Why version 21, 50, 52).
 // People are warmed up over 7 weeks of realistic mixed days, then scored on one scenario at a time, as the pipeline
 // scores them (stage 1 masking with exertion, stage 2 against the gated baseline). Deterministic.
 import { describe, expect, it } from "vitest";
-import { foldableStillMedian } from "../scoring/stressBase";
-import { caught, caughtOfAll, highAroundBouts, highMinutes, people, rng, scoreDay, warmUp, type Scenario, type ScoredDay } from "./__sim__/days";
+import { earlyCleanConfig, foldableStillMedian, foldDaytimeBaseline, stillGateConfig } from "../scoring/stressBase";
+import { caught, caughtOfAll, foldStill, highAroundBouts, highMinutes, people, rng, scoreDay, warmUp, weekMix, type Scenario, type ScoredDay, type StillFold } from "./__sim__/days";
 
 const PE = people();
 // A cross-section: typical, athlete, older adult, high-reactor, noisy wrist HR, standing job, heavy coffee.
@@ -126,4 +126,122 @@ describe("the daytime baseline after an illness week", () => {
     }
     expect(rates.reduce((a, b) => a + b, 0) / rates.length).toBeGreaterThanOrEqual(0.65);
   });
+});
+
+describe("a lasting rise in daytime HR becomes the new normal (version 50)", () => {
+  // Every person, warmed up as usual, then weeks of ordinary mixed days with awake still HR raised by `rise` bpm (a
+  // medicine stopped, heat, altitude, detraining). `release` Infinity is version 49: the gate alone.
+  function weeks(rise: number, n: number, release = stillGateConfig.release) {
+    const keep = stillGateConfig.release;
+    stillGateConfig.release = release;
+    try {
+      const perWeek: number[][] = Array.from({ length: n }, () => []);
+      let releases = 0;
+      const errors: number[] = [];
+      PE.forEach((P0, pi) => {
+        const w = warmFor(pi);
+        const st: StillFold = { history: [...w.history], gate: w.gate };
+        const before = foldDaytimeBaseline(st.history).baseline;
+        const P = { ...P0, stillOffset: P0.stillOffset + rise };
+        const r = rng(5000 + pi);
+        let day = w.nextDay;
+        for (let k = 0; k < n; k++) {
+          let high = 0;
+          for (const s of weekMix(r)) {
+            const x = scoreDay(P, s, day++, st.history, r);
+            if (foldStill(st, x)) releases++;
+            if (s === "calm_desk" || s === "rest_day") high += highMinutes(x);
+          }
+          perWeek[k].push(high);
+        }
+        errors.push(foldDaytimeBaseline(st.history).baseline - before - rise);
+      });
+      return { weekly: perWeek.map(median), releases, error: median(errors) };
+    } finally {
+      stillGateConfig.release = keep;
+    }
+  }
+  const control = weeks(0, 8);
+
+  it("ordinary weeks never release (the gate behaves as in version 49)", () => {
+    expect(control.releases).toBe(0);
+    expect(control.weekly).toEqual(weeks(0, 8, Infinity).weekly);
+  });
+
+  it("+15 bpm: calm and rest days are back to the usual high minutes by week 3 (version 49: still about 3× in week 8)", () => {
+    const now = weeks(15, 8);
+    const before = weeks(15, 8, Infinity);
+    expect(now.releases).toBeGreaterThanOrEqual(PE.length * 0.8);
+    for (let k = 2; k < 8; k++) expect(now.weekly[k], `week ${k + 1}`).toBeLessThanOrEqual(1.5 * Math.max(...control.weekly));
+    expect(before.weekly[7]).toBeGreaterThan(2 * Math.max(...control.weekly));
+    expect(Math.abs(now.error)).toBeLessThan(1.5);
+    expect(before.error).toBeLessThan(-6);
+  });
+
+  it("+10 bpm: settled sooner than version 49", () => {
+    const now = weeks(10, 6);
+    const before = weeks(10, 6, Infinity);
+    expect(now.weekly[3]).toBeLessThan(before.weekly[3]);
+    expect(now.weekly.slice(3).reduce((a, b) => a + b, 0)).toBeLessThan(before.weekly.slice(3).reduce((a, b) => a + b, 0));
+  });
+
+  it("an illness held from its second night stays out however long it lasts (14 days: the baseline doesn't move)", () => {
+    for (const pi of [0, 1, 3]) {
+      const w = warmFor(pi);
+      const st: StillFold = { history: [...w.history], gate: w.gate };
+      const before = foldDaytimeBaseline(st.history).baseline;
+      const r = rng(70 + pi);
+      for (let d = 0; d < 14; d++) foldStill(st, scoreDay(PE[pi], "illness", w.nextDay + d, st.history, r), d >= 1);
+      expect(foldDaytimeBaseline(st.history).baseline, PE[pi].name).toBeCloseTo(before, 6);
+    }
+  });
+});
+
+describe("a new user whose first days are atypical (version 52)", () => {
+  // 12 people × 3 runs from their first day: the atypical start, then stressful and calm workdays alternating.
+  const RUNS = PE.flatMap((P, pi) => [0, 1, 2].map((k) => ({ P, seed: 3000 + pi * 10 + k })));
+  function start(first: Scenario[], cleanDays = earlyCleanConfig.days, mix = false) {
+    const keep = earlyCleanConfig.days;
+    earlyCleanConfig.days = cleanDays;
+    try {
+      const byDay = Array.from({ length: 35 }, () => ({ xs: [] as ScoredDay[], ref: [] as number[] }));
+      for (const { P, seed } of RUNS) {
+        const st: StillFold = { history: [], gate: { run: [] } };
+        const r = rng(seed);
+        const r2 = rng(seed + 7);
+        const rest = mix ? Array.from({ length: 6 }, () => weekMix(r2)).flat() : Array.from({ length: 35 }, (_, k) => (k % 2 === 0 ? "stressful_work" : "calm_desk") as Scenario);
+        [...first, ...rest].slice(0, 35).forEach((s, d) => {
+          const x = scoreDay(P, s, d, st.history, r);
+          byDay[d].xs.push(x);
+          if (st.history.length) byDay[d].ref.push(foldDaytimeBaseline(st.history).baseline - (P.sleepRhr + P.stillOffset));
+          foldStill(st, x);
+        });
+      }
+      return { ref: (d: number) => median(byDay[d].ref), caught: (d: number) => caught(byDay[d].xs), high: (d: number) => median(byDay[d].xs.map(highMinutes)) };
+    } finally {
+      earlyCleanConfig.days = keep;
+    }
+  }
+  const ordinary = start([]);
+
+  it.each([["illness"], ["hangover"]] as [Scenario][])("5 %s days first: the reference is the ordinary one from day 11, and calm days read stress again (version 51: none for weeks)", (s) => {
+    const now = start(Array(5).fill(s));
+    const v51 = start(Array(5).fill(s), 0);
+    // Measured: reference +4.5 from day 11 (an ordinary start: +4.4); stress caught 61–70 % on day 11, calm days 41–49
+    // high minutes. Version 51: +11.8 to +19.9 on day 11, +6.9 to +8.9 still on day 34; 0 high minutes on calm days.
+    for (const d of [11, 14, 20, 34]) expect(Math.abs(now.ref(d) - ordinary.ref(d)), `day ${d}`).toBeLessThan(1.5);
+    expect(now.caught(11)).toBeGreaterThan(0.5);
+    for (const d of [12, 14, 20]) expect(now.high(d), `day ${d}`).toBeGreaterThan(20);
+    expect(v51.ref(14) - ordinary.ref(14)).toBeGreaterThan(5);
+    expect(v51.caught(11)).toBeLessThan(0.25);
+    expect(v51.high(14)).toBe(0);
+  }, 120_000);
+
+  it("an ordinary start and a realistic week mix read as in version 51", () => {
+    const ordinary51 = start([], 0);
+    for (const d of [7, 14, 34]) expect(ordinary.ref(d)).toBeCloseTo(ordinary51.ref(d), 6);
+    const mix = start([], earlyCleanConfig.days, true);
+    const mix51 = start([], 0, true);
+    for (const d of [7, 14, 34]) expect(Math.abs(mix.ref(d) - mix51.ref(d)), `day ${d}`).toBeLessThan(0.3);
+  }, 120_000);
 });

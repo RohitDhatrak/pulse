@@ -78,7 +78,7 @@ export default async function FitnessPage() {
               min={0}
               max={100}
               format="int"
-              describe={`${categoryWord(v.category)} for ${v.sex === "male" ? "men" : "women"} ${v.ageBand}`}
+              describe={`${categoryWord(v.category)} for ${v.sex === "male" ? "men" : "women"} aged ${v.age}`}
               bands={[
                 { from: 0, to: 39.9, tone: "warning" },
                 { from: 60, to: 100, tone: "optimal" },
@@ -93,7 +93,7 @@ export default async function FitnessPage() {
               ))}
             </div>
             <p className={cn(CAPTION, "mt-3")}>
-              {ordinal(v.percentile)} percentile for {v.sex === "male" ? "men" : "women"} {v.ageBand} (FRIEND registry).
+              {ordinal(v.percentile)} percentile for {v.sex === "male" ? "men" : "women"} aged {v.age} (FRIEND registry).
             </p>
           </SectionShell>
         )

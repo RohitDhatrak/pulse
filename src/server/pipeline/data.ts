@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { Db } from "../db";
+import { mergeDuplicateWorkouts } from "@/core/algorithms/workouts";
 import { dailyMetrics, exercises as exercisesTable, intradaySeries, sleepSessions } from "../db/schema";
 import { sampleRange } from "../samples";
 import { addDays, daysBetween, localDay, localMidnight } from "../time";
@@ -22,7 +23,7 @@ export type Session = {
   lightMin: number | null;
   remMin: number | null;
 };
-export type Exercise = { id: string; day: string; startTs: number; endTs: number; type: string; name: string | null; calories: number | null };
+export type Exercise = { id: string; day: string; startTs: number; endTs: number; type: string; name: string | null; calories: number | null; source: string };
 export type Metrics = {
   day: string;
   hrvMs: number | null;
@@ -92,10 +93,12 @@ export async function load(db: Db, { userId, timeZone: tz, dataFrom }: PipelineO
       .where(eq(s.userId, userId))
       .orderBy(s.startTs, byteOrder(s.id)) as Promise<Session[]>,
     db
-      .select({ id: e.id, day: e.day, startTs: e.startTs, endTs: e.endTs, type: e.type, name: e.name, calories: e.calories })
+      .select({ id: e.id, day: e.day, startTs: e.startTs, endTs: e.endTs, type: e.type, name: e.name, calories: e.calories, source: e.source })
       .from(e)
       .where(eq(e.userId, userId))
-      .orderBy(e.startTs, byteOrder(e.id)) as Promise<Exercise[]>,
+      .orderBy(e.startTs, byteOrder(e.id))
+      // One per session (version 51): the band's copy and an app's Health Connect copy are merged.
+      .then((xs) => mergeDuplicateWorkouts(xs)) as Promise<Exercise[]>,
     sampleRange(db, "hr", userId),
   ]);
   // "Count my data from" (version 34): earlier days don't exist for scoring. The rows stay stored.

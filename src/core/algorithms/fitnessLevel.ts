@@ -1,6 +1,8 @@
 // Own algorithm (docs/algorithms/fitness-level.md): VO2max percentile for age decade and sex from the FRIEND
 // treadmill reference standards, a category from the percentile, and the 50th-percentile (median) reference that
-// Healthspan scores VO2max against (the 75th before scoring version 19).
+// Healthspan scores VO2max against (the 75th before scoring version 19). Since scoring version 49 the percentile reads
+// a row for the exact age (between decade midpoints, and past 75 in line with Healthspan's reference), not the decade's
+// row: on a decade birthday the same VO2max jumped 18–30 points.
 
 export type Sex = "male" | "female";
 
@@ -60,14 +62,22 @@ export const fitnessLevelConfig = {
 
 export type FitnessCategory = "poor" | "fair" | "good" | "excellent" | "superior";
 
-/** Under 20 uses the 20–29 row; 80 and over uses 70–79. */
-const decadeRow = (age: number, sex: Sex) =>
-  FRIEND_TREADMILL[sex][Math.min(5, Math.max(0, Math.floor(age / 10) - 2))];
+/**
+ * The FRIEND row (VO2max at each of FRIEND_PERCENTILES) for an exact age (scoring version 49). Up to 75 each column is
+ * linear between decade midpoints (25, 35 … 75) and flat below 25, as `vo2maxAtPercentile`. Past 75 the 75-year row
+ * is scaled with Healthspan's reference, so the median stays on it and the columns keep their order; extending each
+ * column on its own to the floor of 15 collapsed them (a woman of 85 at 16 read the 95th).
+ */
+export function friendRowAt(age: number, sex: Sex): number[] {
+  if (age <= 75) return FRIEND_PERCENTILES.map((p) => vo2maxAtPercentile(age, sex, p));
+  const scale = referenceVo2max(age, sex) / referenceVo2max(75, sex);
+  return FRIEND_PERCENTILES.map((p) => vo2maxAtPercentile(75, sex, p) * scale);
+}
 
-/** Percentile for a VO2max, linear between the published columns and clamped to [5, 95]. */
+/** Percentile for a VO2max at an exact age, linear between the published columns and clamped to [5, 95]. */
 export function vo2maxPercentile(vo2max: number, age: number, sex: Sex): number {
   return piecewiseLinear(
-    decadeRow(age, sex).map((v, i) => [v, FRIEND_PERCENTILES[i]] as const),
+    friendRowAt(age, sex).map((v, i) => [v, FRIEND_PERCENTILES[i]] as const),
     vo2max,
   );
 }

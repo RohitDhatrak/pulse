@@ -109,7 +109,7 @@ flowchart TB
 | Sleep regularity | `sri` | SRI, −100..100 | mean | `sleepRegularityIndex` over the 7 days ending that day |
 | Zones 1–3 | `zone13Min` | min/day | rolling 7-day windows, min/week | Pulse's `timeInZone`, zones 1–3: 50–80% of heart-rate reserve (`zones.ts`, as Strain). **Null unless the day was worn ≥ 10 h awake** |
 | Zones 4–5 | `zone45Min` | min/day | rolling 7-day windows, min/week | the same, 80% of heart-rate reserve and above |
-| Strength | `strengthMin` | min/day | rolling 7-day windows, min/week | `exercises` with a strength type. A logged workout always counts; 0 only on a day worn ≥ 10 h awake; else null |
+| Strength | `strengthMin` | min/day | rolling 7-day windows, min/week | `exercises` with a strength type, one per session (since version 51 the band's and an app's copy of the same session count once; `data-notes.md`). A logged workout always counts; 0 only on a day worn ≥ 10 h awake; else null |
 | Steps | `steps` | steps/day | rolling 7-day windows, capped | `daily_metrics.steps` (Google counts them, so no wear rule) |
 | VO2max | `vo2maxRun`, `vo2maxDaily` | mL/kg/min | the calibrated blend above | `daily_metrics.vo2max_run`, `vo2max_daily` |
 | Resting HR | `restingHr` | bpm | mean | `daily_metrics.rhr_bpm` |

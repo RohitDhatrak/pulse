@@ -56,6 +56,20 @@ flowchart LR
 - **proto3 omits zero and empty fields.** A missing `dataPoints` means no data. A `civilStartTime.time` can be `{}`, which means midnight.
 - **Page cap.** Hælan requested `pageSize=10000` and got pages capped at 5,000 for dense types. Pulse sends 10,000, or 25 for `sleep` and `exercise`.
 - **Data sources.** Every point carries `dataSource.platform` (observed values: `FITBIT`, `HEALTH_CONNECT`), `dataSource.recordingMethod` and usually `dataSource.device.displayName`.
+- **The same workout from two sources (observed 2026-10-04 and 2026-10-13).** A strength session recorded by the band
+  (`FITBIT`, "Google Fitbit Air", with calories) came back a second time as `HEALTH_CONNECT` from the app that logged it
+  (`application.packageName` `com.hevy`, no calories), starting 42 s earlier and ending 34 s later. Google's own app
+  shows one. Pulse stores both points and, since scoring version 51, reads them as one session
+  (`mergeDuplicateWorkouts`, `src/core/algorithms/workouts.ts`):
+  - **Duplicates:** different sources, overlapping by at least 80 % of the shorter, the same kind (a generic workout
+    matches any kind).
+  - **Survivor:** the band's copy, then one with calories, then the longer. It takes the other's missing calories,
+    distance and name.
+  - **Readers:** the pipeline loader and `exercisesBetween`. An old link to the merged-away copy opens the session.
+  - **Health Connect workouts are not dropped** the way its heart rate is: a session logged in an app with the band off
+    must still count.
+  - **Limitation:** only the platform is stored, so two apps that both write through Health Connect aren't merged with
+    each other unless the band also recorded the session.
 
 ## Catalogue
 

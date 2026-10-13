@@ -17,13 +17,15 @@ import {
 } from ".";
 import { healthspanWornAwakeMin } from "./scores";
 import { energyStart } from "@/core/algorithms/energyBank";
+import { vo2maxPercentile } from "@/core/algorithms/fitnessLevel";
 import { healthspanConfig } from "@/core/algorithms/healthspan";
+import { earlyCleanConfig, stillGateConfig } from "@/core/scoring/stressBase";
 import { strainTargetConfig } from "@/core/algorithms/strainTarget";
 import { hardOrLateWorkout, loadToStrain, typicalSession } from "@/core/scoring/load";
 import { logisticK, logisticScore, logisticZ0, missingInputScale, sleepPerfScale, wHRV, wResp, wRHR, wSkinTemp, wSleep, type RecoveryTerm } from "@/core/scoring/recovery";
 import { journalImpactConfig } from "@/core/algorithms/journalImpact";
 import { heldNeedHours, ledger, personalizedNeedHours, rest } from "@/core/scoring/sleep";
-import { mergeSamples } from "../samples";
+import { mergeSamples, readHr } from "../samples";
 import { trimpToStrain } from "@/core/scoring/strain";
 import { acwrBand, dayRatio, ewmaLoads, monotonyMax } from "@/core/scoring/readiness";
 import { load } from "./data";
@@ -35,7 +37,7 @@ import { getSleep } from "../queries/sleep";
 import { reasonCopy } from "@/lib/reasons";
 import { addDays, localMidnight } from "../time";
 
-const COLS = new Set(["strain", "recovery", "sleep", "training_load", "strain_target", "health_monitor", "journal_impact"]);
+const COLS = new Set(["strain", "recovery", "sleep", "training_load", "strain_target", "health_monitor", "journal_impact", "fitness", "stress"]);
 const json = async <T>(db: Db, col: string, day: string) => {
   if (!COLS.has(col)) throw new Error(col);
   const [r] = await rows<{ v: T }>(db, sql`select ${sql.identifier(col)} v from daily_scores where user_id = ${USER} and day = ${day}`);
@@ -700,6 +702,136 @@ describe("Strain Target's starter session on the seed (SCORING_VERSION 48)", () 
     // Every day with a Recovery has a target; version 47 had none (a typical session of 0).
     expect(targets).toBeGreaterThan(140);
     expect(calibrating).toBe(0);
+  });
+});
+
+describe("Fitness level by exact age on the seed (SCORING_VERSION 49)", () => {
+  type Fit = { reason: null; vo2max: number; age: number; percentile: number; category: string } | { reason: string };
+
+  it("the stored percentile is the one for the exact age", () => {
+    let n = 0;
+    for (const day of allDays) {
+      const f = js<Fit>("fitness", day);
+      if (f.reason !== null) continue;
+      n++;
+      expect(f.percentile, day).toBeCloseTo(vo2maxPercentile(f.vo2max, f.age, PROFILE.sex), 10);
+    }
+    expect(n).toBeGreaterThan(150);
+  });
+
+  it("turning 40 mid-seed moves it smoothly, not by a decade's step (version 48: 14.8 points that day)", async () => {
+    const older = await seeded([NOW], { compute: false });
+    const birthDate = `${Number(dayAt(90).slice(0, 4)) - 40}${dayAt(90).slice(4)}`;
+    await recompute(older, { ...OPTS, profile: { ...PROFILE, birthDate } });
+    let prev: { vo2max: number; percentile: number } | null = null;
+    let worst = 0;
+    let crossed = false;
+    for (const day of allDays) {
+      const f = await json<Fit>(older, "fitness", day);
+      if (f.reason !== null) continue;
+      if (f.age >= 40 && prev && !crossed) crossed = true;
+      if (prev && prev.vo2max === f.vo2max) worst = Math.max(worst, Math.abs(f.percentile - prev.percentile));
+      prev = f;
+    }
+    expect(crossed).toBe(true);
+    expect(worst).toBeLessThan(1);
+  });
+});
+
+describe("a lasting rise in daytime HR on the seed (SCORING_VERSION 50)", () => {
+  type Stress = { highMin: number; referenceHr: number | null };
+  /** A copy of the seed with awake HR raised by 15 bpm from day 100 on, recomputed with the given release. */
+  async function raised(release: number) {
+    const copy = await copyDb(db);
+    const mains = await rows<{ s: number; e: number }>(copy, sql`select start_ts s, end_ts e from sleep_sessions where user_id = ${USER} and is_main and day >= ${dayAt(99)} order by day`);
+    for (let k = 0; k + 1 < mains.length; k++) {
+      const win = { start: Number(mains[k].e) + 60, end: Number(mains[k + 1].s) - 60 };
+      const hr = await readHr(copy, USER, win.start, win.end);
+      await mergeSamples(copy, "hr", USER, win, new Map(hr.map((x) => [x.ts, x.bpm + 15])), "replace");
+    }
+    for (let i = 99; i < allDays.length; i++) await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(i)}) on conflict do nothing`);
+    const keep = stillGateConfig.release;
+    stillGateConfig.release = release;
+    try {
+      await recompute(copy, OPTS);
+    } finally {
+      stillGateConfig.release = keep;
+    }
+    return copy;
+  }
+  const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor((xs.length - 1) / 2)];
+
+  it("+15 bpm from day 100: the stress reference follows within weeks and high minutes settle (version 49: still 15 bpm low at the end)", async () => {
+    const now = await raised(stillGateConfig.release);
+    const v49 = await raised(Infinity);
+    const ref = async (d: Db, i: number) => (await json<Stress>(d, "stress", dayAt(i))).referenceHr!;
+    const high = async (d: Db, from: number, to: number) => median(await Promise.all(Array.from({ length: to - from }, async (_, k) => (await json<Stress>(d, "stress", dayAt(from + k))).highMin)));
+    const before = js<Stress>("stress", dayAt(99)).referenceHr!;
+    const usual = median(allDays.slice(70, 99).map((day) => js<Stress>("stress", day).highMin));
+    // Measured: the reference rose 14.1 of the 15 bpm by the last day (version 49: 2.8, gated out on most days).
+    expect((await ref(now, allDays.length - 1)) - before).toBeGreaterThan(12);
+    expect((await ref(v49, allDays.length - 1)) - before).toBeLessThan(5);
+    // Median high minutes over the last 7 weeks: 8 (version 49: 42; the seed's usual before the rise, 36).
+    expect(await high(now, 130, allDays.length)).toBeLessThanOrEqual(usual);
+    expect(await high(v49, 130, allDays.length)).toBeGreaterThan((await high(now, 130, allDays.length)) + 20);
+  });
+});
+
+describe("an atypical first week on the seed (SCORING_VERSION 52)", () => {
+  type Stress = { referenceHr: number | null };
+  /** A copy of the seed with awake HR raised by 20 bpm on its first 5 days (a new user who starts while ill). */
+  async function sickStart(cleanDays: number) {
+    const copy = await copyDb(db);
+    const mains = await rows<{ s: number; e: number }>(copy, sql`select start_ts s, end_ts e from sleep_sessions where user_id = ${USER} and is_main and day <= ${dayAt(5)} order by day`);
+    for (let k = 0; k + 1 < mains.length; k++) {
+      const win = { start: Number(mains[k].e) + 60, end: Number(mains[k + 1].s) - 60 };
+      const hr = await readHr(copy, USER, win.start, win.end);
+      await mergeSamples(copy, "hr", USER, win, new Map(hr.map((x) => [x.ts, x.bpm + 20])), "replace");
+    }
+    for (let i = 0; i < allDays.length; i++) await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(i)}) on conflict do nothing`);
+    const keep = earlyCleanConfig.days;
+    earlyCleanConfig.days = cleanDays;
+    try {
+      await recompute(copy, OPTS);
+    } finally {
+      earlyCleanConfig.days = keep;
+    }
+    return copy;
+  }
+
+  it("+20 bpm on the first 5 days: by day 14 the stress reference is the seed's own (version 51: still far above)", async () => {
+    const now = await sickStart(earlyCleanConfig.days);
+    const v51 = await sickStart(0);
+    const ref = async (d: Db, i: number) => (await json<Stress>(d, "stress", dayAt(i))).referenceHr!;
+    const seed = js<Stress>("stress", dayAt(14)).referenceHr!;
+    // Measured: day 14 74.5 against the seed's 73.9 (version 51: 83.0); day 28 74.5 against 74.2 (version 51: 78.8).
+    expect(Math.abs((await ref(now, 14)) - seed)).toBeLessThan(2);
+    expect((await ref(v51, 14)) - seed).toBeGreaterThan(8);
+    expect(Math.abs((await ref(now, 28)) - js<Stress>("stress", dayAt(28)).referenceHr!)).toBeLessThan(1.5);
+    expect((await ref(v51, 28)) - js<Stress>("stress", dayAt(28)).referenceHr!).toBeGreaterThan(3);
+  });
+});
+
+describe("one workout per session on the seed (SCORING_VERSION 51)", () => {
+  it("an app's Health Connect copy of a seeded strength session changes no score: one activity, the same strength minutes", async () => {
+    const copy = await copyDb(db);
+    // The last seeded strength session, copied as an app writes it: 40 s earlier, 20 s longer, no calories.
+    const [w] = await rows<{ id: string; day: string; s: number; e: number }>(
+      copy,
+      sql`select id, day::text as day, start_ts s, end_ts e from exercises where user_id = ${USER} and type = 'STRENGTH_TRAINING' order by start_ts desc limit 1`,
+    );
+    await copy.execute(
+      sql`insert into exercises (user_id, id, day, start_ts, end_ts, type, name, calories, source) values (${USER}, 'hc-copy', ${w.day}, ${Number(w.s) - 40}, ${Number(w.e) + 20}, 'STRENGTH_TRAINING', 'Strength training', null, 'HEALTH_CONNECT')`,
+    );
+    await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${w.day}) on conflict do nothing`);
+    await recompute(copy, OPTS);
+    const cols = sql`activities, healthspan, strain, stress, energy_bank`;
+    const before = await rows<Record<string, unknown>>(db, sql`select day::text as day, ${cols} from daily_scores where user_id = ${USER} and day >= ${w.day} order by day`);
+    const after = await rows<Record<string, unknown>>(copy, sql`select day::text as day, ${cols} from daily_scores where user_id = ${USER} and day >= ${w.day} order by day`);
+    expect(after).toEqual(before);
+    const acts = (after[0].activities as { id: string }[]).map((a) => a.id);
+    expect(acts).toContain(w.id);
+    expect(acts).not.toContain("hc-copy");
   });
 });
 

@@ -165,6 +165,15 @@ describe("the Fitness load chart shows complete days (SCORING_VERSION 46)", () =
   });
 });
 
+describe("the Fitness percentile is for your exact age (SCORING_VERSION 49)", () => {
+  it("carries the whole-year age, not a decade band", async () => {
+    const vo2 = (await getFitness(ctxFor(db))).vo2.value!;
+    // The seed was born 1990-01-01; its last day is in 2026.
+    expect(vo2).toMatchObject({ age: 36, sex: "male" });
+    expect(vo2).not.toHaveProperty("ageBand");
+  });
+});
+
 describe("a light training load (SCORING_VERSION 27)", () => {
   it("the Fitness training-load metric says 'light load', not 'calibrating', when the day has no ratio for that reason", async () => {
     expect((await getFitness(ctxFor(db))).trainingLoad.value).not.toBeNull(); // the seed's chronic load is 44–155 a day

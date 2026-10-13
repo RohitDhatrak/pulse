@@ -25,14 +25,19 @@ import type { Metric } from "@/lib/reasons";
 import type { ActivityVM, KeyStat, ZoneRow } from "./types";
 
 /** Activity `/activity/[id]` (spec §7.4); null for an unknown id. */
-export async function getActivity(id: string, ctx: QueryCtx): Promise<ActivityVM | null> {
+export async function getActivity(requestedId: string, ctx: QueryCtx): Promise<ActivityVM | null> {
   const x = exercises;
-  const [e] = await ctx.db
+  const [found] = await ctx.db
     .select({ id: x.id, day: x.day, startTs: x.startTs, endTs: x.endTs, type: x.type, name: x.name, calories: x.calories, distanceM: x.distanceM })
     .from(x)
-    .where(and(eq(x.userId, ctx.userId), eq(x.id, id)));
+    .where(and(eq(x.userId, ctx.userId), eq(x.id, requestedId)));
   // An activity before "count my data from" doesn't exist here (version 34).
-  if (!e || countedFrom(ctx, e.day) !== e.day) return null;
+  if (!found || countedFrom(ctx, found.day) !== found.day) return null;
+  // A copy merged into another source's (version 51) opens the session it was merged into.
+  const overlap = (y: ExerciseRow) => Math.min(y.endTs, found.endTs) - Math.max(y.startTs, found.startTs);
+  const sameDay = await exercisesBetween(ctx, found.day, found.day);
+  const e = sameDay.find((y) => y.id === found.id) ?? [...sameDay].filter((y) => overlap(y) > 0).sort((p, q) => overlap(q) - overlap(p))[0] ?? found;
+  const id = e.id;
   const [rows, recent, series] = await Promise.all([
     loadDays(ctx, addDays(e.day, -30), e.day),
     exercisesBetween(ctx, addDays(e.day, -30), e.day),

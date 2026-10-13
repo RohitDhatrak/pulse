@@ -125,8 +125,17 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  * 48: Strain Target's typical session is at least a starter session (30 TRIMP, Strain 8.1): someone whose heart rate
  *     never reached zone 1 had no target ("calibrating" forever), and someone training every other week was asked
  *     for a rest day. The row gains `starter`.
+ * 49: Fitness level's percentile compares with the exact age (FRIEND rows between decade midpoints; past 75 scaled
+ *     with Healthspan's reference), not the decade's row: a decade birthday moved it 18–30 points, and someone at
+ *     Healthspan's median read the 37th–66th (8th at 95).
+ * 50: Stress's baseline accepts a new normal: 7 gated days in a row (not on Recovery's illness hold) fold, so a lasting
+ *     rise in daytime HR is taken in within weeks instead of reading as stress for months.
+ * 51: One workout per session: the same session from two sources (the band's recording and an app's Health Connect
+ *     copy, overlapping by 80 %+) is merged into the band's, so it isn't scored, listed or counted as strength twice.
+ * 52: An atypical first week (ill, hungover) no longer becomes the stress reference: the first 28 days' still
+ *     medians are judged against their own median, and those beyond 2 robust σ, on either side, are left out.
  */
-export const SCORING_VERSION = 48;
+export const SCORING_VERSION = 52;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */

@@ -4,14 +4,20 @@ import {
   analyze,
   baselineRelativeHighMarginBPM,
   bucketSeconds,
+  cleanEarlyDays,
   dayDaytimeAggregate,
+  earlyCleanConfig,
+  foldableStillMedian,
   foldDaytimeBaseline,
+  gateStillMedian,
   highBandFloor,
   marginToSigma,
   minHourHrSamples,
   type ScoringMode,
   scoringMode,
+  noStillGate,
   squash,
+  stillGateConfig,
 } from "./stressBase";
 import type { HrSample } from "./types";
 
@@ -164,5 +170,104 @@ describe("DaytimeBaselinesTest (HR-only)", () => {
 
   it("an empty day reduces to nothing", () => {
     expect(dayDaytimeAggregate([])).toBeNull();
+  });
+});
+
+describe("the baseline's gate releases a new normal (SCORING_VERSION 50)", () => {
+  const usual = Array.from({ length: 28 }, (_, i) => 70 + (i % 3) - 1);
+  /** Feed values through the gate as scoreStress does; returns the history, the gate and each day's result. */
+  function feed(values: (number | null)[], held: (i: number) => boolean = () => false, start = usual) {
+    const history: (number | null)[] = [...start];
+    let gate = noStillGate;
+    const out = values.map((v, i) => {
+      const g = gateStillMedian(history, v, gate, held(i));
+      for (const b of g.backfill) history[b.index] = b.value;
+      history.push(g.fold);
+      gate = g.gate;
+      return g;
+    });
+    return { history, gate, out };
+  }
+  const k = stillGateConfig.release;
+
+  it("a day under the gate folds and ends a run", () => {
+    const { out } = feed([90, 90, 71]);
+    expect(out.map((g) => g.fold)).toEqual([null, null, 71]);
+    expect(out[2].gate.run).toEqual([]);
+  });
+
+  it(`gated for ${k - 1} days in a row; on day ${k} the run is a new normal: it folds and the earlier days are written back`, () => {
+    const { history, out } = feed(Array(k).fill(90));
+    expect(out.slice(0, k - 1).every((g) => g.fold === null && g.backfill.length === 0)).toBe(true);
+    expect(out[k - 1].fold).toBe(90);
+    expect(out[k - 1].backfill).toEqual(Array.from({ length: k - 1 }, (_, i) => ({ index: usual.length + i, value: 90 })));
+    expect(history.slice(usual.length)).toEqual(Array(k).fill(90));
+    // Version 49 (the gate alone) kept all of them out.
+    expect(Array(k).fill(90).map(() => foldableStillMedian([...usual], 90))).toEqual(Array(k).fill(null));
+  });
+
+  it("past the release each gated day folds, without another backfill, until one is back under the gate", () => {
+    const { out } = feed([...Array(k + 2).fill(95), 71, 95]);
+    // Once released, the baseline restarts towards 95, so later 95s may fall under the gate; either way they fold.
+    expect(out.slice(k - 1, k + 2).every((g) => g.fold === 95)).toBe(true);
+    expect(out.slice(k, k + 2).every((g) => g.backfill.length === 0)).toBe(true);
+    expect(out[k + 2]).toMatchObject({ fold: 71, gate: { run: [] } });
+  });
+
+  it("a night on Recovery's illness hold stays out without counting or ending the run; so does a missing day", () => {
+    const values = [90, 90, 90, null, 90, 90, 90, 90];
+    const { out } = feed(values, (i) => i === 4);
+    expect(out[3]).toMatchObject({ fold: null, backfill: [] });
+    expect(out[4]).toMatchObject({ fold: null, backfill: [] });
+    expect(out[4].gate.run).toHaveLength(3);
+    // Days 0, 1, 2, 5, 6, 7 are six gated days that count: one short of the release.
+    expect(out.every((g) => g.fold === null)).toBe(true);
+    expect(out.at(-1)!.gate.run.map((r) => r.value)).toEqual([90, 90, 90, 90, 90, 90]);
+  });
+
+  it("with fewer than 7 days behind it the gate is off: everything folds", () => {
+    expect(feed([95, 95], () => false, [70, 71]).out.map((g) => g.fold)).toEqual([95, 95]);
+  });
+
+  it("an illness week held from its second night stays out however long it lasts", () => {
+    const { out, history } = feed(Array(14).fill(90), (i) => i >= 1);
+    expect(out.every((g) => g.fold === null)).toBe(true);
+    expect(foldDaytimeBaseline(history).baseline).toBeCloseTo(foldDaytimeBaseline(usual).baseline, 6);
+  });
+});
+
+describe("an atypical first week (SCORING_VERSION 52)", () => {
+  const sick = Array(5).fill(90);
+  const usual = (n: number) => Array.from({ length: n }, (_, i) => 70 + (i % 3) - 1);
+  const W = earlyCleanConfig.days;
+
+  it("5 sick days then 6 ordinary ones: the sick days are left out, and the baseline is the ordinary level (version 51: 90, the ordinary days rejected)", () => {
+    const h = [...sick, ...usual(6)];
+    expect(cleanEarlyDays(h)).toEqual([...Array(5).fill(null), ...usual(6)]);
+    expect(foldDaytimeBaseline(h).baseline).toBeCloseTo(70, 0);
+    expect(foldHistory(h, daytimeHRCfg).baseline).toBeGreaterThan(85);
+  });
+
+  it("while the sick days are still the majority nothing tells which week is ordinary: the 4 ordinary days are the ones out", () => {
+    expect(cleanEarlyDays([...sick, ...usual(4)])).toEqual([...sick, null, null, null, null]);
+  });
+
+  it("two-sided: a day 10 bpm below the rest is left out", () => {
+    const h = [...usual(8), 60, ...usual(3)];
+    expect(cleanEarlyDays(h)[8]).toBeNull();
+    expect(cleanEarlyDays(h).filter((v) => v == null)).toHaveLength(1);
+  });
+
+  it("an ordinary start is untouched, and so are fewer than 7 days", () => {
+    const noisy = [70, 72, 68, 71, 69, 73, 67, 70, 72, 68, 71, 69, 70];
+    expect(cleanEarlyDays(noisy)).toBe(noisy);
+    expect(cleanEarlyDays([90, 90, 90, 70, 70, 70])).toEqual([90, 90, 90, 70, 70, 70]);
+  });
+
+  it(`only the first ${W} days are judged; a sick block after them is left to the gate`, () => {
+    const h = [...usual(W), ...Array(10).fill(95)];
+    expect(cleanEarlyDays(h)).toBe(h);
+    const early = [...sick, ...usual(W - 5), 90, 90];
+    expect(cleanEarlyDays(early).slice(W)).toEqual([90, 90]);
   });
 });
