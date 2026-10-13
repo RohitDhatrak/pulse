@@ -118,6 +118,8 @@ export type EnergyBankVM = {
   curve: TimePoint[];
   drains: { label: string; kind: "workout" | "activity" | "stress"; start: number; amount: number }[];
   naps: { start: number; end: number }[];
+  /** The bank started at yesterday's wake and is still running past midnight (version 54). */
+  sinceYesterday: boolean;
 };
 
 // ── Home ─────────────────────────────────────────────────────────────────────

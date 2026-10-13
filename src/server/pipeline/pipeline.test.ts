@@ -16,7 +16,7 @@ import {
   type StrainTargetRow,
 } from ".";
 import { healthspanWornAwakeMin } from "./scores";
-import { energyStart } from "@/core/algorithms/energyBank";
+import { energyBankConfig, energyStart } from "@/core/algorithms/energyBank";
 import { vo2maxPercentile } from "@/core/algorithms/fitnessLevel";
 import { healthspanConfig } from "@/core/algorithms/healthspan";
 import { earlyCleanConfig, stillGateConfig } from "@/core/scoring/stressBase";
@@ -24,7 +24,7 @@ import { strainTargetConfig } from "@/core/algorithms/strainTarget";
 import { hardOrLateWorkout, loadToStrain, typicalSession } from "@/core/scoring/load";
 import { logisticK, logisticScore, logisticZ0, missingInputScale, sleepPerfScale, wHRV, wResp, wRHR, wSkinTemp, wSleep, type RecoveryTerm } from "@/core/scoring/recovery";
 import { journalImpactConfig } from "@/core/algorithms/journalImpact";
-import { heldNeedHours, ledger, personalizedNeedHours, rest } from "@/core/scoring/sleep";
+import { heldNeedHours, ledger, nightJoinConfig, personalizedNeedHours, rest } from "@/core/scoring/sleep";
 import { mergeSamples, readHr } from "../samples";
 import { trimpToStrain } from "@/core/scoring/strain";
 import { acwrBand, dayRatio, ewmaLoads, monotonyMax } from "@/core/scoring/readiness";
@@ -34,10 +34,11 @@ import { seedPull } from "../sources/seed/generate";
 import { SCENARIO } from "../sources/seed/scenario";
 import { copyDb, ctxFor, DAY_S, dayAt, dump, freshDb, NOW, OPTS, seeded, TZ, PROFILE, USER } from "../testing";
 import { getSleep } from "../queries/sleep";
+import { getHome } from "../queries/home";
 import { reasonCopy } from "@/lib/reasons";
 import { addDays, localMidnight } from "../time";
 
-const COLS = new Set(["strain", "recovery", "sleep", "training_load", "strain_target", "health_monitor", "journal_impact", "fitness", "stress"]);
+const COLS = new Set(["strain", "recovery", "sleep", "training_load", "strain_target", "health_monitor", "journal_impact", "fitness", "stress", "energy_bank"]);
 const json = async <T>(db: Db, col: string, day: string) => {
   if (!COLS.has(col)) throw new Error(col);
   const [r] = await rows<{ v: T }>(db, sql`select ${sql.identifier(col)} v from daily_scores where user_id = ${USER} and day = ${day}`);
@@ -809,6 +810,178 @@ describe("an atypical first week on the seed (SCORING_VERSION 52)", () => {
     expect((await ref(v51, 14)) - seed).toBeGreaterThan(8);
     expect(Math.abs((await ref(now, 28)) - js<Stress>("stress", dayAt(28)).referenceHr!)).toBeLessThan(1.5);
     expect((await ref(v51, 28)) - js<Stress>("stress", dayAt(28)).referenceHr!).toBeGreaterThan(3);
+  });
+});
+
+describe("the Energy Bank from wake to the next sleep on the seed (SCORING_VERSION 54)", () => {
+  type Eb = { value: number | null; wake: number; until: number };
+  const series = async (d: Db, day: string) =>
+    ((await rows<{ data: (number | null)[] }>(d, sql`select data from intraday_series where user_id = ${USER} and kind = 'energy_bank' and day = ${day}`))[0]?.data ?? null);
+
+  it("a bedtime after midnight ends the day's bank at bed, not at midnight", async () => {
+    const past: { day: string; min: number; atMidnight: number; atBed: number }[] = [];
+    for (let i = 0; i + 1 < allDays.length; i++) {
+      const eb = js<Eb>("energy_bank", allDays[i]);
+      const mid = localMidnight(allDays[i + 1], TZ);
+      if (eb.value == null || eb.until <= mid) continue;
+      const curve = (await series(db, allDays[i]))!;
+      const n = Math.round((mid - localMidnight(allDays[i], TZ)) / 60);
+      past.push({ day: allDays[i], min: (eb.until - mid) / 60, atMidnight: curve[n - 1]!, atBed: eb.value });
+    }
+    // Measured: 40 days (the weekend late nights), 2–69 minutes past midnight, ending up to 2.4 lower than at midnight
+    // (version 53 stopped there).
+    expect(past.length).toBeGreaterThanOrEqual(30);
+    for (const p of past) expect(p.atBed, p.day).toBeLessThanOrEqual(p.atMidnight);
+    expect(Math.max(...past.map((p) => p.atMidnight - p.atBed))).toBeGreaterThan(2);
+    expect(Math.max(...past.map((p) => p.min))).toBeGreaterThan(60);
+  });
+
+  it("after midnight, before the night's sleep has synced, Home shows yesterday's bank while you are still up", async () => {
+    const at1 = NOW + 11 * 3600; // 01:00 on the next day
+    const mid = localMidnight(dayAt(180), TZ);
+    const asleep = await copyDb(db);
+    await seedPull(asleep, seedOpts(at1));
+    // Still up: steps every minute from midnight to 00:40 (the seed's night starts at 23:10).
+    const up = await copyDb(asleep);
+    await mergeSamples(up, "steps", USER, { start: mid, end: mid + 2400 }, new Map(Array.from({ length: 40 }, (_, m) => [mid + m * 60, 12])), "replace");
+    await up.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(180)}) on conflict do nothing`);
+    for (const d of [asleep, up]) await recompute(d, OPTS);
+
+    const home = await getHome(dayAt(180), ctxFor(up, at1));
+    const y = await json<Eb>(up, "energy_bank", dayAt(179));
+    // Version 53: today has no sleep yet, so the card read "awaiting sleep sync" until the morning.
+    expect(home.energyBank.value).toMatchObject({ sinceYesterday: true, startAt: y.wake * 1000, until: y.until * 1000, current: y.value });
+    // It runs to the latest heart rate synced (00:50), within 30 minutes of the last step.
+    const lastHr = (await json<{ lastHrTs: number }>(up, "strain", dayAt(180))).lastHrTs;
+    expect(y.until).toBe(Math.min(lastHr + 60, mid + 39 * 60 + energyBankConfig.awakeAfterStepMin * 60));
+    expect(y.until).toBeGreaterThan(mid + 40 * 60);
+    // Asleep since 23:10, with no steps after midnight: the bank isn't drained on through the night.
+    const still = await getHome(dayAt(180), ctxFor(asleep, at1));
+    expect(still.energyBank.reason).toBe("awaiting_sleep_sync");
+    expect((await json<Eb>(asleep, "energy_bank", dayAt(179))).until).toBeLessThanOrEqual(mid);
+
+    // Once the night has synced, yesterday's bank ends at bedtime and Home shows today's own.
+    const next = await copyDb(up);
+    const at10 = NOW + 20 * 3600; // 10:00, after the night's sleep
+    await seedPull(next, seedOpts(at10));
+    await recompute(next, OPTS);
+    const later = await getHome(dayAt(180), ctxFor(next, at10));
+    const closed = await json<Eb>(next, "energy_bank", dayAt(179));
+    const sleep = await json<{ main: { start: number } }>(next, "sleep", dayAt(180));
+    expect(closed.until).toBe(sleep.main.start);
+    expect(later.energyBank.value).toMatchObject({ sinceYesterday: false });
+    expect(later.energyBank.value!.startAt).toBeGreaterThan(sleep.main.start * 1000);
+  });
+
+  it("a night shift (asleep 08:00–16:00) is in a bank: each runs from 16:00 to the next morning's sleep", async () => {
+    const copy = await copyDb(db);
+    const I = 100;
+    const shift = [I + 1, I + 2, I + 3, I + 4, I + 5];
+    // Nights I+1..I+5 replaced by day sleeps 08:00–16:00 on the same wake days (staged, as the band's are; no hypnogram).
+    await copy.execute(sql`delete from sleep_sessions where user_id = ${USER} and day >= ${dayAt(I + 1)} and day <= ${dayAt(I + 5)}`);
+    for (const k of shift) {
+      const at = localMidnight(dayAt(k), TZ);
+      await copy.execute(
+        sql`insert into sleep_sessions (user_id, id, day, start_ts, end_ts, is_main, processed, stages_status, asleep_min, awake_min, deep_min, light_min, rem_min, source)
+            values (${USER}, ${`shift-${k}`}, ${dayAt(k)}, ${at + 8 * 3600}, ${at + 16 * 3600}, true, true, 'SUCCEEDED', 430, 50, 70, 260, 100, 'FITBIT')`,
+      );
+    }
+    for (let k = I; k <= I + 6; k++) await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${dayAt(k)}) on conflict do nothing`);
+    await recompute(copy, OPTS);
+    // Awake from the first shift sleep's end to the last one's start: 16:00 on I+1 to 08:00 on I+5.
+    const from = localMidnight(dayAt(I + 1), TZ) + 16 * 3600;
+    const to = localMidnight(dayAt(I + 5), TZ) + 8 * 3600;
+    const covered = new Set<number>();
+    for (const k of shift.slice(0, -1)) {
+      const eb = await json<Eb>(copy, "energy_bank", dayAt(k));
+      expect(eb.value, dayAt(k)).not.toBeNull();
+      expect([eb.wake, eb.until]).toEqual([localMidnight(dayAt(k), TZ) + 16 * 3600, localMidnight(dayAt(k + 1), TZ) + 8 * 3600]);
+      for (let t = eb.wake; t < eb.until; t += 60) covered.add(t);
+    }
+    let awake = 0;
+    let inBank = 0;
+    for (let t = from; t < to; t += 60) {
+      const asleep = shift.some((k) => t >= localMidnight(dayAt(k), TZ) + 8 * 3600 && t < localMidnight(dayAt(k), TZ) + 16 * 3600);
+      if (asleep) continue;
+      awake++;
+      if (covered.has(t)) inBank++;
+    }
+    // Version 53: each bank stopped at midnight, so 8 of every 16 waking hours (50 %) were in none.
+    expect(inBank / awake).toBe(1);
+  });
+});
+
+describe("one night from its pieces on the seed (SCORING_VERSION 53)", () => {
+  type Eb = { value: number | null; startLevel: number; wake: number };
+  type Sl = { performance: number | null; naps: unknown[]; main: { start: number; end: number; asleepMin: number; awakeMin: number; parts?: unknown[] } | null };
+  const I = 120;
+  /**
+   * A copy of the seed with night I returned as two sessions: the main up to the first stage change 4 h in, then an
+   * hour awake (its stages removed), then the rest as a non-main session with its own stages, as Google returns a
+   * night someone woke up in.
+   */
+  async function split(maxGapMin: number) {
+    const copy = await copyDb(db);
+    const day = dayAt(I);
+    const [m] = await rows<{ id: string; s: number; e: number }>(copy, sql`select id, start_ts s, end_ts e from sleep_sessions where user_id = ${USER} and day = ${day} and is_main`);
+    const segAt = async (t: number) =>
+      Number((await rows<{ t: number }>(copy, sql`select min(start_ts) t from sleep_segments where user_id = ${USER} and session_id = ${m.id} and start_ts >= ${t}`))[0].t);
+    const cut = await segAt(Number(m.s) + 4 * 3600);
+    const resume = await segAt(cut + 3600);
+    await copy.execute(
+      sql`insert into sleep_sessions (user_id, id, day, start_ts, end_ts, is_main, processed, stages_status, source) values (${USER}, 'split-b', ${day}, ${resume}, ${Number(m.e)}, false, true, 'SUCCEEDED', 'FITBIT')`,
+    );
+    for (const t of ["sleep_segments", "sleep_short_awakenings"]) {
+      await copy.execute(sql`delete from ${sql.identifier(t)} where user_id = ${USER} and session_id = ${m.id} and start_ts >= ${cut} and start_ts < ${resume}`);
+      await copy.execute(sql`update ${sql.identifier(t)} set session_id = 'split-b' where user_id = ${USER} and session_id = ${m.id} and start_ts >= ${resume}`);
+    }
+    await copy.execute(sql`update sleep_sessions set end_ts = ${cut} where user_id = ${USER} and id = ${m.id}`);
+    for (const id of [m.id, "split-b"]) {
+      const mins = (stage: string) => sql`(select coalesce(sum(end_ts - start_ts), 0) / 60 from sleep_segments where user_id = ${USER} and session_id = ${id} and stage = ${stage})`;
+      await copy.execute(
+        sql`update sleep_sessions set deep_min = ${mins("deep")}, light_min = ${mins("light")}, rem_min = ${mins("rem")}, awake_min = ${mins("awake")},
+            asleep_min = ${mins("deep")} + ${mins("light")} + ${mins("rem")} where user_id = ${USER} and id = ${id}`,
+      );
+    }
+    for (const d of [day, dayAt(I + 1)]) await copy.execute(sql`insert into intraday_dirty (user_id, day) values (${USER}, ${d}) on conflict do nothing`);
+    const keep = nightJoinConfig.maxGapMin;
+    nightJoinConfig.maxGapMin = maxGapMin;
+    try {
+      await recompute(copy, OPTS);
+    } finally {
+      nightJoinConfig.maxGapMin = keep;
+    }
+    return { copy, cut, resume, wake: Number(m.e) };
+  }
+
+  it("a night split by an hour awake is one night: the bank starts at the real wake, with no nap (version 52: the day ended 48 higher)", async () => {
+    const now = await split(nightJoinConfig.maxGapMin);
+    const v52 = await split(0);
+    const eb = async (d: Db) => json<Eb>(d, "energy_bank", dayAt(I));
+    const sl = async (d: Db) => json<Sl>(d, "sleep", dayAt(I));
+    const orig = { eb: js<Eb>("energy_bank", dayAt(I)), sl: js<Sl>("sleep", dayAt(I)) };
+    const napMin = async (d: Db) => (await rows<{ v: number | null }>(d, sql`select (sleep_planner->'parts'->>'napMin')::float v from daily_scores where user_id = ${USER} and day = ${dayAt(I)}`))[0].v;
+    // Measured: the day ends at 24.0 against the unsplit night's 25.4 (version 52: 73.8); sleep performance 86.2 against
+    // 90.9 (version 52: 63.7), 439 minutes asleep (the hour's 57 removed; version 52: 215).
+    const [e, e52, s53, s52] = [await eb(now.copy), await eb(v52.copy), await sl(now.copy), await sl(v52.copy)];
+    expect(s53.main).toMatchObject({ start: orig.sl.main!.start, end: orig.sl.main!.end });
+    expect(s53.main!.parts).toHaveLength(2);
+    expect(Math.abs(e.value! - orig.eb.value!)).toBeLessThan(3);
+    expect(e52.value! - orig.eb.value!).toBeGreaterThan(30);
+    expect(orig.sl.performance! - s53.performance!).toBeGreaterThan(0);
+    expect(orig.sl.performance! - s53.performance!).toBeLessThan(8);
+    expect(orig.sl.performance! - s52.performance!).toBeGreaterThan(20);
+    expect(s53.main!.awakeMin).toBeGreaterThan(orig.sl.main!.awakeMin);
+    // The piece is no nap: not listed, and the planner's nap offset is the unsplit night's (version 52: 33 minutes).
+    expect((s53.naps as { id: string }[]).map((n) => n.id)).not.toContain("split-b");
+    expect((s52.naps as { id: string }[]).map((n) => n.id)).toContain("split-b");
+    expect(await napMin(now.copy)).toBe(js<{ parts: { napMin: number } }>("sleep_planner", dayAt(I)).parts.napMin);
+    expect(await napMin(v52.copy)).toBeGreaterThan(20);
+    // The Sleep page's hypnogram spans the whole night, both pieces' stages with the hour between them awake.
+    const stages = (await getSleep(dayAt(I), ctxFor(now.copy))).stages as { value: { bed: number; wake: number; segments: { stage: string; start: number; end: number }[] } };
+    expect([stages.value.bed, stages.value.wake]).toEqual([orig.sl.main!.start * 1000, orig.sl.main!.end * 1000]);
+    expect(stages.value.segments).toContainEqual({ stage: "awake", start: now.cut * 1000, end: now.resume * 1000 });
+    expect(stages.value.segments.at(-1)!.end).toBe(now.wake * 1000);
   });
 });
 

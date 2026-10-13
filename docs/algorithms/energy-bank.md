@@ -73,12 +73,12 @@ flowchart TB
 |---|---|---|
 | `start` | unix seconds | Local midnight; the same minute grid as `stress()`. |
 | `wake` | unix seconds | The main sleep's end. |
-| `until` | unix seconds | Tonight's main-sleep start, if it begins before midnight. Otherwise the day's last heart-rate sample + 60 s (capped at midnight), on any day, today or past; with no heart rate, midnight. So a sleep that starts after midnight never sets `until`, and a past day where the band came off early ends at the removal, not at midnight. |
+| `until` | unix seconds | `bankUntil` (version 54): the next main sleep's start, before or after midnight, at most 24 h after wake. With no next sleep synced yet while the next day is the live one, on past midnight while you are moving: to 30 minutes after the last step, and no further than the latest heart rate + 60 s. A past day with no next sleep (the band off that night) ends at its last heart rate + 60 s, or midnight. The grid runs on into the next day's minutes when `until` is past midnight. |
 | `recoveryWithoutSleep` | 0–100 | Today's Recovery from its body signals only (`recovery.withoutSleep`). Without a Recovery, the pipeline gives the Energy Bank a reason code. |
 | `sleepPerformance` | 0–100 | Last night's sleep performance. |
 | `load` | zone weight 0–5 per minute, or null | `minuteLoad(minuteMeanHr(hr, start, end), restingHR, maxHR)`, with the same resting HR and HRmax as Strain. |
 | `stress` | 0–3 per minute, or null | `stress(...).minutes`. |
-| `naps` | `{ start, end }[]` | Non-main sleep sessions after wake: the session's start and end, so every minute in bed recharges, asleep or not. |
+| `naps` | `{ start, end }[]` | Non-main sleep sessions after wake: the session's start and end, so every minute in bed recharges, asleep or not. Since version 53 a session within 2 h of the night is part of it, not a nap (§ Why version 53). |
 | `workouts` | `{ start, end, label }[]` | Optional; only for drain labels. |
 
 ## Constants
@@ -92,6 +92,8 @@ All of these live in `energyBankConfig`.
 | `k1` | 0.08 per minute per zone weight | *tunable*: a 45 min tempo run at about zone 3 costs 11–13 |
 | `k2` | 0.08 per high-stress minute | *tunable*: an hour of high stress costs 4.8 |
 | `k3` | 0.01 per calm still minute | *tunable*: 400 calm minutes give back 4 |
+| `maxHoursAwake` | 24 h | version 54: the longest a bank runs after wake |
+| `awakeAfterStepMin` | 30 min | version 54: past midnight, before a sleep syncs, the live bank runs this long after the last step |
 | `k4` | 0.25 per nap minute | *tunable*: a 30 min nap gives back 7.5, plus the 1.2 basal it skips |
 | `episodeGapMin` | 5 | *tunable* |
 | Stress thresholds | 1, 2 | from `stressConfig` |
@@ -123,6 +125,106 @@ The days below 15 are the training block (two sessions or long rides), the short
    - Recovery is 56.6, or 55.0 from its body signals. Sleep performance is 90.9.
    - E₀ = **69.4**, and it ends at **36.6**.
    - Top drains: Ride 9.1, Activity 0.9.
+
+## Why version 54: the bank stopped at midnight
+
+**The problem.** The bank ran on the calendar day's minutes and stopped at tonight's bedtime only when that was before
+midnight; otherwise at midnight. Two groups lost part of their day:
+- **After-midnight sleepers:** the time from midnight to bed was in no bank, and the day's value was read at midnight.
+  The owner went to bed after midnight on 7 of the first 10 band nights (00:08 to 02:23, 8 to 143 minutes unseen).
+  At midnight Home moved to the new date, which has no sleep yet, so the card read "awaiting sleep sync" until
+  morning.
+- **Night-shift workers** (asleep 08:00–16:00): each bank ran 16:00–24:00, so the shift, half of the waking hours,
+  was in none, and nothing showed during it (audit E5, a simulation).
+
+**The fix.**
+- **The window (`bankUntil`):** day D's bank runs from D's wake to the next main sleep's start, across midnight, at
+  most 24 hours. With no next sleep synced yet while D+1 is the live day, it runs on past midnight while you are
+  moving: to 30 minutes after the last step (`awakeAfterStepMin`), and no further than the latest heart rate. Someone
+  already asleep takes no steps after midnight, so their bank isn't drained on through the night before the sleep
+  syncs. A past night with no sleep (the band off) still stops at the day's last heart rate, so no drain is invented
+  after the band comes off.
+- **The pipeline:** stage 2 scores D's bank once D+1's stress is scored, on a grid of D's minutes followed by D+1's.
+  D+1's workouts and naps before `until` count. The bank is a leaf, so scoring it a day later changes nothing else.
+- **Home:** before today's sleep has synced, the card shows yesterday's bank while it is still running past midnight,
+  "Started at … yesterday".
+
+**On the demo database:**
+- 40 days (its weekend late nights, 2–69 minutes past midnight) now end at bed, up to 2.4 points lower; nothing else
+  moved.
+- A copy with five nights replaced by day sleeps 08:00–16:00: every waking minute is in a bank (version 53: half),
+  each bank running 16:00 to 08:00.
+- Synced to 01:00 with steps until 00:40, Home shows the previous day's bank still running (to the latest heart rate,
+  00:50). Without those steps (asleep since 23:10) it stops at midnight and the card waits for the sleep. Once the
+  night syncs, the bank ends at the bedtime and Home shows today's.
+
+**On the owner's data:** of the 3 days with a bank so far, Oct 11 (bed 00:10) ends at 69.7 instead of 70.1 at
+midnight; Oct 12 (bed 22:33) and Oct 13 are unchanged.
+
+**Not covered:**
+- Until a sleep syncs, the live bank drains on through the 30 minutes after the last step, even if you fell asleep in
+  them; the synced sleep then corrects it.
+- Sitting still for over 30 minutes after midnight pauses the live bank until the next step.
+- The Recovery and Sleep cards still move to the new date at midnight, since last night hasn't happened yet.
+
+## Why version 53: a broken night read as a night and a nap
+
+**The problem.** Google can return one night as two or three sleep sessions, for instance when someone wakes at 04:30,
+is up for an hour and sleeps again until 08:00. Only one session is main (`map.ts`), so the rest were naps. The bank
+started at the first piece's end and recharged through the second at k₄, with no drain. The night's sleep performance
+saw only the first piece, so it was low, but the "nap" outweighed that. A broken night ended the day with a fuller
+bank than an unbroken one. The same split halved Sleep's night (audit S2): sleep performance, the hypnogram, the
+ledger (the piece was credited to the next day as a nap) and the planner's nap offset.
+
+Re-measured on version 52 (a calm day, Recovery 60, need 7.5 h; the night 00:30–08:00 with 04:30–05:30 awake):
+
+| Read as | Sleep performance | Bank 08:00 | Bank 23:00 |
+|---|---|---|---|
+| one night (version 53) | 79 | 67.5 | 40.5 |
+| main 00:30–04:30 + "nap" 05:30–08:00 (version 52) | 66 | **98.0** | **71.0** |
+| an unbroken night, for comparison | 86 | 70.3 | 43.3 |
+
+**The fix.** `joinNight` (`src/core/scoring/sleep.ts`): a non-main session starting within 2 h after the night's end,
+or ending within 2 h before its start, is part of the night, and the night extends to it. This repeats, so three
+pieces chain, and it works across midnight. The pipeline's main session then spans every piece:
+- asleep minutes are summed;
+- the gaps are awake;
+- stages count only when every piece has them, with each gap an awake segment.
+
+The bank starts at the last piece's end. The pieces are no longer naps anywhere (the bank, the ledger, the planner's
+nap offset, the timeline). The regularity index still reads the raw sessions, so a gap stays awake there.
+
+**The threshold.** The owner's history (local copy, Mar–Oct, Health Connect before the band) had 35 non-main
+sessions after a main sleep. The gap to the second sleep:
+
+| Gap | Sessions |
+|---|---|
+| under 30 min | 7 |
+| 30–60 min | 9 |
+| 1–2 h | 8 |
+| 2–3 h | 4 |
+| over 3 h, or an afternoon | 7 |
+
+Five more sessions sat *before* a main, for example 01:07–02:43, then the main from 03:08. Joining at each gap:
+
+| Gap | Nights joined | Left as naps |
+|---|---|---|
+| 1 h | 19 | 19 |
+| **2 h** | **27** (30 pieces, 41.9 h of sleep) | 10: six afternoon or late-morning naps, and four after 2–3 h awake |
+| 3 h | 30 | 8; a piece can then chain to the wrong night |
+
+2 h joins every back-to-bed piece under 2 h, and leaves every afternoon nap a nap. None of the band's 10 nights since
+Oct 4 changes. The one nap (Oct 11, 16:00–17:57) stays a nap.
+
+**On the demo database** nothing moved but the version stamps (golden test): its naps are all afternoons. A copy with
+night 120 split by an hour awake:
+- the day ended at 24.0, against the unsplit night's 25.4 (version 52: 73.8);
+- sleep performance was 86.2, against 90.9 (version 52: 63.7);
+- the piece is not a nap, so the planner's nap offset is 0 (version 52: 33 minutes);
+- the hypnogram shows the whole night with the hour awake.
+
+**Not covered:** a back-to-bed sleep after more than 2 h awake still reads as a nap. Nap recharge itself is still
+uncapped and counts time in bed (audit E4).
 
 ## Version 21: stress no longer drains for coffee, heat, illness or exercise
 

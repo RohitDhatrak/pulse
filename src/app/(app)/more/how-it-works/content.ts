@@ -353,7 +353,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
           { term: "Heart-rate load", detail: "−0.08 a minute for each heart-rate point, 1 to 5. An hour at 70-79% of your reserve costs 14.4." },
           { term: "High stress", detail: "−0.08 a minute." },
           { term: "Low stress, still", detail: "+0.01 a minute." },
-          { term: "Napping", detail: "+0.25 a minute, with no drain." },
+          { term: "Napping", detail: "+0.25 a minute, with no drain. Going back to sleep within 2\u00a0hours of waking is part of your night, not a nap." },
         ],
       },
       {
@@ -368,7 +368,7 @@ export const SCORE_DOCS: ScoreDoc[] = [
       {
         title: "Limits",
         paragraphs: [
-          "Energy Bank needs today’s Recovery and last night’s main sleep; without them it shows no value, and it is Provisional while Recovery is. It is a model with tuned constants and no published validation, set so a typical day ends between 15% and 40%. It cannot see mental effort that leaves heart rate unchanged, food or caffeine. It is an estimate, not a measurement.",
+          "Energy Bank needs today’s Recovery and last night’s main sleep; without them it shows no value, and it is Provisional while Recovery is. It runs from when you wake until you next fall asleep, past midnight too, for at most 24\u00a0hours; after midnight, Home keeps showing it while you’re still up. It is a model with tuned constants and no published validation, set so a typical day ends between 15% and 40%. It cannot see mental effort that leaves heart rate unchanged, food or caffeine. It is an estimate, not a measurement.",
         ],
       },
     ],

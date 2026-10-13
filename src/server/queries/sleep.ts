@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { sleepAwakenings, sleepSegments } from "../db/schema";
 import { readHr, readTenths } from "../samples";
 import { restorativeTargets } from "@/core/scoring/sleep";
@@ -146,19 +146,23 @@ async function stagesOf(ctx: QueryCtx, row: DayRow | undefined, noNight: SleepVM
   if (!main.staged) return null;
   const g = sleepSegments;
   const a = sleepAwakenings;
+  // A night joined from pieces (version 53): every piece's stages, and each gap between them awake.
+  const ids = main.parts?.map((p) => p.id) ?? [main.id];
   const [segRows, wakeRows] = await Promise.all([
     ctx.db
       .select({ stage: g.stage, startTs: g.startTs, endTs: g.endTs })
       .from(g)
-      .where(and(eq(g.userId, ctx.userId), eq(g.sessionId, main.id)))
+      .where(and(eq(g.userId, ctx.userId), inArray(g.sessionId, ids)))
       .orderBy(g.startTs),
     ctx.db
       .select({ stage: a.stage, startTs: a.startTs, endTs: a.endTs })
       .from(a)
-      .where(and(eq(a.userId, ctx.userId), eq(a.sessionId, main.id)))
+      .where(and(eq(a.userId, ctx.userId), inArray(a.sessionId, ids)))
       .orderBy(a.startTs),
   ]);
-  const segments = segRows.map((g) => ({ stage: g.stage, start: ms(g.startTs), end: ms(g.endTs) }));
+  const parts = main.parts ?? [];
+  const gaps = parts.slice(1).flatMap((p, i) => (p.start > parts[i].end ? [{ stage: "awake" as const, startTs: parts[i].end, endTs: p.start }] : []));
+  const segments = [...segRows, ...gaps].sort((x, y) => x.startTs - y.startTs).map((g) => ({ stage: g.stage, start: ms(g.startTs), end: ms(g.endTs) }));
   const awakenings = wakeRows.map((w) => ({ stage: w.stage, start: ms(w.startTs), end: ms(w.endTs) }));
   const minutes: Record<Stage, number> = { awake: main.awakeMin, rem: main.remMin ?? 0, light: main.lightMin ?? 0, deep: main.deepMin ?? 0 };
   const total = minutes.awake + minutes.rem + minutes.light + minutes.deep;

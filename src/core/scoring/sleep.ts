@@ -389,3 +389,42 @@ export function debtSeries(
   }
   return result;
 }
+
+// ── One night from its pieces (version 53) ──────────────────────────────────
+
+/**
+ * Sleep sessions this close to the night, end to start, are part of it (version 53). Google can return one night as
+ * two or three sessions; only one is main, and the rest read as naps: the Energy Bank started at the first piece's end
+ * and recharged through the rest (+30 for a broken night), and Sleep scored half a night. The owner's back-to-bed
+ * pieces were 13–84 minutes after waking; real naps came hours later. docs/algorithms/sleep.md § Why version 53.
+ */
+export const nightJoinConfig = { maxGapMin: 120 };
+
+type Span = { id: string; startTs: number; endTs: number };
+
+/**
+ * The main session and the non-main sessions chained to it, in time order: one starting within `maxGapMin` after the
+ * night's end, or ending within it before the night's start, joins and extends the night, until nothing more does.
+ * `others` must not include another main session.
+ */
+export function joinNight<T extends Span>(main: T, others: T[]): T[] {
+  const gap = nightJoinConfig.maxGapMin * 60;
+  const parts = [main];
+  let start = main.startTs;
+  let end = main.endTs;
+  const left = others.filter((s) => s.id !== main.id).sort((a, b) => a.startTs - b.startTs || (a.id < b.id ? -1 : 1));
+  for (let joined = true; joined && gap > 0; ) {
+    joined = false;
+    for (let i = 0; i < left.length; i++) {
+      const s = left[i];
+      if ((s.startTs >= end && s.startTs - end <= gap) || (s.endTs <= start && start - s.endTs <= gap)) {
+        parts.push(s);
+        start = Math.min(start, s.startTs);
+        end = Math.max(end, s.endTs);
+        left.splice(i--, 1);
+        joined = true;
+      }
+    }
+  }
+  return parts.sort((a, b) => a.startTs - b.startTs);
+}

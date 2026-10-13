@@ -350,6 +350,15 @@ added.
 **End to end on a copy of the seed** (a test), one night is unstaged. It reads "usual" and lands within 5 points of
 its staged score; version 30's rule lost more than 10. The next day's sleep centre moves by under 0.01.
 
+## One night from its pieces (scoring version 53)
+
+A night that Google returns as two or three sessions is one night: sleep sessions chained to the main by awake gaps
+of up to 2 h join it (`joinNight`). Sleep performance, the hypnogram, the ledger and the planner see the whole night.
+The gaps are awake time in bed, so a broken night scores lower than an unbroken one, but no longer as half a night.
+A joined piece is not a nap: the ledger doesn't credit it again the next day, and the planner doesn't offset it. Before,
+on the demo database, a night split by an hour awake scored 63.7 against 90.9 unsplit; now it scores 86.2. The rule,
+the threshold and the owner's data are in [energy-bank](energy-bank.md) § Why version 53.
+
 ## Constants
 
 | Constant | Value | Kind |

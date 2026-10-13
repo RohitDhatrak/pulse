@@ -134,8 +134,13 @@ import type { StrainTarget } from "@/core/algorithms/strainTarget";
  *     copy, overlapping by 80 %+) is merged into the band's, so it isn't scored, listed or counted as strength twice.
  * 52: An atypical first week (ill, hungover) no longer becomes the stress reference: the first 28 days' still
  *     medians are judged against their own median, and those beyond 2 robust σ, on either side, are left out.
+ * 53: One night from its pieces: sleep sessions chained to the main by awake gaps of up to 2 h are part of the night,
+ *     not naps. A broken night had started the Energy Bank at the first piece's end and recharged it through the rest
+ *     (+30), and Sleep had scored half the night.
+ * 54: The Energy Bank runs from wake to the next main sleep, across midnight (at most 24 h): an after-midnight
+ *     bedtime and a night shift were in no bank, and the day's value was taken at midnight.
  */
-export const SCORING_VERSION = 52;
+export const SCORING_VERSION = 54;
 
 export type PipelineOptions = {
   /** Whose data: every read and write is scoped to this user. */
@@ -160,6 +165,8 @@ export type Stage1Day = {
   hrMinutesAm: number;
   hrMinutesPm: number;
   lastHrTs: number | null;
+  /** The day's last step (version 54): how long a live Energy Bank runs on past midnight before a sleep has synced. */
+  lastStepTs?: number | null;
   restingHr: number;
   /** Google's daily resting HR first, then Pulse's sleep-session estimate. */
   restingHrSource: "daily" | "session" | "default";
@@ -256,6 +263,8 @@ export type SleepRow = {
     wakeEvents: number | null;
     /** Fitbit's brief awakenings on a staged night (shown, not scored; version 35), else null. */
     disturbances?: number | null;
+    /** A night joined from several sessions (version 53): each piece's id and span, in time order. */
+    parts?: { id: string; start: number; end: number }[];
   } | null;
   naps: { id: string; start: number; end: number; asleepMin: number }[];
   /** 0–100 */

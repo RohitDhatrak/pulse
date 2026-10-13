@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { recovery } from "../scoring/recovery";
-import { energyBank, energyBankConfig, energyStart, minuteLoad, type EnergyBankInput } from "./energyBank";
+import { bankUntil, energyBank, energyBankConfig, energyStart, minuteLoad, type EnergyBankInput } from "./energyBank";
 
 const start = 1_790_000_000 - (1_790_000_000 % 86_400);
 const N = 1440;
@@ -169,5 +169,44 @@ describe("the start counts last night's sleep once, composed with the real recov
     expect(before).toBeGreaterThan(0.3);
     expect(after).toBeLessThan(0.25);
     expect(after).toBeLessThan(before * 0.75);
+  });
+});
+
+describe("the bank runs from wake to the next sleep (SCORING_VERSION 54)", () => {
+  const H = 3600;
+  const wake = 7 * H;
+  const dayEnd = 24 * H;
+  const base = { wake, dayEnd, nextSleepStart: null, lastHrTs: 24 * H - 60, live: false };
+
+  it("ends at the next sleep, before midnight or after it (version 53 stopped at midnight)", () => {
+    expect(bankUntil({ ...base, nextSleepStart: 23 * H })).toBe(23 * H);
+    expect(bankUntil({ ...base, nextSleepStart: 26.5 * H })).toBe(26.5 * H);
+  });
+
+  it("a night shift: from waking at 16:00 to sleep at 08:00 the next morning", () => {
+    expect(bankUntil({ ...base, wake: 16 * H, nextSleepStart: 32 * H })).toBe(32 * H);
+  });
+
+  it(`at most ${energyBankConfig.maxHoursAwake} hours after wake`, () => {
+    expect(bankUntil({ ...base, nextSleepStart: 40 * H })).toBe(wake + energyBankConfig.maxHoursAwake * H);
+  });
+
+  const grace = energyBankConfig.awakeAfterStepMin * 60;
+
+  it("live, before the night's sleep has synced: on while moving, to the last step + 30 minutes and the latest heart rate", () => {
+    // Heart rate to 02:00, last steps at 01:10: the bank runs to 01:40.
+    expect(bankUntil({ ...base, live: true, next: { lastHrTs: 26 * H, lastStepTs: 25 * H + 600 } })).toBe(25 * H + 600 + grace);
+    // Just moved: no further than the heart rate.
+    expect(bankUntil({ ...base, live: true, next: { lastHrTs: 25 * H, lastStepTs: 25 * H } })).toBe(25 * H + 60);
+    expect(bankUntil({ ...base, live: true, next: { lastHrTs: 40 * H, lastStepTs: 40 * H } })).toBe(wake + 24 * H);
+  });
+
+  it("live but asleep since before midnight (no steps after it): stops at the day's last heart rate, as before", () => {
+    expect(bankUntil({ ...base, live: true, next: { lastHrTs: 29 * H, lastStepTs: null } })).toBe(24 * H);
+  });
+
+  it("a past night with no sleep (the band off) stops at the day's last heart rate, or its end, as before", () => {
+    expect(bankUntil({ ...base, lastHrTs: 23 * H, next: { lastHrTs: 30 * H, lastStepTs: 30 * H } })).toBe(23 * H + 60);
+    expect(bankUntil({ ...base, lastHrTs: null })).toBe(dayEnd);
   });
 });

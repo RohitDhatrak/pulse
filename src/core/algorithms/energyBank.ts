@@ -21,7 +21,35 @@ export const energyBankConfig = {
   k4: 0.25,
   /** Drain minutes this close together join one episode (*tunable*). */
   episodeGapMin: 5,
+  /** The longest a bank runs after wake without a next sleep (version 54). */
+  maxHoursAwake: 24,
+  /** Past midnight with no sleep synced yet, the live bank runs this long after the last step (version 54). */
+  awakeAfterStepMin: 30,
 };
+
+/**
+ * When a day's bank stops (version 54): the next main sleep's start, across midnight too, at most `maxHoursAwake`
+ * after wake. Without one, the day's last heart rate (or its end), as before. While the next day is the live one and
+ * its sleep hasn't synced, the bank runs on past midnight as long as you are moving: to `awakeAfterStepMin` after the
+ * last step, and no further than the latest heart rate, so a night already being slept isn't drained as awake.
+ * Before version 54 the bank stopped at midnight: an after-midnight bedtime's last hours, and a night shift, were in
+ * no bank. docs/algorithms/energy-bank.md § Why version 54.
+ */
+export function bankUntil(a: {
+  wake: number;
+  dayEnd: number;
+  nextSleepStart: number | null;
+  lastHrTs: number | null;
+  live: boolean;
+  next?: { lastHrTs: number | null; lastStepTs: number | null };
+}): number {
+  const cap = a.wake + energyBankConfig.maxHoursAwake * 3600;
+  if (a.nextSleepStart != null && a.nextSleepStart > a.wake) return Math.min(a.nextSleepStart, cap);
+  const today = a.lastHrTs != null ? Math.min(a.dayEnd, a.lastHrTs + 60) : a.dayEnd;
+  const n = a.next;
+  if (!a.live || n?.lastHrTs == null || n.lastStepTs == null) return today;
+  return Math.max(today, Math.min(n.lastHrTs + 60, n.lastStepTs + energyBankConfig.awakeAfterStepMin * 60, cap));
+}
 
 /** Edwards zone weight (0–5) of each minute's mean HR, or null without HR. */
 export const minuteLoad = (meanHr: (number | null)[], restingHR: number, maxHR: number): (number | null)[] =>

@@ -518,6 +518,7 @@ function EnergyCard({ vm, timeZone }: { vm: HomeVM; timeZone: string }) {
               <p className={CAPTION}>
                 Started at <span className="font-numeric tabular-nums">{formatValue("int", eb.startLevel)}%</span> at{" "}
                 <span className="font-numeric tabular-nums">{clock(eb.startAt, timeZone)}</span>
+                {eb.sinceYesterday && " yesterday"}
               </p>
             </div>
             <EnergyBankChart data={{ value: energySeries(eb), reason: null, provisional: false }} />

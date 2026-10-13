@@ -4,6 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { Db } from "../db";
 import { mergeDuplicateWorkouts } from "@/core/algorithms/workouts";
+import { joinNight } from "@/core/scoring/sleep";
 import { dailyMetrics, exercises as exercisesTable, intradaySeries, sleepSessions } from "../db/schema";
 import { sampleRange } from "../samples";
 import { addDays, daysBetween, localDay, localMidnight } from "../time";
@@ -22,6 +23,8 @@ export type Session = {
   deepMin: number | null;
   lightMin: number | null;
   remMin: number | null;
+  /** A night joined from several sessions (version 53): each piece, in time order. Absent for a single session. */
+  parts?: { id: string; startTs: number; endTs: number }[];
 };
 export type Exercise = { id: string; day: string; startTs: number; endTs: number; type: string; name: string | null; calories: number | null; source: string };
 export type Metrics = {
@@ -125,6 +128,16 @@ export async function load(db: Db, { userId, timeZone: tz, dataFrom }: PipelineO
     const mains = list.filter((s) => s.isMain).sort((a, b) => b.endTs - b.startTs - (a.endTs - a.startTs) || a.id.localeCompare(b.id));
     if (mains.length) mainOf.set(day, mains[0]);
   }
+  // One night from its pieces (version 53): non-main sessions chained to a main by short awake gaps join it, across
+  // midnight too. `sessions` and `sessionsByDay` stay raw, so the regularity index still sees the gaps as awake.
+  const joinedIds = new Set<string>();
+  const loose = sessions.filter((s) => !s.isMain);
+  for (const [day, main] of mainOf) {
+    const parts = joinNight(main, loose.filter((s) => !joinedIds.has(s.id)));
+    if (parts.length < 2) continue;
+    for (const p of parts) if (p !== main) joinedIds.add(p.id);
+    mainOf.set(day, mergeNight(main, parts));
+  }
   return {
     days,
     first,
@@ -134,6 +147,7 @@ export async function load(db: Db, { userId, timeZone: tz, dataFrom }: PipelineO
     sessions,
     sessionsByDay,
     mainOf,
+    joinedIds,
     exercises,
     exercisesByDay: groupBy(exercises, (x) => x.day),
   };
@@ -162,4 +176,24 @@ export async function upsertSeries(db: Db, userId: number, rows: { day: string; 
       set: { data: sql`excluded.data` },
       setWhere: sql`intraday_series.data is distinct from excluded.data`,
     });
+}
+
+/** The main session spanning all its pieces: the main's id, asleep summed, the gaps awake, stages only if all have them. */
+function mergeNight(main: Session, parts: Session[]): Session {
+  const sum = (k: "deepMin" | "lightMin" | "remMin") => (parts.every((p) => p[k] != null) ? parts.reduce((a, p) => a + p[k]!, 0) : null);
+  const gapMin = parts.slice(1).reduce((a, p, i) => a + Math.max(0, p.startTs - parts[i].endTs) / 60, 0);
+  const awake = parts.every((p) => p.awakeMin != null) ? parts.reduce((a, p) => a + p.awakeMin!, 0) + gapMin : null;
+  return {
+    ...main,
+    startTs: parts[0].startTs,
+    endTs: Math.max(...parts.map((p) => p.endTs)),
+    processed: parts.every((p) => p.processed),
+    stagesStatus: parts.every((p) => p.stagesStatus === "SUCCEEDED") ? "SUCCEEDED" : parts.every((p) => p.stagesStatus === main.stagesStatus) ? main.stagesStatus : null,
+    asleepMin: parts.some((p) => p.asleepMin != null) ? parts.reduce((a, p) => a + (p.asleepMin ?? 0), 0) : null,
+    awakeMin: awake,
+    deepMin: sum("deepMin"),
+    lightMin: sum("lightMin"),
+    remMin: sum("remMin"),
+    parts: parts.map((p) => ({ id: p.id, startTs: p.startTs, endTs: p.endTs })),
+  };
 }

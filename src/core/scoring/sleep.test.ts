@@ -6,6 +6,8 @@ import {
   debtSeries,
   defaultSleepNeedHours,
   hypnogramMetrics,
+  joinNight,
+  nightJoinConfig,
   ledger,
   maxNeedHours,
   needQuantile,
@@ -517,5 +519,55 @@ describe("restorative targets by age (SCORING_VERSION 43, audit S8)", () => {
     const factor = restorativeScore(deep, rem, 7 * H, 70) / Math.min(100, (0.22 / 0.42) * 100);
     expect(factor).toBeLessThanOrEqual(0.62);
     expect(restorativeScore(deep, rem, 7 * H, 70)).toBeLessThan(35);
+  });
+});
+
+describe("one night from its pieces (SCORING_VERSION 53)", () => {
+  // The owner's nights (IST, from Health Connect), on a 2026 day: hh:mm → seconds.
+  const t = (hm: string, day = 0) => day * 86400 + Number(hm.slice(0, 2)) * 3600 + Number(hm.slice(3)) * 60;
+  const s = (id: string, from: string, to: string, fromDay = 0) => ({ id, startTs: t(from, fromDay), endTs: t(to, from > to ? fromDay + 1 : fromDay) });
+  const ids = (xs: { id: string }[]) => xs.map((x) => x.id);
+  const G = nightJoinConfig.maxGapMin;
+
+  it("Mar 19: back to sleep 22 minutes after waking is the same night", () => {
+    expect(ids(joinNight(s("main", "01:04", "07:50"), [s("b", "08:12", "09:12")]))).toEqual(["main", "b"]);
+  });
+
+  it("Jul 29: three pieces chained by 20 and 7 minutes, two of them before the main", () => {
+    const main = s("main", "07:19", "09:34");
+    expect(ids(joinNight(main, [s("b", "05:15", "07:12"), s("a", "03:45", "04:55")]))).toEqual(["a", "b", "main"]);
+  });
+
+  it("Jul 3: a piece before the main, across the night", () => {
+    expect(ids(joinNight(s("main", "03:08", "06:19"), [s("a", "01:07", "02:43")]))).toEqual(["a", "main"]);
+  });
+
+  it("a piece ending before midnight joins the night after it", () => {
+    expect(ids(joinNight(s("main", "00:30", "07:00", 1), [s("a", "22:10", "23:50", 0)]))).toEqual(["a", "main"]);
+  });
+
+  it(`Apr 6: ${183} minutes awake is a separate sleep; so is an afternoon nap (Oct 11)`, () => {
+    expect(ids(joinNight(s("main", "00:19", "04:21"), [s("b", "07:24", "08:29")]))).toEqual(["main"]);
+    expect(ids(joinNight(s("main", "00:28", "08:37"), [s("nap", "15:59", "17:57")]))).toEqual(["main"]);
+  });
+
+  it(`a gap of exactly ${G} minutes joins; one minute more doesn't`, () => {
+    const main = s("main", "00:00", "05:00");
+    expect(ids(joinNight(main, [{ id: "b", startTs: main.endTs + G * 60, endTs: main.endTs + G * 60 + 3600 }]))).toEqual(["main", "b"]);
+    expect(ids(joinNight(main, [{ id: "b", startTs: main.endTs + G * 60 + 60, endTs: main.endTs + G * 60 + 3660 }]))).toEqual(["main"]);
+  });
+
+  it("the order of the others doesn't matter, and with the join off (version 52) nothing joins", () => {
+    const main = s("main", "00:18", "03:42");
+    const others = [s("c", "06:18", "07:36"), s("b", "04:51", "05:56"), s("nap", "15:00", "16:00")];
+    expect(ids(joinNight(main, others))).toEqual(["main", "b", "c"]);
+    expect(ids(joinNight(main, [...others].reverse()))).toEqual(["main", "b", "c"]);
+    const keep = nightJoinConfig.maxGapMin;
+    nightJoinConfig.maxGapMin = 0;
+    try {
+      expect(ids(joinNight(main, others))).toEqual(["main"]);
+    } finally {
+      nightJoinConfig.maxGapMin = keep;
+    }
   });
 });

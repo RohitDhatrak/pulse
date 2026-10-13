@@ -13,7 +13,7 @@ import { allNighterConfig, awakeAllNight, creditedSleepMin, hypnogramMetrics, he
 import { percentile, toStrainScale } from "@/core/scoring/strain";
 import { foldDaytimeBaseline, gateStillMedian, noStillGate } from "@/core/scoring/stressBase";
 import type { BaselineState } from "@/core/scoring/types";
-import { energyBank, energyBankConfig } from "@/core/algorithms/energyBank";
+import { bankUntil, energyBank, energyBankConfig } from "@/core/algorithms/energyBank";
 import { fitnessLevel } from "@/core/algorithms/fitnessLevel";
 import { healthMonitor, healthMonitorConfig, type HealthMonitorDay, type VitalKey } from "@/core/algorithms/healthMonitor";
 import { healthspan, healthspanConfig, STRENGTH_TYPES, type HealthspanDay } from "@/core/algorithms/healthspan";
@@ -101,7 +101,16 @@ export type Day = ReturnType<typeof dayOf>;
 export function dayOf(data: Data, inputs: Inputs, day: string, opts: PipelineOptions) {
   const cache = inputs.cached.get(day)!;
   const mainSession = data.mainOf.get(day);
-  const main = mainSession ? nightOf(mainSession, inputs.segments.get(mainSession.id), inputs.awakenings.get(mainSession.id) ?? 0) : null;
+  // A night joined from pieces (version 53) reads every piece's stages, with each gap between them awake.
+  const ids = mainSession?.parts?.map((p) => p.id) ?? (mainSession ? [mainSession.id] : []);
+  const segments = ids.flatMap((id) => inputs.segments.get(id) ?? []);
+  const parts = mainSession?.parts ?? [];
+  const gaps = parts.slice(1).flatMap((p, i) =>
+    p.startTs > parts[i].endTs ? [{ sessionId: mainSession!.id, startTs: parts[i].endTs, endTs: p.startTs, stage: "awake" as const }] : [],
+  );
+  const main = mainSession
+    ? nightOf(mainSession, segments.length ? [...segments, ...gaps] : undefined, ids.reduce((a, id) => a + (inputs.awakenings.get(id) ?? 0), 0))
+    : null;
   return {
     day,
     start: data.dayStart(day),
@@ -113,7 +122,7 @@ export function dayOf(data: Data, inputs: Inputs, day: string, opts: PipelineOpt
     mainSession,
     main,
     naps: (data.sessionsByDay.get(day) ?? [])
-      .filter((s) => s !== mainSession && !s.isMain)
+      .filter((s) => s !== mainSession && !s.isMain && !data.joinedIds.has(s.id))
       .map((s) => ({ id: s.id, start: s.startTs, end: s.endTs, asleepMin: s.asleepMin ?? 0 })),
     // Whole years for the planner's in-bed cap; the sleep need floor (version 42), healthspan and fitness
     // take the fraction.
@@ -123,6 +132,8 @@ export function dayOf(data: Data, inputs: Inputs, day: string, opts: PipelineOpt
 
 const summarize = (s: BaselineState | null): BaselineSummary =>
   s && { mean: s.baseline, sd: sigma(s), status: s.status, nValid: s.nValid };
+
+const partsOf = (s: Session) => (s.parts ? { parts: s.parts.map((p) => ({ id: p.id, start: p.startTs, end: p.endTs })) } : {});
 
 function nightOf(main: Session, segments: Segment[] | undefined, awakenings: number): NonNullable<SleepRow["main"]> {
   const staged = main.stagesStatus === "SUCCEEDED" && !!segments?.length;
@@ -148,6 +159,7 @@ function nightOf(main: Session, segments: Segment[] | undefined, awakenings: num
       efficiency: h.efficiency,
       wakeEvents: h.disturbances,
       disturbances: awakenings,
+      ...partsOf(main),
     };
   }
   const asleepMin = main.asleepMin ?? 0;
@@ -166,6 +178,7 @@ function nightOf(main: Session, segments: Segment[] | undefined, awakenings: num
     efficiency: inBedS > 0 ? Math.min(1, (asleepMin * 60) / inBedS) : 0,
     wakeEvents: null,
     disturbances: null,
+    ...partsOf(main),
   };
 }
 
@@ -192,7 +205,8 @@ export function scoreSleep(data: Data, inputs: Inputs, f: Fold, d: Day, tz: stri
       : null;
   if (main && staged && main.asleepMin > 0) f.restoratives.push(restorativeScore(main.deepMin! * 60, main.remMin! * 60, main.asleepMin * 60, d.age.years));
   const restorative: SleepRow["restorative"] = performance == null ? null : staged ? "measured" : usualRestorative != null ? "usual" : "omitted";
-  const yesterdayNaps = (data.sessionsByDay.get(addDays(day, -1)) ?? []).filter((s) => !s.isMain);
+  // A piece joined to a night (version 53) is already in that night's asleep minutes.
+  const yesterdayNaps = (data.sessionsByDay.get(addDays(day, -1)) ?? []).filter((s) => !s.isMain && !data.joinedIds.has(s.id));
   const creditedMin = creditedSleepMin(main?.asleepMin ?? null, yesterdayNaps.reduce((a, s) => a + (s.asleepMin ?? 0), 0), { awakeAllNight: awake });
   f.ledgerSeries.push([day, creditedMin]);
   const debtMin = ledger(f.ledgerSeries, needHours).magnitudeMin;
@@ -532,19 +546,42 @@ function longestRun(xs: (number | null)[], hit: (v: number | null) => boolean, s
 
 // ── Energy Bank ──────────────────────────────────────────────────────────────
 
+/** A day's per-minute series for its Energy Bank: Stage 1's load and Stage 2's stress, from local midnight. */
+export type BankMinutes = { load: (number | null)[]; stress: (number | null)[] };
+
+/**
+ * Day D's bank, from D's wake to the next main sleep (version 54): `next` is D+1 with its minutes, once its stress is
+ * scored, so a bedtime after midnight or a night shift is in D's bank. The grid starts at D's midnight and runs on
+ * into D+1's minutes.
+ */
 export function scoreEnergyBank(
   data: Data,
-  inputs: Inputs,
   d: Day,
   rec: RecoveryRow,
   sleep: SleepRow,
-  stressMinutes: (number | null)[],
+  own: BankMinutes,
+  next?: { d: Day; minutes: BankMinutes },
 ): { row: EnergyBankRow; curve: (number | null)[] | null } {
   const { day, start, end, main, s1 } = d;
   if (rec.value == null || rec.withoutSleep == null || !main) return { row: { value: null, reason: rec.reason ?? "no_data", provisional: false }, curve: null };
-  const tonight = data.mainOf.get(addDays(day, 1));
-  const until = tonight && tonight.startTs < end ? tonight.startTs : s1.lastHrTs != null ? Math.min(end, s1.lastHrTs + 60) : end;
-  const napIntervals = d.naps.filter((n) => n.start >= main.end).map((n) => ({ start: n.start, end: n.end }));
+  const until = bankUntil({
+    wake: main.end,
+    dayEnd: end,
+    nextSleepStart: data.mainOf.get(addDays(day, 1))?.startTs ?? null,
+    lastHrTs: s1.lastHrTs ?? null,
+    live: next?.d.day === data.last,
+    next: next && { lastHrTs: next.d.s1.lastHrTs ?? null, lastStepTs: next.d.s1.lastStepTs ?? null },
+  });
+  // D's minutes padded to the day's length, then D+1's, so minute m is start + 60 m on both days.
+  const n = Math.round((end - start) / 60);
+  const pad = (xs: (number | null)[]) => Array.from({ length: n }, (_, m) => xs[m] ?? null);
+  const past = until > end && next;
+  const load = past ? [...pad(own.load), ...next.minutes.load] : own.load;
+  const stressMinutes = past ? [...pad(own.stress), ...next.minutes.stress] : own.stress;
+  const napIntervals = [...d.naps, ...(past ? next.d.naps : [])]
+    .filter((x) => x.start >= main.end && x.start < until)
+    .map((x) => ({ start: x.start, end: x.end }));
+  const exs = [...(data.exercisesByDay.get(day) ?? []), ...(past ? (data.exercisesByDay.get(next.d.day) ?? []).filter((e) => e.startTs < until) : [])];
   const eb = energyBank({
     start,
     wake: main.end,
@@ -552,10 +589,10 @@ export function scoreEnergyBank(
     // Sleep counts once: Recovery's body signals plus sleep performance (version 20).
     recoveryWithoutSleep: rec.withoutSleep,
     sleepPerformance: sleep.performance ?? main.efficiency * 100,
-    load: inputs.loadSeries.get(day) ?? [],
+    load,
     stress: stressMinutes,
     naps: napIntervals,
-    workouts: (data.exercisesByDay.get(day) ?? []).map((e) => ({ start: e.startTs, end: e.endTs, label: e.name ?? "Workout" })),
+    workouts: exs.map((e) => ({ start: e.startTs, end: e.endTs, label: e.name ?? "Workout" })),
   });
   // Recharge earned (calm still minutes at k3, nap minutes at k4); everything else is drain.
   // ponytail: nominal amounts, before the engine's 0–100 clamp; exact unless the bank hits a bound.

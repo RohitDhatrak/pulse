@@ -9,7 +9,9 @@ import { journalImpact, journalImpactConfig, type JournalDay, type TagImpact } f
 import { buildReport, periodBounds, reportPeriods } from "@/core/algorithms/reports";
 import { BATCH_DAYS, type Data, groupBy, type Segment, sha, upsertSeries } from "./data";
 import {
+  type BankMinutes,
   type Cached,
+  type Day,
   dayOf,
   forecastOf,
   type Inputs,
@@ -30,6 +32,7 @@ import {
   type JournalImpactRow,
   type PipelineOptions,
   type RecoveryRow,
+  type SleepRow,
   SCORING_VERSION,
   STAGE2_COLUMNS,
   type Stage1Activity,
@@ -50,21 +53,30 @@ export async function stage2(db: Db, data: Data, opts: PipelineOptions) {
   // Stress and Energy Bank series go out in batches during the fold rather than all at the end, so memory
   // doesn't grow with history. They are idempotent upserts; a crash before the final commit leaves
   // intraday_dirty set, so the next run redoes everything.
-  let pending: { day: string; stress: (number | null)[]; energy: (number | null)[] | null }[] = [];
+  // A day's stress goes out when it is scored; its Energy Bank a day later (version 54), once the next day's stress is.
+  let pending: ({ day: string; kind: "stress"; data: (number | null)[] } | { day: string; kind: "energy_bank"; data: (number | null)[] | null })[] = [];
   const flush = async () => {
     const batch = pending;
     pending = [];
     if (!batch.length) return;
-    const series = batch.flatMap((p) => [
-      { day: p.day, kind: "stress", data: p.stress },
-      ...(p.energy ? [{ day: p.day, kind: "energy_bank", data: p.energy }] : []),
-    ]);
-    const noEnergy = batch.filter((p) => !p.energy).map((p) => p.day);
+    const series = batch.flatMap((p) => (p.data ? [{ day: p.day, kind: p.kind, data: p.data }] : []));
+    const noEnergy = batch.filter((p) => p.kind === "energy_bank" && !p.data).map((p) => p.day);
     const t = intradaySeries;
     await db.transaction(async (tx) => {
       await upsertSeries(tx, userId, series);
       if (noEnergy.length) await tx.delete(t).where(and(eq(t.userId, userId), eq(t.kind, "energy_bank"), inArray(t.day, noEnergy)));
     });
+  };
+
+  // Day D's Energy Bank runs into D+1 (version 54), so it is scored once D+1's stress is. It is a leaf: nothing in the
+  // fold reads it.
+  let open: { d: Day; recovery: RecoveryRow; sleep: SleepRow; minutes: BankMinutes } | null = null;
+  const closeBank = (next?: { d: Day; minutes: BankMinutes }) => {
+    if (!open) return;
+    const energy = scoreEnergyBank(data, open.d, open.recovery, open.sleep, open.minutes, next);
+    out.get(open.d.day)!.energy_bank = energy.row;
+    pending.push({ day: open.d.day, kind: "energy_bank", data: energy.curve });
+    open = null;
   };
 
   // Order matters: each scorer reads the fold as earlier scorers left it for today.
@@ -92,8 +104,8 @@ export async function stage2(db: Db, data: Data, opts: PipelineOptions) {
     const planner = scorePlanner(f, d, sleep, tz);
     recovery.forecast = forecastOf(f, d, recovery);
     const stress = scoreStress(f, d, inputs, recovery);
-    const energy = scoreEnergyBank(data, inputs, d, recovery, sleep, stress.minutes);
-    pending.push({ day, stress: stress.series, energy: energy.curve });
+    pending.push({ day, kind: "stress", data: stress.series });
+    const minutes: BankMinutes = { load: inputs.loadSeries.get(day) ?? [], stress: stress.minutes };
     const healthMonitor = scoreHealthMonitor(data, f, d, inputs, recovery);
     const healthspan = scoreHealthspan(data, f, d, sleep, opts);
     const fitness = scoreFitness(f, d, opts);
@@ -104,12 +116,15 @@ export async function stage2(db: Db, data: Data, opts: PipelineOptions) {
       training_load: trainingLoad,
       strain_target: strainTarget,
       sleep_planner: planner.row,
-      energy_bank: energy.row,
+      energy_bank: { value: null, reason: "no_data", provisional: false },
       stress: stress.row,
       health_monitor: healthMonitor,
       healthspan,
       fitness,
     });
+
+    closeBank({ d, minutes });
+    open = { d, recovery, sleep, minutes };
 
     // Fold today's nightly values into the baselines (after scoring today), unless the night is held as part of an
     // illness-ward run (version 30): then the baselines stay as they were, staleness included.
@@ -122,6 +137,7 @@ export async function stage2(db: Db, data: Data, opts: PipelineOptions) {
       f.skinB = update(f.skinB, d.dm?.nightlyTempC ?? null, skinTempCfg);
     }
   }
+  closeBank();
   await flush();
 
   // ── Journal impact: as of each day, memoised on its inputs ────────────────

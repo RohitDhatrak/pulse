@@ -53,7 +53,8 @@ export async function getHome(day: string, ctx: QueryCtx): Promise<HomeVM> {
   const today = todayOf(ctx);
   const isToday = day === today;
   const stripStart = day < addDays(today, -29) ? day : addDays(today, -29);
-  const [rows, exs, keys, defaults, weeklyTeaser, journal, ebSeries, deviceSwitch] = await Promise.all([
+  const yesterday = addDays(day, -1);
+  const [rows, exs, keys, defaults, weeklyTeaser, journal, ebSeries, deviceSwitch, ebYesterday] = await Promise.all([
     loadDays(ctx, addDays(stripStart, -30), today),
     exercisesBetween(ctx, day, day),
     dashboardKeys(ctx.db, ctx.userId),
@@ -62,6 +63,7 @@ export async function getHome(day: string, ctx: QueryCtx): Promise<HomeVM> {
     journalWeek(ctx, day),
     loadSeries(ctx, day, "energy_bank"),
     deviceSwitchFor(ctx),
+    isToday ? loadSeries(ctx, yesterday, "energy_bank") : null,
   ]);
   const row = rows.get(day);
 
@@ -92,7 +94,7 @@ export async function getHome(day: string, ctx: QueryCtx): Promise<HomeVM> {
     monitor: monitorSummary(row, isToday),
     stress: stressNow(row, isToday),
     activities: { title: isToday ? "Today’s activities" : "Activities", items: timelineOf(row, day, exs) },
-    energyBank: energyBankVM(ctx, row, day, isToday, ebSeries),
+    energyBank: (row?.energyBank?.value == null && openBank(ctx, rows.get(yesterday), yesterday, day, ebYesterday)) || energyBankVM(ctx, row, day, isToday, ebSeries),
     tonight: planVM(ctx, row, isToday),
     keyStats: keyStats(rows, day, isToday, keys),
     dashboard: { defaults, empty: emptyKeys(rows, day, isToday) },
@@ -199,8 +201,25 @@ function monitorSummary(row: DayRow | undefined, isToday: boolean): HomeVM["moni
   return ok({ inRange: hm.inRange, total: hm.vitals.length, flagged: hm.flagged });
 }
 
+/**
+ * Yesterday's bank while it is still running past midnight (version 54), shown before today's own bank exists (that
+ * needs last night's sleep), so the card doesn't go blank between midnight and the morning. Null otherwise.
+ */
+function openBank(ctx: QueryCtx, row: DayRow | undefined, yesterday: string, today: string, series: (number | null)[] | null): Metric<EnergyBankVM> | null {
+  const eb = row?.energyBank;
+  if (!series || !eb || eb.value == null || eb.until <= dayStartOf(ctx, today)) return null;
+  return energyBankVM(ctx, row, yesterday, true, series, true);
+}
+
 /** `series` is the day's stored energy_bank minute series (loadSeries), fetched by the caller alongside its other reads. */
-export function energyBankVM(ctx: QueryCtx, row: DayRow | undefined, day: string, isToday: boolean, series: (number | null)[] | null): Metric<EnergyBankVM> {
+export function energyBankVM(
+  ctx: QueryCtx,
+  row: DayRow | undefined,
+  day: string,
+  isToday: boolean,
+  series: (number | null)[] | null,
+  sinceYesterday = false,
+): Metric<EnergyBankVM> {
   const eb = row?.energyBank;
   if (!eb) return none(isToday ? "awaiting_sleep_sync" : "band_not_worn");
   if (eb.value == null) return none(nightReason(eb.reason, isToday), row?.recovery?.nightsLeft);
@@ -219,6 +238,7 @@ export function energyBankVM(ctx: QueryCtx, row: DayRow | undefined, day: string
       curve,
       drains: eb.topDrains.map((d) => ({ label: d.label, kind: d.kind, start: ms(d.start), amount: d.amount })),
       naps: eb.naps.map((n) => ({ start: ms(n.start), end: ms(n.end) })),
+      sinceYesterday,
     },
     eb.provisional,
   );

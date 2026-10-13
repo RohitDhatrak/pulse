@@ -157,6 +157,7 @@ function stage1Day(
     hrMinutesAm: withHr(0, noon),
     hrMinutesPm: withHr(noon, n),
     lastHrTs: dayHr.at(-1)?.ts ?? null,
+    lastStepTs: stepRows.reduce<number | null>((a, x) => (x.steps > 0 && x.ts >= start && x.ts < end && (a == null || x.ts > a) ? x.ts : a), null),
     restingHr,
     restingHrSource: dailyRhr != null ? "daily" : sessionRhr != null ? "session" : "default",
     maxHr,
